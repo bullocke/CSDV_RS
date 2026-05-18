@@ -1,0 +1,28 @@
+# Micromamba environment for running NAIP-CHM inference on CHPC.
+#
+# Use:
+#   micromamba create -n naipchm -f environment_chpc.yml
+#   micromamba run -n naipchm pip install -r <naip-chm repo>/requirements.txt
+#   micromamba run -n naipchm pip install rio-cogeo geemap earthengine-api click
+#
+# CUDA: assumes a CHPC GPU node provides a recent NVIDIA driver. The pytorch
+# wheel pulled by the upstream requirements.txt (torch==2.8.0) ships with CUDA
+# runtime libraries. If your node uses an older driver, install a matching
+# pytorch wheel by hand instead of pip-installing requirements.txt directly.
+name: naipchm
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - gdal
+  - rasterio>=1.3
+  - pyproj>=3.6
+  - numpy>=1.24
+  - pandas>=2.0
+  - scipy>=1.11
+  - pyarrow>=13
+  - pyyaml
+  - tqdm
+  - requests
+  - tensorboard
