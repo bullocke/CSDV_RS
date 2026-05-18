@@ -1,0 +1,59 @@
+name: CSDV
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+
+  # Core notebook / dev
+  - jupyterlab
+  - notebook
+  - jupyter
+  - ipykernel
+  - ipywidgets
+  - ipyleaflet
+  - pandoc
+
+  # Core science / ML
+  - numpy
+  - pandas
+  - scipy
+  - scikit-learn
+  - scikit-image
+  - matplotlib
+  - xarray
+  - dask
+  - netcdf4
+
+  # Vector / raster geospatial
+  - geopandas
+  - pyogrio
+  - gdal
+  - fiona
+  - rasterio
+  - rioxarray
+  - shapely
+  - pyproj
+  - cartopy
+  - folium
+
+  # Point cloud / lidar
+  - laspy
+  - pylas
+  - python-pdal
+
+  # Earth Engine / mapping / apps
+  - earthengine-api
+  - geemap
+  - neonutilities
+  - gradio
+  - streamlit
+
+  # Nice extras for this kind of project
+  - requests
+  - tqdm
+  - openpyxl
+  - xlrd
+
+  - pip:
+      - streamlit-folium
