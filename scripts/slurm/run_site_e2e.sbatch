@@ -36,13 +36,19 @@ mkdir -p results/logs/slurm
 # Activate the project mamba env. SLURM batch shells do not source
 # ~/.bashrc by default, so we source the shell hook ourselves before
 # calling `mamba activate`.
+#
+# Disable `nounset` around activation: conda/mamba activation scripts
+# (e.g. libpdal-core) reference variables that may be unset on first
+# activation, and would otherwise trip `set -u`.
 if ! command -v mamba >/dev/null 2>&1; then
     echo "ERROR: mamba not on PATH inside the batch job." >&2
     echo "Add 'module load miniconda3' or similar to this sbatch." >&2
     exit 1
 fi
+set +u
 eval "$(mamba shell hook --shell bash)"
 mamba activate csdv
+set -u
 
 # Forward the CSDV_* env vars set in ~/.bashrc into the job. SLURM
 # --export=ALL is the default, but be explicit so a misconfigured
