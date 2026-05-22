@@ -62,6 +62,12 @@ def _attach_stratification() -> None:
     main.add_command(_strat_cli, name="stratify")
 
 
+def _attach_metrics() -> None:
+    from csdv_core.metrics.cli import cli as _metrics_cli
+
+    main.add_command(_metrics_cli, name="compute-metrics")
+
+
 def _attach_stages() -> None:
     from csdv_core.stages.cli import cli as _stages_cli
 
@@ -74,6 +80,12 @@ def _attach_trajectories() -> None:
     main.add_command(_traj_cli, name="classify-trajectories")
 
 
+def _attach_check() -> None:
+    from csdv_core.check import cli as _check_cli
+
+    main.add_command(_check_cli, name="check")
+
+
 # Attach now: imports are cheap (click + module-level imports only); heavy
 # imports (ee, torch, rasterio in segmentation) happen inside the command
 # bodies, not at import time.
@@ -81,8 +93,10 @@ _attach_download_subcommands()
 _attach_segmentation()
 _attach_chm_inference()
 _attach_stratification()
+_attach_metrics()
 _attach_stages()
 _attach_trajectories()
+_attach_check()
 
 
 if __name__ == "__main__":

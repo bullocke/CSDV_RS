@@ -39,18 +39,10 @@ dependencies:
 
   # Point cloud / lidar
   - laspy
-  - pylas
-  - python-pdal
+
 
   # Topographic analysis (Phase 4 stratification)
   - richdem
-
-  # Earth Engine / mapping / apps
-  - earthengine-api
-  - geemap
-  - neonutilities
-  - gradio
-  - streamlit
 
   # Nice extras for this kind of project
   - requests
@@ -60,3 +52,8 @@ dependencies:
 
   - pip:
       - streamlit-folium
+
+
+
+
+      

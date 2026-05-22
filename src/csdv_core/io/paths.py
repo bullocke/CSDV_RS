@@ -65,6 +65,10 @@ class ProjectPaths:
     def metrics_dir(self, site: str, year: int, window_m: int | float) -> Path:
         return self.results_root / "metrics" / site / str(year) / f"{int(window_m)}m"
 
+    def crowns_dir(self, site: str, year: int) -> Path:
+        """Per-year crown vector outputs under ``results_root/crowns/<site>/<year>/``."""
+        return self.results_root / "crowns" / site / str(year)
+
     def stratification_dir(self, site: str, window_m: int | float) -> Path:
         """Per-window stratification outputs (site_type, match_score)."""
         return self.results_root / "stratification" / site / f"{int(window_m)}m"
