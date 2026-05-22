@@ -1,0 +1,25 @@
+# Hand-tuned envelopes for unit/integration testing only.
+# Production stages.yaml stays placeholder until V5 calibration lands.
+
+stage_order: [ESI, LSE, MA_OW]
+stage_codes:
+  ESI: 1
+  LSE: 4
+  MA_OW: 6
+
+stages:
+  ESI:
+    envelopes:
+      type_01:
+        gap_fraction:    {min: 0.4, max: 1.0}
+        crown_width_cv:  {min: 0.5, max: 3.0}
+  LSE:
+    envelopes:
+      type_01:
+        gap_fraction:    {min: 0.0, max: 0.15}
+        crown_width_cv:  {min: 0.0, max: 0.4}
+  MA_OW:
+    envelopes:
+      type_01:
+        gap_fraction:    {min: 0.1, max: 0.3}
+        crown_width_cv:  {min: 0.3, max: 0.7}

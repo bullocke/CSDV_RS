@@ -42,6 +42,9 @@ dependencies:
   - pylas
   - python-pdal
 
+  # Topographic analysis (Phase 4 stratification)
+  - richdem
+
   # Earth Engine / mapping / apps
   - earthengine-api
   - geemap

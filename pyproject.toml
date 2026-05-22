@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "csdv_core"
+version = "0.0.1"
+description = "CSDV: stand-level structural metrics and rule-based classification of eastern US forest disturbance and recovery from NAIP imagery."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Eric L. Bullock" }]
+license = { text = "MIT" }
+keywords = ["remote sensing", "forest", "NAIP", "CHM", "classification"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: POSIX :: Linux",
+]
+
+# Binary geospatial deps (rasterio, gdal, geopandas, etc.) are provided by
+# environment.yml. Keep pip dependencies minimal and pure-Python where possible.
+dependencies = [
+    "numpy",
+    "pandas",
+    "pyyaml",
+    "click",
+    "pydantic>=2",
+]
+
+[project.optional-dependencies]
+lidr = ["rpy2"]          # crown segmentation via R lidR; not available on Colab
+deepforest = ["deepforest"]
+# NAIP-CHM inference shells out to the upstream repo (no stable Python API yet),
+# so we only need torch here. Set NAIPCHM_REPO_DIR to a clone of
+# https://github.com/smorf-ntsg/naip-chm to enable the subprocess path.
+chm_inference = ["torch"]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "black",
+    "ruff",
+]
+
+[project.scripts]
+csdv = "csdv_core.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+csdv_core = [
+    "config/*.yaml",
+    "examples/vocab/*.yaml",
+    "segmentation/scripts/*.R",
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]  # let black handle line length
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: integration tests that touch real data or take >5s",
+]

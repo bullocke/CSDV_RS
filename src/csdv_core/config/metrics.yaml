@@ -1,0 +1,80 @@
+# Default parameters for metric extraction.
+#
+# Schema:
+#   defaults                Global defaults applied unless overridden per metric.
+#     window_sizes_m        List of analysis window sizes in meters.
+#     chm_gap_threshold_m   Height threshold below which CHM pixels are gaps.
+#     min_crowns_per_window Minimum crown count required to compute crown metrics.
+#   metrics.<name>.params   Per-metric parameter overrides.
+#   chm_inference           Defaults for NAIP-CHM inference AOIs and tiling.
+defaults:
+  window_sizes_m: [25, 50, 100, 200]
+  chm_gap_threshold_m: 2.0
+  min_crowns_per_window: 3
+
+chm_inference:
+  aoi_half_km: 2.5
+  chip_size: 432
+  chip_overlap: 0.2
+
+metrics:
+  gap_fraction:
+    params:
+      window_m: 25.0
+      height_threshold_m: 2.0
+  crown_fraction:
+    params:
+      window_m: 25.0
+      height_threshold_m: 2.0
+  crown_cv:
+    params:
+      window_m: 50.0
+  crown_p90:
+    params:
+      window_m: 50.0
+  crown_mean:
+    params:
+      window_m: 50.0
+  crown_count:
+    params:
+      window_m: 50.0
+  glcm_texture:
+    params:
+      window_m: 50.0
+      levels: 16
+      prop: entropy
+  shrub_fraction:
+    params:
+      window_m: 25.0
+      lo_m: 0.5
+      hi_m: 2.0
+  small_tree_fraction:
+    params:
+      window_m: 25.0
+      lo_m: 2.0
+      hi_m: 10.0
+  mid_canopy_fraction:
+    params:
+      window_m: 25.0
+      lo_m: 10.0
+      hi_m: 20.0
+  tall_canopy_fraction:
+    params:
+      window_m: 25.0
+      lo_m: 20.0
+      hi_m: 100.0
+  linearity_index:
+    params:
+      window_m: 50.0
+      n_angles: 90
+  edge_density:
+    params:
+      window_m: 50.0
+  row_directionality:
+    params:
+      window_m: 50.0
+      n_bins: 36
+  gap_persistence:
+    params:
+      window_m: 25.0
+      height_threshold_m: 2.0

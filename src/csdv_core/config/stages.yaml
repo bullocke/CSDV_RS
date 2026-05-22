@@ -1,0 +1,97 @@
+# Expected metric envelopes per developmental stage, stratified by site type.
+#
+# Schema:
+#   stages.<stage_code>.envelopes.<site_type>.<metric> = {min, max}
+#   `min`/`max` may be null to indicate "no constraint" on that side.
+#   stage_order  Tie-break order for classification (V5 ascending succession).
+#   stage_codes  Integer codes written into stage rasters.
+#
+# Stage codes (V5): ESI, LSI, ESE, LSE, UR, MA_OW, OG.
+# Six metric families: crown_width_cv, gap_fraction, shrub_pct, entropy,
+# ndvi_trend, persistence (V5 Section 3).
+#
+# Production envelopes are placeholders pending V5 calibration. Tests use
+# their own fixture under tests/fixtures/ so production placeholders never
+# block the unit suite.
+
+stage_order: [ESI, LSI, ESE, LSE, UR, MA_OW, OG]
+stage_codes:
+  ESI: 1
+  LSI: 2
+  ESE: 3
+  LSE: 4
+  UR: 5
+  MA_OW: 6
+  OG: 7
+
+stages:
+
+  ESI:
+    envelopes:
+      type_01:
+        gap_fraction:   {min: null, max: null}
+        crown_width_cv: {min: null, max: null}
+        shrub_pct:      {min: null, max: null}
+        entropy:        {min: null, max: null}
+        ndvi_trend:     {min: null, max: null}
+        persistence:    {min: null, max: null}
+
+  LSI:
+    envelopes:
+      type_01:
+        gap_fraction:   {min: null, max: null}
+        crown_width_cv: {min: null, max: null}
+        shrub_pct:      {min: null, max: null}
+        entropy:        {min: null, max: null}
+        ndvi_trend:     {min: null, max: null}
+        persistence:    {min: null, max: null}
+
+  ESE:
+    envelopes:
+      type_01:
+        gap_fraction:   {min: null, max: null}
+        crown_width_cv: {min: null, max: null}
+        shrub_pct:      {min: null, max: null}
+        entropy:        {min: null, max: null}
+        ndvi_trend:     {min: null, max: null}
+        persistence:    {min: null, max: null}
+
+  LSE:
+    envelopes:
+      type_01:
+        gap_fraction:    {min: 0.00, max: 0.10}
+        crown_width_cv:  {min: null, max: 0.30}
+        shrub_pct:       {min: null, max: null}
+        entropy:         {min: null, max: null}
+        ndvi_trend:      {min: null, max: null}
+        persistence:     {min: null, max: null}
+
+  UR:
+    envelopes:
+      type_01:
+        gap_fraction:   {min: null, max: null}
+        crown_width_cv: {min: null, max: null}
+        shrub_pct:      {min: null, max: null}
+        entropy:        {min: null, max: null}
+        ndvi_trend:     {min: null, max: null}
+        persistence:    {min: null, max: null}
+
+  MA_OW:
+    envelopes:
+      type_01:
+        gap_fraction:   {min: null, max: null}
+        crown_width_cv: {min: null, max: null}
+        shrub_pct:      {min: null, max: null}
+        entropy:        {min: null, max: null}
+        ndvi_trend:     {min: null, max: null}
+        persistence:    {min: null, max: null}
+
+  OG:
+    envelopes:
+      type_01:
+        gap_fraction:   {min: null, max: null}
+        crown_width_cv: {min: null, max: null}
+        shrub_pct:      {min: null, max: null}
+        entropy:        {min: null, max: null}
+        ndvi_trend:     {min: null, max: null}
+        persistence:    {min: null, max: null}

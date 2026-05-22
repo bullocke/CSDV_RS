@@ -1,0 +1,118 @@
+# CSDV V5 site types (13 classes across 6 groups).
+#
+# Schema (per entry):
+#   name    Human-readable label.
+#   group   Coarse grouping (hydric_riparian, low_relief_wet, glacial_sandy,
+#           upland_mesic, mountain, geologic).
+#   rules   Ordered list of predicates: {var, op, value}.
+#           Predicates are AND-combined; first matching site_type wins.
+#           Placeholder predicates use ``value: null``; assign.py treats
+#           rules with no configured (non-null) predicate as never-match
+#           so callers can wire up a calibrated rule per site type before
+#           operational use.
+#
+# Source: Project Documentation/Markdown/CSDV Classification V5 Full.md
+# Section 2 (environmental drivers).
+site_types:
+
+  # ---- Group 1: Hydric / Riparian -----------------------------------
+  type_01:
+    name: "Floodplain forest"
+    group: hydric_riparian
+    rules:
+      - {var: hand, op: "<=", value: null}
+      - {var: hydric_pct, op: ">=", value: null}
+      - {var: parmat_kind, op: "==", value: 4}  # alluvium
+
+  type_02:
+    name: "Riparian zone"
+    group: hydric_riparian
+    rules:
+      - {var: hand, op: "<=", value: null}
+      - {var: twi, op: ">=", value: null}
+
+  # ---- Group 2: Low-relief wet --------------------------------------
+  type_03:
+    name: "Forested wetland / poorly drained flat"
+    group: low_relief_wet
+    rules:
+      - {var: slope_deg, op: "<=", value: null}
+      - {var: hydric_pct, op: ">=", value: null}
+      - {var: hand, op: ">", value: null}
+
+  # ---- Group 3: Glacial sandy outwash -------------------------------
+  type_04:
+    name: "Glacial outwash sandy upland"
+    group: glacial_sandy
+    rules:
+      - {var: parmat_kind, op: "==", value: 3}   # outwash
+      - {var: texture_class, op: "==", value: 1} # sand
+      - {var: awc_total_cm, op: "<=", value: null}
+
+  # ---- Group 4: Upland mesic ----------------------------------------
+  type_05:
+    name: "Mesic upland forest"
+    group: upland_mesic
+    rules:
+      - {var: slope_deg, op: "<=", value: null}
+      - {var: twi, op: ">=", value: null}
+      - {var: awc_total_cm, op: ">=", value: null}
+
+  type_06:
+    name: "Cove mesic forest"
+    group: upland_mesic
+    rules:
+      - {var: twi, op: ">=", value: null}
+      - {var: profile_curvature, op: "<=", value: null}
+      - {var: awc_total_cm, op: ">=", value: null}
+
+  type_07:
+    name: "Submesic upland forest"
+    group: upland_mesic
+    rules:
+      - {var: twi, op: ">=", value: null}
+      - {var: slope_deg, op: "<=", value: null}
+
+  # ---- Group 5: Relief-gated mountain -------------------------------
+  type_08:
+    name: "Mountain north slope"
+    group: mountain
+    rules:
+      - {var: slope_deg, op: ">=", value: null}
+      - {var: northness, op: ">=", value: null}
+
+  type_09:
+    name: "Mountain south slope"
+    group: mountain
+    rules:
+      - {var: slope_deg, op: ">=", value: null}
+      - {var: northness, op: "<=", value: null}
+
+  type_10:
+    name: "Ridge / convex upland"
+    group: mountain
+    rules:
+      - {var: profile_curvature, op: ">=", value: null}
+      - {var: rei, op: ">=", value: null}
+
+  type_11:
+    name: "Xeric ridge / outcrop"
+    group: mountain
+    rules:
+      - {var: rei, op: ">=", value: null}
+      - {var: awc_total_cm, op: "<=", value: null}
+
+  # ---- Group 6: Geologic productivity -------------------------------
+  type_12:
+    name: "Carbonate-derived upland"
+    group: geologic
+    rules:
+      - {var: bedrock_kind, op: "==", value: 1}  # carbonate
+      - {var: awc_total_cm, op: ">=", value: null}
+
+  type_13:
+    name: "Acidic shale / sandstone upland"
+    group: geologic
+    rules:
+      - {var: bedrock_kind, op: "==", value: 3}  # shale
+      - {var: awc_total_cm, op: "<=", value: null}

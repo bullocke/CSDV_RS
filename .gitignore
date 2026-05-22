@@ -1,0 +1,47 @@
+# Internal planning and documentation (not for public repos)
+Planning/
+Presentations/
+Project Documentation/
+PROJECT_SUMMARY.md
+notes.txt
+
+# Frozen pre-restructure scratch work (reference only, not tracked)
+legacy/
+
+# Data and results (large files, symlinked to CHPC storage)
+data/
+results/
+notebooks/scratch/
+
+# Per-example patches: keep only metadata, report, and figures
+examples/*/data/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Environment
+.micromamba/
+.cache/
+.vscode/
+.github/
+.claude/
+.env
+
+# Claude and copilot files
+CLAUDE.md
+.github/copilot-instructions.md
+AGENTS.md
+docs/architecture.md
+docs/conventions.md
+docs/data_layout.md
+src/csdv_core/AGENTS.md

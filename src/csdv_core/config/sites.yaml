@@ -1,0 +1,76 @@
+# Sites of interest for the CSDV proof-of-concept and production runs.
+#
+# Schema (per entry):
+#   name           Human-readable site name.
+#   category       One of: neon, managed, secondary.
+#   state          USPS state code (e.g. VA, MA).
+#   crs            EPSG string. Default working CRS is EPSG:5070.
+#   bbox           [xmin, ymin, xmax, ymax] in `crs`. Nullable; filled in Phase 3.
+#   center_lonlat  [lon, lat] in WGS84. Used by GEE/NAIP-CHM AOI downloaders.
+#                  Nullable for sites without confirmed coordinates.
+#   naip           Object with available NAIP years and optional DOQQ IDs.
+#     years        List of integers.
+#     doqq_ids     Optional list of strings.
+#   neon           Object with NEON site code and AOP acquisition years.
+#                  Null for non-NEON sites.
+#   notes          Free-form description.
+#
+# Authoritative source for stage/trajectory linkage:
+#   Project Documentation/Markdown/CSDV Classification V5 Full.md
+sites:
+  SCBI:
+    name: "Smithsonian Conservation Biology Institute"
+    category: neon
+    state: VA
+    crs: "EPSG:5070"
+    bbox: null
+    center_lonlat: [-78.1454, 38.8929]
+    naip:
+      years: [2014, 2016, 2018, 2021, 2023]
+      doqq_ids: []
+    neon:
+      site_code: SCBI
+      aop_years: [2017, 2019, 2021, 2023]
+    notes: "ForestGEO 25-ha plot; mixed deciduous, ridge-to-valley gradient."
+  HARV:
+    name: "Harvard Forest"
+    category: neon
+    state: MA
+    crs: "EPSG:5070"
+    bbox: null
+    center_lonlat: [-72.1727, 42.5369]
+    naip:
+      years: [2014, 2016, 2018, 2021, 2023]
+      doqq_ids: []
+    neon:
+      site_code: HARV
+      aop_years: [2017, 2019, 2022]
+    notes: "Mixed northern hardwood / hemlock; long-term ecological research."
+  TALL:
+    name: "Talladega National Forest"
+    category: neon
+    state: AL
+    crs: "EPSG:5070"
+    bbox: null
+    center_lonlat: [-87.3933, 32.9505]
+    naip:
+      years: [2015, 2017, 2019, 2021, 2023]
+      doqq_ids: []
+    neon:
+      site_code: TALL
+      aop_years: [2018, 2021]
+    notes: "Mixed pine-oak; southeastern coastal plain."
+  MLBS:
+    name: "Mountain Lake Biological Station"
+    category: neon
+    state: VA
+    crs: "EPSG:5070"
+    bbox: null
+    center_lonlat: [-80.5247, 37.3783]
+    naip:
+      years: [2014, 2016, 2018, 2021, 2023]
+      doqq_ids: []
+    neon:
+      site_code: MLBS
+      aop_years: [2017, 2018, 2021]
+    notes: "Appalachian mixed mesophytic forest; high elevation."

@@ -1,0 +1,234 @@
+# V5 trajectory class signatures (19 classes across DS, EF, LC, FC).
+#
+# Schema (per entry):
+#   name        Human-readable label.
+#   group       One of: DS, EF, LC, FC.
+#   signature   Ordered list of TrajectoryPredicate entries combined by AND.
+#               Each predicate has fields {dim, var, reducer, op, value, threshold}.
+#               See csdv_core.config._models.TrajectoryPredicate for semantics.
+#
+# trajectory_order: First-match-wins precedence. Specific deviations (DS, EF)
+# precede generic non-forest (LC) and FC types come last.
+#
+# trajectory_codes: Stable uint8 codes written into the trajectory raster.
+# Reserved: 0 = unclassified.
+#
+# Source: Project Documentation/Markdown/CSDV Classification V5 Full.md, Section 4-5.
+# A "stable" trajectory is not emitted; stable conditions are described by the
+# Phase 4 stage rasters and have no V5 trajectory code.
+#
+# Most thresholds remain placeholders (``value: null``) pending PoC calibration;
+# rules with placeholder predicates effectively never fire. A handful of rules
+# (DS1, EF2, LC1, FC2) carry concrete starter thresholds derived from the V5
+# qualitative descriptors, intended for the PoC validation pass.
+
+trajectory_order:
+  - DS1
+  - DS2
+  - DS3a
+  - DS3b
+  - DS3c
+  - EF1
+  - EF2
+  - EF3
+  - LC6
+  - LC4
+  - LC1
+  - LC2
+  - LC3
+  - LC5
+  - LC7
+  - FC2
+  - FC3
+  - FC1
+  - FC4
+
+trajectory_codes:
+  DS1: 1
+  DS2: 2
+  DS3a: 3
+  DS3b: 4
+  DS3c: 5
+  EF1: 6
+  EF2: 7
+  EF3: 8
+  LC1: 9
+  LC2: 10
+  LC3: 11
+  LC4: 12
+  LC5: 13
+  LC6: 14
+  LC7: 15
+  FC1: 16
+  FC2: 17
+  FC3: 18
+  FC4: 19
+
+trajectories:
+
+  # --------------------------------------------------------------------------
+  # Development Stagnation
+  # --------------------------------------------------------------------------
+
+  DS1:
+    name: "Beech-Bark Disease Sprout Trap"
+    group: DS
+    signature:
+      - {dim: stage,   reducer: all, op: "in", value: [ESE, LSE]}
+      - {dim: metric,  var: crown_width_cv, reducer: max, op: "<=", value: 0.15}
+      - {dim: metric,  var: gap_fraction,   reducer: max, op: "<=", value: 0.10}
+      - {dim: metric,  var: entropy,        reducer: max, op: "<=", value: 0.30}
+
+  DS2:
+    name: "Chronic Defoliation Stagnation"
+    group: DS
+    signature:
+      - {dim: stage,   reducer: all, op: "in", value: [ESE, LSE]}
+      - {dim: metric,  var: ndvi_trend, reducer: max, op: "<=", value: null}
+
+  DS3a:
+    name: "Unknown Cause - delayed transition to LSI"
+    group: DS
+    signature:
+      - {dim: stage,   reducer: latest, op: "==", value: LSI}
+      - {dim: metric,  var: gap_fraction, reducer: min, op: ">=", value: null}
+      - {dim: metric,  var: ndvi_trend,   reducer: max, op: "<=", value: null}
+
+  DS3b:
+    name: "Unknown Cause - delayed transition to ESE"
+    group: DS
+    signature:
+      - {dim: stage,   reducer: latest, op: "==", value: ESE}
+      - {dim: metric,  var: gap_fraction,    reducer: min, op: ">=", value: null}
+      - {dim: metric,  var: crown_width_cv,  reducer: max, op: "<=", value: null}
+
+  DS3c:
+    name: "Unknown Cause - delayed transition to LSE"
+    group: DS
+    signature:
+      - {dim: stage,   reducer: latest, op: "==", value: LSE}
+      - {dim: metric,  var: gap_fraction,    reducer: min, op: ">=", value: null}
+      - {dim: metric,  var: crown_width_cv,  reducer: min, op: ">=", value: null}
+      - {dim: metric,  var: entropy,         reducer: min, op: ">=", value: null}
+
+  # --------------------------------------------------------------------------
+  # Tree Establishment Failure
+  # --------------------------------------------------------------------------
+
+  EF1:
+    name: "Dense herbaceous layer - fern/graminoid dominant"
+    group: EF
+    signature:
+      - {dim: stage,   reducer: all, op: "in", value: [LSI, ESE]}
+      - {dim: metric,  var: shrub_pct,     reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: gap_fraction,  reducer: min, op: ">=", value: null}
+
+  EF2:
+    name: "Evergreen ericaceous shrub thicket"
+    group: EF
+    signature:
+      - {dim: stage,   reducer: all, op: "in", value: [LSI, ESE]}
+      - {dim: metric,  var: shrub_pct,     reducer: min, op: ">=", value: 0.50}
+      - {dim: metric,  var: gap_fraction,  reducer: mean, op: ">=", value: 0.20}
+
+  EF3:
+    name: "Establishment failure - unknown cause (ESE)"
+    group: EF
+    signature:
+      - {dim: stage,   reducer: latest, op: "==", value: ESE}
+      - {dim: metric,  var: gap_fraction, reducer: min, op: ">=", value: null}
+      - {dim: metric,  var: ndvi_trend,   reducer: max, op: "<=", value: null}
+
+  # --------------------------------------------------------------------------
+  # Non-forest Land Conversion (stage-agnostic; persistent non-forest)
+  # --------------------------------------------------------------------------
+
+  LC1:
+    name: "Agriculture"
+    group: LC
+    signature:
+      - {dim: metric,  var: crown_fraction, reducer: max,  op: "<=", value: 0.05}
+      - {dim: metric,  var: gap_fraction,   reducer: min,  op: ">=", value: 0.85}
+      - {dim: metric,  var: ndvi_seasonal_amplitude, reducer: min, op: ">=", value: null}
+
+  LC2:
+    name: "Wetland"
+    group: LC
+    signature:
+      - {dim: metric,  var: crown_fraction, reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: gap_fraction,   reducer: min, op: ">=", value: null}
+      - {dim: metric,  var: wetness_persistence, reducer: scalar, op: ">=", value: null}
+
+  LC3:
+    name: "Grazed Pasture"
+    group: LC
+    signature:
+      - {dim: metric,  var: crown_fraction, reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: gap_fraction,   reducer: min, op: ">=", value: null}
+      - {dim: metric,  var: ndvi_seasonal_amplitude, reducer: max, op: "<=", value: null}
+
+  LC4:
+    name: "Human Development"
+    group: LC
+    signature:
+      - {dim: metric,  var: crown_fraction, reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: gap_fraction,   reducer: min, op: ">=", value: null}
+      - {dim: metric,  var: impervious_fraction, reducer: min, op: ">=", value: null}
+
+  LC5:
+    name: "Mowed Grassland"
+    group: LC
+    signature:
+      - {dim: metric,  var: crown_fraction, reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: gap_fraction,   reducer: min, op: ">=", value: null}
+      - {dim: metric,  var: ndvi_seasonal_amplitude, reducer: min, op: ">=", value: null}
+
+  LC6:
+    name: "Surface Mining"
+    group: LC
+    signature:
+      - {dim: metric,  var: crown_fraction, reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: gap_fraction,   reducer: min, op: ">=", value: null}
+      - {dim: metric,  var: ndvi_mean,      reducer: max, op: "<=", value: null}
+
+  LC7:
+    name: "Utility Corridor"
+    group: LC
+    signature:
+      - {dim: metric,  var: crown_fraction,   reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: linearity_index,  reducer: max, op: ">=", value: null}
+      - {dim: metric,  var: gap_persistence,  reducer: min, op: ">=", value: null}
+
+  # --------------------------------------------------------------------------
+  # Undesirable Forest Type Conversion
+  # --------------------------------------------------------------------------
+
+  FC1:
+    name: "Invasive tree dominance"
+    group: FC
+    signature:
+      - {dim: stage,   reducer: latest, op: "==", value: ESE}
+      - {dim: metric,  var: crown_width_cv, reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: entropy,        reducer: max, op: "<=", value: null}
+
+  FC2:
+    name: "Row-structured tree plantation (young-mid rotation)"
+    group: FC
+    signature:
+      - {dim: metric,  var: crown_width_cv,  reducer: max, op: "<=", value: 0.20}
+      - {dim: metric,  var: row_periodicity, reducer: max, op: ">=", value: 0.50}
+
+  FC3:
+    name: "Closed-canopy even-aged tree plantation"
+    group: FC
+    signature:
+      - {dim: metric,  var: crown_width_cv, reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: gap_fraction,   reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: entropy,        reducer: max, op: "<=", value: null}
+
+  FC4:
+    name: "Tree plantation (mixed or type unknown)"
+    group: FC
+    signature:
+      - {dim: metric,  var: crown_width_cv, reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: entropy,        reducer: max, op: "<=", value: null}
