@@ -22,10 +22,125 @@ from csdv_core.download._ee import (
     resolve_region,
 )
 
+import math
+import shutil
+import tempfile
+
+# Earth Engine's getDownloadURL hard cap is 48 MiB. Keep each tile
+# request well under that to leave headroom for response overhead.
+_EE_SOFT_MAX_BYTES = 32 * 1024 * 1024
+_NAIP_BYTES_PER_PIXEL = 4  # 4 bands x uint8
+
 logger = logging.getLogger(__name__)
 
 NAIP_COLLECTION = "USDA/NAIP/DOQQ"
 
+def _aoi_bounds_in_crs(region, crs: str) -> tuple[float, float, float, float]:
+    """Return AOI (minx, miny, maxx, maxy) in the target projected CRS."""
+    import ee
+
+    coords = region.bounds().coordinates().getInfo()[0]
+    lons = [c[0] for c in coords]
+    lats = [c[1] for c in coords]
+    from pyproj import Transformer
+
+    tx = Transformer.from_crs("EPSG:4326", crs, always_xy=True)
+    xs, ys = tx.transform(lons, lats)
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _required_tiles(width_m: float, height_m: float, scale: float) -> int:
+    """How many tiles per side keep each request under the EE limit."""
+    nx = max(1, math.ceil(width_m / scale))
+    ny = max(1, math.ceil(height_m / scale))
+    total_bytes = nx * ny * _NAIP_BYTES_PER_PIXEL
+    if total_bytes <= _EE_SOFT_MAX_BYTES:
+        return 1
+    return math.ceil(math.sqrt(total_bytes / _EE_SOFT_MAX_BYTES))
+
+
+def _export_tiled(
+    image,
+    *,
+    out_path: Path,
+    description: str,
+    region,
+    scale: float,
+    crs: str,
+) -> Path:
+    """Download an EE image, tiling if the AOI exceeds the EE request limit.
+
+    Tiles are downloaded into a temp dir and merged with rasterio.
+    """
+    import ee
+    import rasterio
+    from rasterio.merge import merge as rio_merge
+
+    minx, miny, maxx, maxy = _aoi_bounds_in_crs(region, crs)
+    n = _required_tiles(maxx - minx, maxy - miny, scale)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if n == 1:
+        logger.info("AOI fits in a single EE request; downloading whole image.")
+        export_image_to_tif(
+            image,
+            out_dir=out_path.parent,
+            description=description,
+            region=region,
+            scale=scale,
+            crs=crs,
+        )
+        return out_path
+
+    logger.info("AOI exceeds EE request limit; splitting into %dx%d=%d tiles",
+                n, n, n * n)
+    dx = (maxx - minx) / n
+    dy = (maxy - miny) / n
+    tmp = Path(tempfile.mkdtemp(prefix="naip_tiles_"))
+    tile_paths: list[Path] = []
+    try:
+        for i in range(n):
+            for j in range(n):
+                t_minx = minx + i * dx
+                t_maxx = minx + (i + 1) * dx
+                t_miny = miny + j * dy
+                t_maxy = miny + (j + 1) * dy
+                tile_region = ee.Geometry.Rectangle(
+                    [t_minx, t_miny, t_maxx, t_maxy],
+                    proj=crs,
+                    geodesic=False,
+                )
+                tile_desc = f"{description}_tile_{i}_{j}"
+                logger.info("  tile %d/%d (%s)", len(tile_paths) + 1, n * n, tile_desc)
+                export_image_to_tif(
+                    image,
+                    out_dir=tmp,
+                    description=tile_desc,
+                    region=tile_region,
+                    scale=scale,
+                    crs=crs,
+                )
+                tile_paths.append(tmp / f"{tile_desc}.tif")
+
+        logger.info("Merging %d tiles -> %s", len(tile_paths), out_path)
+        srcs = [rasterio.open(p) for p in tile_paths]
+        try:
+            mosaic, transform = rio_merge(srcs)
+            profile = srcs[0].profile
+        finally:
+            for s in srcs:
+                s.close()
+        profile.update(
+            height=mosaic.shape[1],
+            width=mosaic.shape[2],
+            transform=transform,
+            compress="deflate",
+        )
+        with rasterio.open(out_path, "w", **profile) as dst:
+            dst.write(mosaic)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return out_path
 
 def _median_date_tag(coll) -> str:  # type: ignore[no-untyped-def]
     """Return ``YYYYMMDD`` for the median acquisition timestamp in ``coll``."""
@@ -102,16 +217,18 @@ def download_naip_rgbn(
         coll.select(["R", "G", "B", "N"]).mosaic().set("system:time_start", 0).toUint8()
     )
 
+    out_path = out_dir / f"{description}.tif"
     logger.info("Exporting %s ...", description)
-    export_image_to_tif(
+    _export_tiled(
         image,
-        out_dir=out_dir,
+        out_path=out_path,
         description=description,
         region=region,
         scale=scale,
         crs=crs,
     )
-    return out_dir / f"{description}.tif"
+    return out_path
+    # return out_dir / f"{description}.tif"
 
 
 @click.command("naip-gee")
