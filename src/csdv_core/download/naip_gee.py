@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import math
+import shutil
+import tempfile
 from pathlib import Path
 
 import click
@@ -22,10 +25,6 @@ from csdv_core.download._ee import (
     resolve_region,
 )
 
-import math
-import shutil
-import tempfile
-
 # Earth Engine's getDownloadURL hard cap is 48 MiB. Keep each tile
 # request well under that to leave headroom for response overhead.
 _EE_SOFT_MAX_BYTES = 32 * 1024 * 1024
@@ -35,9 +34,9 @@ logger = logging.getLogger(__name__)
 
 NAIP_COLLECTION = "USDA/NAIP/DOQQ"
 
+
 def _aoi_bounds_in_crs(region, crs: str) -> tuple[float, float, float, float]:
     """Return AOI (minx, miny, maxx, maxy) in the target projected CRS."""
-    import ee
 
     coords = region.bounds().coordinates().getInfo()[0]
     lons = [c[0] for c in coords]
@@ -92,12 +91,21 @@ def _export_tiled(
         )
         return out_path
 
-    logger.info("AOI exceeds EE request limit; splitting into %dx%d=%d tiles",
-                n, n, n * n)
+    logger.info(
+        "AOI exceeds EE request limit; splitting into %dx%d=%d tiles",
+        n,
+        n,
+        n * n,
+    )
     dx = (maxx - minx) / n
     dy = (maxy - miny) / n
-    tmp = Path(tempfile.mkdtemp(prefix="naip_tiles_"))
+    # Co-locate the tile dir next to the output so it lives on the same
+    # filesystem and stays visible if a step fails. We only clean it up
+    # on success; on failure it remains for inspection.
+    tmp = Path(tempfile.mkdtemp(prefix=f".{out_path.stem}_tiles_", dir=out_path.parent))
+    logger.info("Tile directory: %s", tmp)
     tile_paths: list[Path] = []
+    success = False
     try:
         for i in range(n):
             for j in range(n):
@@ -112,6 +120,7 @@ def _export_tiled(
                 )
                 tile_desc = f"{description}_tile_{i}_{j}"
                 logger.info("  tile %d/%d (%s)", len(tile_paths) + 1, n * n, tile_desc)
+                before = set(tmp.glob("*.tif"))
                 export_image_to_tif(
                     image,
                     out_dir=tmp,
@@ -120,7 +129,21 @@ def _export_tiled(
                     scale=scale,
                     crs=crs,
                 )
-                tile_paths.append(tmp / f"{tile_desc}.tif")
+                after = set(tmp.glob("*.tif"))
+                new_files = sorted(after - before)
+                if not new_files:
+                    raise RuntimeError(
+                        f"wxee export produced no .tif for tile {tile_desc}. "
+                        f"Temp dir contents: {sorted(p.name for p in tmp.iterdir())}"
+                    )
+                if len(new_files) > 1:
+                    logger.warning(
+                        "tile %s produced %d files; using %s",
+                        tile_desc,
+                        len(new_files),
+                        new_files[0].name,
+                    )
+                tile_paths.append(new_files[0])
 
         logger.info("Merging %d tiles -> %s", len(tile_paths), out_path)
         srcs = [rasterio.open(p) for p in tile_paths]
@@ -138,9 +161,14 @@ def _export_tiled(
         )
         with rasterio.open(out_path, "w", **profile) as dst:
             dst.write(mosaic)
+        success = True
     finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+        if success:
+            shutil.rmtree(tmp, ignore_errors=True)
+        else:
+            logger.warning("Leaving tile directory in place for inspection: %s", tmp)
     return out_path
+
 
 def _median_date_tag(coll) -> str:  # type: ignore[no-untyped-def]
     """Return ``YYYYMMDD`` for the median acquisition timestamp in ``coll``."""
