@@ -11,10 +11,11 @@
 #
 # Steps run in this order, each skipped if its sentinel output exists:
 #   1. csdv check
-#   2. per year: NAIP download, NAIP-CHM inference, crown segmentation, compute-metrics
-#   3. csdv stratify (site-level)
-#   4. per year: csdv classify-stages
-#   5. csdv classify-trajectories (site-level)
+#   2. csdv download conditioning (once, only if a CHM stage will actually run)
+#   3. per year: NAIP download, NAIP-CHM inference, crown segmentation, compute-metrics
+#   4. csdv stratify (site-level)
+#   5. per year: csdv classify-stages
+#   6. csdv classify-trajectories (site-level)
 #
 # Environment:
 #   CSDV_DATA_ROOT, CSDV_RESULTS_ROOT, CSDV_CACHE_ROOT - resolved by `csdv` and
@@ -76,18 +77,15 @@ log "data_root=$DATA_ROOT"
 log "results_root=$RESULTS_ROOT"
 log "log_dir=$LOG_DIR"
 
-# step NAME SENTINEL CMD...
-# - If $SENTINEL exists and FORCE=0, mark as skipped and return.
+# run_step NAME SENTINEL CMD...
+# - If $SENTINEL is non-empty, exists, and FORCE=0, mark as skipped and return.
 # - Else run CMD, tee stdout/stderr to <LOG_DIR>/<NAME>.log.
-step() {
+# No --only scope check; callers that need one use `step` instead.
+run_step() {
     local name="$1"
     local sentinel="$2"
     shift 2
-    if ! step_in_scope "$name"; then
-        log "[skip] $name (not in --only)"
-        return 0
-    fi
-    if [[ "$FORCE" -eq 0 && -e "$sentinel" ]]; then
+    if [[ "$FORCE" -eq 0 && -n "$sentinel" && -e "$sentinel" ]]; then
         log "[skip] $name (sentinel exists: $sentinel)"
         return 0
     fi
@@ -104,6 +102,17 @@ step() {
         log "[fail] $name rc=$rc (${elapsed}s); see $step_log"
         exit "$rc"
     fi
+}
+
+# step NAME SENTINEL CMD...
+# Like run_step, but first honors the --only scope filter.
+step() {
+    local name="$1"
+    if ! step_in_scope "$name"; then
+        log "[skip] $name (not in --only)"
+        return 0
+    fi
+    run_step "$@"
 }
 
 # step_in_scope NAME: true if --only is empty or NAME matches the --only prefix.
@@ -130,6 +139,17 @@ chm_tif_for_year() {
     find "$d" -maxdepth 1 -name '*.tif' -print -quit
 }
 
+# True if any year's CHM inference is in scope AND has no existing CHM tif
+# (i.e. inference will run and therefore needs the conditioning rasters).
+chm_inference_needed() {
+    local year
+    for year in "${YEARS[@]}"; do
+        step_in_scope "chm-$year" || continue
+        chm_tif_for_year "$year" >/dev/null 2>&1 || return 0
+    done
+    return 1
+}
+
 # ---------------------------------------------------------------------------
 # 1. Preflight
 # ---------------------------------------------------------------------------
@@ -138,6 +158,18 @@ step check "" csdv check \
     --site "$SITE" \
     --years "$YEARS_CSV" \
     --window-m "$WINDOW_M"
+
+# ---------------------------------------------------------------------------
+# 1b. Conditioning rasters (static, CONUS-wide, ~1.65 GB, one-time).
+# ---------------------------------------------------------------------------
+# Ideally pre-fetched on the login node (see docs/workflow_chpc.md); this is
+# the in-pipeline safety net. Runs only when a CHM inference will actually
+# execute and the rasters are absent. The sentinel is the last raster written.
+if [[ "$SKIP_DOWNLOAD" -ne 1 ]] && chm_inference_needed; then
+    COND_DIR="${CSDV_CONDITIONING_DIR:-$DATA_ROOT/chm_model/conditioning}"
+    run_step "conditioning" "$COND_DIR/ecoregion.tif" \
+        csdv download conditioning
+fi
 
 # ---------------------------------------------------------------------------
 # 2. Per-year input + metric steps

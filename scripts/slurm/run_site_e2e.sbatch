@@ -19,6 +19,13 @@
 # Required environment (set in your shell before sbatch, or in this file):
 #   CSDV_DATA_ROOT, CSDV_RESULTS_ROOT, NAIPCHM_REPO_DIR
 #
+# Optional environment:
+#   CSDV_CONDITIONING_DIR - location of the NAIP-CHM conditioning rasters.
+#       Defaults to $CSDV_DATA_ROOT/chm_model/conditioning. The e2e script
+#       auto-fetches them (~1.65 GB) if absent, but you should run
+#       `csdv download conditioning` once on the login node beforehand so the
+#       transfer does not consume this GPU allocation.
+#
 # Loads the project env (mamba) then dispatches to run_site_e2e.sh.
 
 set -euo pipefail

@@ -25,6 +25,12 @@ csdv --help
 
 # External: upstream NAIP-CHM repo for the inference subcommand
 git clone https://github.com/smorf-ntsg/naip-chm ../naip-chm
+
+# One-time: static CONUS-wide conditioning rasters for NAIP-CHM inference (~1.65 GB).
+# Run this on the login node, not inside a GPU job, so the transfer does not
+# consume a GPU allocation.
+csdv download conditioning
+# writes to $CSDV_DATA_ROOT/chm_model/conditioning/ (override with CSDV_CONDITIONING_DIR)
 ```
 
 Add to your `~/.bashrc` (or a project-local `env.sh` you `source` per session):
@@ -34,6 +40,8 @@ export CSDV_DATA_ROOT=/scratch/general/vast/$USER/csdv/data
 export CSDV_RESULTS_ROOT=/scratch/general/vast/$USER/csdv/results
 export CSDV_CACHE_ROOT=/scratch/general/vast/$USER/csdv/cache
 export NAIPCHM_REPO_DIR=/uufs/chpc.utah.edu/common/home/dycelab/users/$USER/code/CSDV/naip-chm
+# Optional: point at a shared, read-only copy of the conditioning rasters.
+# export CSDV_CONDITIONING_DIR=/uufs/chpc.utah.edu/common/home/dycelab/shared/naip-chm/conditioning
 mkdir -p "$CSDV_DATA_ROOT" "$CSDV_RESULTS_ROOT" "$CSDV_CACHE_ROOT"
 ```
 
@@ -73,14 +81,15 @@ Use a 1 to 2 km half-width AOI for the first run so it finishes in minutes, not 
 What this does:
 
 1. `csdv check --site SCBI --years 2018 --window-m 50`
-2. `csdv download naip --site SCBI --start-date 2018-04-01 --end-date 2018-11-30 --out-dir $CSDV_DATA_ROOT/naip/SCBI/2018`
-3. `csdv chm-inference --naip-quad <tif from step 2> --output-dir $CSDV_DATA_ROOT/naip_chm/SCBI/2018`
-4. `csdv segment-crowns --chm <tif from step 3> --out-crowns $CSDV_RESULTS_ROOT/crowns/SCBI/2018/crowns.gpkg`
-5. `csdv compute-metrics --site SCBI --year 2018 --window-m 50`
-6. `csdv stratify --site SCBI --window-m 50`
-7. `csdv classify-stages --site SCBI --year 2018 --window-m 50`
+2. `csdv download conditioning` (only if a CHM stage will run and the conditioning rasters are absent; skipped otherwise)
+3. `csdv download naip --site SCBI --start-date 2018-04-01 --end-date 2018-11-30 --out-dir $CSDV_DATA_ROOT/naip/SCBI/2018`
+4. `csdv chm-inference --naip-quad <tif from step 3> --output-dir $CSDV_DATA_ROOT/naip_chm/SCBI/2018`
+5. `csdv segment-crowns --chm <tif from step 4> --out-crowns $CSDV_RESULTS_ROOT/crowns/SCBI/2018/crowns.gpkg`
+6. `csdv compute-metrics --site SCBI --year 2018 --window-m 50`
+7. `csdv stratify --site SCBI --window-m 50`
+8. `csdv classify-stages --site SCBI --year 2018 --window-m 50`
 
-Trajectory classification is skipped when only one year is requested. Step 7's output, `$CSDV_RESULTS_ROOT/stages/SCBI/2018/50m/stage.tif`, is the deliverable of a single-date run.
+Trajectory classification is skipped when only one year is requested. Step 8's output, `$CSDV_RESULTS_ROOT/stages/SCBI/2018/50m/stage.tif`, is the deliverable of a single-date run.
 
 Per-step logs land in `$CSDV_RESULTS_ROOT/logs/SCBI/<RUN_ID>/<step>.log`. The summary is `summary.log` in the same directory.
 
@@ -116,6 +125,8 @@ sbatch scripts/slurm/run_site_e2e.sbatch SCBI 2014,2018,2022 50
 
 The sbatch wrapper activates the project env, prints the `csdv --version`, then execs `run_site_e2e.sh` with the forwarded arguments. SLURM stdout/stderr live in `results/logs/slurm/csdv_e2e-<jobid>.out`. Per-step e2e logs still go to `$CSDV_RESULTS_ROOT/logs/<SITE>/<RUN_ID>/`.
 
+Run `csdv download conditioning` once on the login node before submitting. The batch job will fetch the conditioning rasters itself if they are absent, but doing it beforehand keeps the 1.65 GB transfer off the GPU allocation.
+
 Resource defaults: 1 GPU, 8 CPU, 48 GB, 6 h. Tune `--gres`, `--mem`, and `--time` in `scripts/slurm/run_site_e2e.sbatch` for larger AOIs.
 
 ## 6. Troubleshooting
@@ -125,6 +136,7 @@ Resource defaults: 1 GPU, 8 CPU, 48 GB, 6 h. Tune `--gres`, `--mem`, and `--time
 | `csdv check` shows `[FAIL] data_root MISSING` | env vars | `CSDV_DATA_ROOT` unset or pointing at a path you cannot write to. |
 | `csdv check` shows `[INFO] import torch (optional) not installed` | env | Only matters if step 3 (`chm-inference`) is in scope. Install with `pip install -e ".[chm_inference]"` or use Colab. |
 | `chm-X` step fails with "Upstream naip-chm repo not found" | `$NAIPCHM_REPO_DIR` | Either set the env var or pass `--repo-dir` via the underlying CLI. |
+| `chm-X` step fails with "Conditioning rasters missing in ..." | `$CSDV_DATA_ROOT/chm_model/conditioning/` (or `$CSDV_CONDITIONING_DIR`) | Rasters not downloaded, or the conditioning step was skipped under `--skip-download`. Run `csdv download conditioning`. |
 | `crowns-X` step fails with "no CHM tif found" | `data/naip_chm/<SITE>/<YEAR>/` | Step 3 did not produce output. Check `chm-<year>.log`. |
 | `metrics-X` step fails with "CHM required for ..." | metric registry | A Pass-1 metric needs CHM and none was found. Confirm step 3 ran. |
 | `compute-metrics` writes nothing visible | `results/metrics/.../manifest.yaml` | The script writes a metric stack TIF and a manifest. Inspect `manifest.yaml` to see which metrics were computed. |
