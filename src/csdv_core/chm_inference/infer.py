@@ -59,6 +59,7 @@ def predict_chm(
     chip_size: int | None = None,
     chip_overlap: float | None = None,
     dry_run: bool = False,
+    download_conditioning: bool = False,
 ) -> Path:
     """Run NAIP-CHM inference on a single NAIP AOI GeoTIFF.
 
@@ -75,6 +76,9 @@ def predict_chm(
         chip_size: Tile size in pixels. Default from ``metrics.yaml``.
         chip_overlap: Tile overlap fraction. Default from ``metrics.yaml``.
         dry_run: If True, pass ``--dry-run`` to the upstream CLI.
+        download_conditioning: If True, fetch any missing conditioning
+            rasters (~1.65 GB) before validating. Off by default so inference
+            jobs do not trigger a surprise download.
 
     Returns:
         Output directory path.
@@ -97,6 +101,10 @@ def predict_chm(
         )
 
     if conditioning_dir is None:
+        if download_conditioning:
+            from csdv_core.download.chm_model import download_conditioning_rasters
+
+            download_conditioning_rasters()
         cond = validate_conditioning().root
     else:
         cond = Path(conditioning_dir).resolve()
@@ -160,6 +168,12 @@ def predict_chm(
 @click.option("--chip-size", default=None, type=int)
 @click.option("--chip-overlap", default=None, type=float)
 @click.option("--dry-run", is_flag=True, default=False)
+@click.option(
+    "--download-conditioning",
+    is_flag=True,
+    default=False,
+    help="Fetch missing conditioning rasters (~1.65 GB) before inference.",
+)
 def cli(
     naip_quad: Path,
     output_dir: Path,
@@ -168,6 +182,7 @@ def cli(
     chip_size: int | None,
     chip_overlap: float | None,
     dry_run: bool,
+    download_conditioning: bool,
 ) -> None:
     """Run NAIP-CHM inference on a single NAIP AOI GeoTIFF."""
     logging.basicConfig(
@@ -181,6 +196,7 @@ def cli(
         chip_size=chip_size,
         chip_overlap=chip_overlap,
         dry_run=dry_run,
+        download_conditioning=download_conditioning,
     )
 
 

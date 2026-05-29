@@ -10,10 +10,17 @@ Migration source: ``legacy/proof_of_concept/Code/download_gee.py``.
 from __future__ import annotations
 
 import logging
+import shutil
+import urllib.request
 from pathlib import Path
 
 import click
 
+from csdv_core.chm_inference.conditioning import (
+    CONDITIONING_BASE_URL,
+    REQUIRED_RASTERS,
+    resolve_conditioning_dir,
+)
 from csdv_core.download._ee import (
     export_image_to_tif,
     initialize_ee,
@@ -130,4 +137,73 @@ def cli(
         crs=crs,
         project=project,
     )
+    click.echo(str(path))
+
+
+def download_conditioning_rasters(
+    out_dir: Path | str | None = None,
+    *,
+    base_url: str = CONDITIONING_BASE_URL,
+    force: bool = False,
+) -> Path:
+    """Download the 5 static NAIP-CHM conditioning rasters over HTTP.
+
+    These are CONUS-wide, EPSG:5070 rasters required by NAIP-CHM inference
+    (see :mod:`csdv_core.chm_inference.conditioning`). They total roughly
+    1.65 GB and only need to be fetched once.
+
+    Args:
+        out_dir: Destination directory. Defaults to
+            :func:`csdv_core.chm_inference.conditioning.resolve_conditioning_dir`.
+        base_url: HTTP directory holding the rasters.
+        force: Re-download files that already exist.
+
+    Returns:
+        Path to the directory holding the rasters.
+
+    Raises:
+        FileNotFoundError: If any raster is missing after the download.
+    """
+    out_dir = Path(out_dir) if out_dir is not None else resolve_conditioning_dir()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    for name in REQUIRED_RASTERS:
+        target = out_dir / name
+        if target.exists() and not force:
+            logger.info("skip %s (already present)", name)
+            continue
+        url = f"{base_url}/{name}"
+        tmp = target.with_suffix(target.suffix + ".part")
+        logger.info("downloading %s -> %s", url, target)
+        with urllib.request.urlopen(url) as response, open(tmp, "wb") as fh:
+            shutil.copyfileobj(response, fh)
+        tmp.replace(target)
+
+    missing = [name for name in REQUIRED_RASTERS if not (out_dir / name).exists()]
+    if missing:
+        raise FileNotFoundError(
+            f"Conditioning rasters still missing in {out_dir} after download: "
+            f"{missing}."
+        )
+    logger.info("All %d conditioning rasters present in %s", len(REQUIRED_RASTERS), out_dir)
+    return out_dir
+
+
+@click.command("conditioning")
+@click.option(
+    "--out-dir",
+    default=None,
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Destination directory; defaults to the resolved conditioning dir.",
+)
+@click.option("--base-url", default=CONDITIONING_BASE_URL, show_default=True)
+@click.option(
+    "--force", is_flag=True, default=False, help="Re-download existing files."
+)
+def conditioning_cli(out_dir: Path | None, base_url: str, force: bool) -> None:
+    """Download the 5 static NAIP-CHM conditioning rasters (~1.65 GB)."""
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s  %(levelname)-7s  %(message)s"
+    )
+    path = download_conditioning_rasters(out_dir, base_url=base_url, force=force)
     click.echo(str(path))
