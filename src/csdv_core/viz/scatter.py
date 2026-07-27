@@ -114,6 +114,7 @@ def screening_scatter(
     stands: pd.DataFrame,
     *,
     highlight: Sequence[str] = (),
+    highlight_labels: Mapping[str, str] | None = None,
     group_column: str = "dist_group",
     size_column: str | None = None,
     group_colors: Mapping[str, str] | None = None,
@@ -130,6 +131,9 @@ def screening_scatter(
         stands: Frame with ``bbox_fill``, ``stand_id``, the grouping column,
             and either ``acres`` or ``area_m2``.
         highlight: Stand identifiers to ring and label.
+        highlight_labels: Optional label per highlighted stand, for example the
+            letter the worked example carries elsewhere in the document.
+            Defaults to the footprint part of the identifier.
         group_column: Column used to colour the points.
         size_column: Optional column scaling marker area, for example the count
             of usable post-disturbance dates.
@@ -176,13 +180,15 @@ def screening_scatter(
             linewidth=1.6,
             zorder=4,
         )
+        labels = dict(highlight_labels or {})
         for x, y, name in zip(acres[keep], fill[keep], ids[keep], strict=True):
             ax.annotate(
-                name.split("-")[1],
+                labels.get(name, name.split("-")[1]),
                 (x, y),
                 textcoords="offset points",
                 xytext=(9, 6),
-                fontsize=7,
+                fontsize=7.5,
+                fontweight="bold",
                 color=INK,
             )
 

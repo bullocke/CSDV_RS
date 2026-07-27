@@ -55,20 +55,46 @@ __all__ = [
     "ENVELOPE_PANELS",
     "blocking_chart",
     "change_panel",
+    "mark_disturbance",
     "metric_panel",
     "stage_strip",
 ]
 
 
-def _mark_disturbance(
-    ax: Axes, last_pre: float | None, first_post: float | None
-) -> None:
-    """Shade the interval in which the disturbance was first seen."""
+def mark_disturbance(
+    ax: Axes,
+    last_pre: float | None,
+    first_post: float | None,
+    *,
+    color: str = HIGHLIGHT,
+) -> bool:
+    """Mark the interval in which the disturbance was first seen.
+
+    The interval is bracketed by dashed lines and lightly shaded, so a reader
+    can tell whether a change in a metric straddles the event or happened
+    somewhere else in the series.
+
+    Nothing is drawn when the interval falls outside the plotted range. A stand
+    disturbed before the imagery record would otherwise get a line jammed
+    against the left spine, which reads as an event at the first date rather
+    than as one that happened before it. Those figures say so in their title
+    instead.
+
+    Returns:
+        True when the interval was drawn.
+    """
     if last_pre is None or first_post is None:
-        return
+        return False
     if not (np.isfinite(last_pre) and np.isfinite(first_post)):
-        return
+        return False
+    left, right = ax.get_xlim()
+    if float(first_post) < left or float(last_pre) > right:
+        return False
     ax.axvspan(last_pre, first_post, color=GRID, alpha=0.7, lw=0, zorder=0)
+    for year in dict.fromkeys([float(last_pre), float(first_post)]):
+        if left <= year <= right:
+            ax.axvline(year, color=color, lw=1.0, ls="--", zorder=1)
+    return True
 
 
 def metric_panel(
@@ -82,17 +108,22 @@ def metric_panel(
     last_pre: float | None = None,
     first_post: float | None = None,
     color: str = ACCENT,
+    series_label: str | None = None,
 ) -> None:
     """One metric against time for one stand.
 
     Dates whose imagery is coarser than the rest are drawn as open markers,
     because a canopy height model derived from 1.0 m imagery is not equivalent
     to one derived from 0.6 m even after both land on a shared grid.
+
+    ``series_label`` names the line for a legend, which is what tells two
+    impact polygons of the same footprint apart when both are drawn here.
     """
     years = np.asarray(years, dtype=float)
     values = np.asarray(values, dtype=float)
-    _mark_disturbance(ax, last_pre, first_post)
-    ax.plot(years, values, "-", color=color, lw=1.5, zorder=3)
+    ax.set_xlim(years.min() - 1, years.max() + 1)
+    mark_disturbance(ax, last_pre, first_post)
+    ax.plot(years, values, "-", color=color, lw=1.5, zorder=3, label=series_label)
 
     if native_res_m is None:
         ax.plot(years, values, "o", color=color, ms=5, zorder=4)
@@ -113,7 +144,6 @@ def metric_panel(
     ax.set_ylabel(label)
     if ylim:
         ax.set_ylim(*ylim)
-    ax.set_xlim(years.min() - 1, years.max() + 1)
     ax.grid(alpha=0.35)
 
 
@@ -124,15 +154,22 @@ def change_panel(
     *,
     label: str,
     color: str = HIGHLIGHT,
+    last_pre: float | None = None,
+    first_post: float | None = None,
 ) -> None:
-    """One consecutive-date change metric as bars, with a zero line."""
+    """One consecutive-date change metric as bars, with a zero line.
+
+    Each bar sits at the later of the two dates it was computed from, so a bar
+    to the right of the marked disturbance interval is the change across it.
+    """
     years = np.asarray(years, dtype=float)
     values = np.asarray(values, dtype=float)
     keep = np.isfinite(values)
+    ax.set_xlim(years.min() - 1, years.max() + 1)
+    mark_disturbance(ax, last_pre, first_post)
     ax.axhline(0.0, color=MUTED, lw=0.8, zorder=1)
     ax.bar(years[keep], values[keep], width=1.1, color=color, alpha=0.85, zorder=2)
     ax.set_ylabel(label)
-    ax.set_xlim(years.min() - 1, years.max() + 1)
     ax.grid(axis="y", alpha=0.35)
 
 

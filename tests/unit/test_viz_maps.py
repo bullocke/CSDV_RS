@@ -18,6 +18,7 @@ from shapely.geometry import MultiPolygon, Polygon, box  # noqa: E402
 from csdv_core.viz.maps import (  # noqa: E402
     chm_panel,
     draw_stand_outline,
+    frame_panel,
     padded_bounds,
     read_rgb_window,
     rgb_panel,
@@ -169,3 +170,39 @@ def test_padded_bounds_widens_by_the_longer_side():
 def test_padded_bounds_respects_a_minimum():
     bounds = padded_bounds(box(0.0, 0.0, 10.0, 10.0), pad_fraction=0.25, min_pad_m=20.0)
     assert bounds == pytest.approx((-20.0, -20.0, 30.0, 30.0))
+
+
+def test_padded_bounds_can_square_a_long_thin_stand():
+    """A strip of square panels tiles without gaps. Several impact polygons in
+    the calibration delivery are ribbons, so without this their rows leave a
+    band of white space above and below the imagery."""
+    minx, miny, maxx, maxy = padded_bounds(
+        box(0.0, 0.0, 100.0, 20.0), pad_fraction=0.0, min_pad_m=0.0, square=True
+    )
+    assert (maxx - minx) == pytest.approx(maxy - miny)
+    # Squaring grows the short side about the centre and leaves the long one.
+    assert (minx, maxx) == pytest.approx((0.0, 100.0))
+    assert (miny, maxy) == pytest.approx((-40.0, 60.0))
+
+
+def test_padded_bounds_leaves_the_aspect_alone_by_default():
+    minx, miny, maxx, maxy = padded_bounds(
+        box(0.0, 0.0, 100.0, 20.0), pad_fraction=0.0, min_pad_m=0.0
+    )
+    assert (maxx - minx) == pytest.approx(100.0)
+    assert (maxy - miny) == pytest.approx(20.0)
+
+
+def test_frame_panel_colours_every_spine():
+    fig, ax = plt.subplots()
+    frame_panel(ax, color="#ff0000", linewidth=3.0)
+    assert all(s.get_visible() for s in ax.spines.values())
+    assert all(s.get_linewidth() == 3.0 for s in ax.spines.values())
+    plt.close(fig)
+
+
+def test_frame_panel_tags_the_panel_when_given_a_label():
+    fig, ax = plt.subplots()
+    frame_panel(ax, label="Wind 2017")
+    assert [t.get_text() for t in ax.texts] == ["Wind 2017"]
+    plt.close(fig)

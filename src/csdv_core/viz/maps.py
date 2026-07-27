@@ -22,7 +22,7 @@ from matplotlib.axes import Axes
 from rasterio.windows import Window
 from shapely.geometry.base import BaseGeometry
 
-from csdv_core.viz.style import INK
+from csdv_core.viz.style import HIGHLIGHT, INK
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,8 @@ __all__ = [
     "CHM_VMAX_M",
     "chm_panel",
     "draw_stand_outline",
+    "frame_panel",
+    "padded_bounds",
     "read_rgb_window",
     "rgb_panel",
     "stretch_rgb",
@@ -266,13 +268,68 @@ def chm_panel(
     return image, transform
 
 
+def frame_panel(
+    ax: Axes,
+    *,
+    color: str = HIGHLIGHT,
+    linewidth: float = 2.2,
+    label: str | None = None,
+) -> None:
+    """Draw a coloured frame round one panel of a multi-date strip.
+
+    Used to pick out the first image in which a disturbance is visible, so a
+    reader can see at a glance where in the sequence the event falls rather
+    than having to compare the dates against the caption.
+
+    Args:
+        ax: Panel to frame.
+        color: Frame colour.
+        linewidth: Frame width.
+        label: Optional short tag drawn inside the top left corner, for
+            example the disturbance type.
+    """
+    for spine in ax.spines.values():
+        spine.set_visible(True)
+        spine.set_color(color)
+        spine.set_linewidth(linewidth)
+        spine.set_zorder(8)
+    if label:
+        ax.text(
+            0.03,
+            0.97,
+            label,
+            transform=ax.transAxes,
+            fontsize=7.5,
+            fontweight="bold",
+            color="white",
+            va="top",
+            ha="left",
+            zorder=9,
+            bbox={"boxstyle": "square,pad=0.22", "fc": color, "lw": 0},
+        )
+
+
 def padded_bounds(
     geometry: BaseGeometry,
     *,
     pad_fraction: float = 0.25,
     min_pad_m: float = 20.0,
+    square: bool = False,
 ) -> tuple[float, float, float, float]:
-    """Bounds of a stand widened by a fraction of its longer side."""
+    """Bounds of a stand widened by a fraction of its longer side.
+
+    Args:
+        geometry: Stand geometry in the raster CRS.
+        pad_fraction: Padding as a fraction of the longer side.
+        min_pad_m: Smallest padding to apply, in metres.
+        square: Expand the shorter side to match the longer before padding. A
+            strip of square panels tiles without gaps, so a long thin stand no
+            longer leaves a band of white space above and below its row.
+    """
     minx, miny, maxx, maxy = geometry.bounds
+    if square:
+        half = max(maxx - minx, maxy - miny) / 2.0
+        cx, cy = (minx + maxx) / 2.0, (miny + maxy) / 2.0
+        minx, maxx, miny, maxy = cx - half, cx + half, cy - half, cy + half
     pad = max(min_pad_m, pad_fraction * max(maxx - minx, maxy - miny))
     return (minx - pad, miny - pad, maxx + pad, maxy + pad)

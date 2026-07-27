@@ -22,6 +22,7 @@ from csdv_core.viz.panels import (  # noqa: E402
     ENVELOPE_PANELS,
     blocking_chart,
     change_panel,
+    mark_disturbance,
     metric_panel,
     stage_strip,
     stand_series,
@@ -254,3 +255,71 @@ def test_every_envelope_panel_has_sane_limits(metric):
     limits = {name: ylim for name, _, ylim in ENVELOPE_PANELS}[metric]
     assert limits[0] < limits[1]
     assert limits[0] >= 0.0
+
+
+def test_mark_disturbance_draws_dashed_bounds_inside_the_range():
+    fig, ax = plt.subplots()
+    ax.set_xlim(2011, 2023)
+    assert mark_disturbance(ax, 2016, 2017) is True
+    assert len(ax.patches) == 1  # the shaded interval
+    assert [line.get_linestyle() for line in ax.lines] == ["--", "--"]
+    plt.close(fig)
+
+
+def test_mark_disturbance_collapses_a_single_year_to_one_line():
+    fig, ax = plt.subplots()
+    ax.set_xlim(2011, 2023)
+    mark_disturbance(ax, 2017, 2017)
+    assert len(ax.lines) == 1
+    plt.close(fig)
+
+
+def test_mark_disturbance_skips_an_event_before_the_record():
+    """A stand cut in 2007 has no before. A line jammed against the left spine
+    would read as an event at the first date, which is a different claim."""
+    fig, ax = plt.subplots()
+    ax.set_xlim(2011, 2023)
+    assert mark_disturbance(ax, 2007, 2008) is False
+    assert not ax.patches and not ax.lines
+    plt.close(fig)
+
+
+def test_metric_panel_does_not_mark_an_event_outside_its_dates():
+    fig, ax = plt.subplots()
+    metric_panel(
+        ax,
+        YEARS,
+        np.linspace(0.6, 0.2, 6),
+        label="Gap fraction",
+        last_pre=2007,
+        first_post=2008,
+    )
+    assert not ax.patches
+    plt.close(fig)
+
+
+def test_metric_panel_names_the_series_for_a_legend():
+    fig, ax = plt.subplots()
+    metric_panel(
+        ax, YEARS, np.linspace(0.6, 0.2, 6), label="Gap fraction", series_label="(a)"
+    )
+    assert ax.get_legend_handles_labels()[1] == ["(a)"]
+    plt.close(fig)
+
+
+def test_change_panel_marks_the_disturbance_interval():
+    fig, ax = plt.subplots()
+    change_panel(
+        ax,
+        YEARS,
+        [np.nan, -0.05, -0.30, 0.02, 0.06, 0.09],
+        label="Change in crown fraction",
+        last_pre=2016,
+        first_post=2017,
+    )
+    spans = [
+        p for p in ax.patches if p.get_width() > 1.0 - 1e-9 and p.get_width() < 1.01
+    ]
+    assert len(ax.patches) == 6  # five bars plus the shaded interval
+    assert len(spans) == 1
+    plt.close(fig)
