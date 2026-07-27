@@ -21,6 +21,19 @@
 # rules with placeholder predicates effectively never fire. A handful of rules
 # (DS1, EF2, LC1, FC2) carry concrete starter thresholds derived from the V5
 # qualitative descriptors, intended for the PoC validation pass.
+#
+# Metric names are the names the metric functions actually emit. Earlier drafts
+# used the workbook spellings; the mapping is crown_width_cv -> crown_cv,
+# crown_width_p90 -> crown_p90, entropy -> glcm_texture, shrub_pct ->
+# shrub_fraction, persistence -> gap_persistence, row_periodicity ->
+# row_directionality. The same mapping is applied in stages.yaml.
+#
+# UNRESOLVED, DS1: the entropy threshold below is 0.30, which belongs to a 0-1
+# normalised scale. metrics.texture reports Shannon entropy in bits, roughly
+# 0-8 at 16 grey levels, which is also the scale the stage envelopes use. As
+# written the DS1 predicate can never be satisfied. Either the threshold is
+# rescaled or the metric is normalised; that is a decision for the team, so it
+# is flagged here rather than silently changed.
 
 trajectory_order:
   - DS1
@@ -75,9 +88,9 @@ trajectories:
     group: DS
     signature:
       - {dim: stage,   reducer: all, op: "in", value: [ESE, LSE]}
-      - {dim: metric,  var: crown_width_cv, reducer: max, op: "<=", value: 0.15}
+      - {dim: metric,  var: crown_cv, reducer: max, op: "<=", value: 0.15}
       - {dim: metric,  var: gap_fraction,   reducer: max, op: "<=", value: 0.10}
-      - {dim: metric,  var: entropy,        reducer: max, op: "<=", value: 0.30}
+      - {dim: metric,  var: glcm_texture,        reducer: max, op: "<=", value: 0.30}
 
   DS2:
     name: "Chronic Defoliation Stagnation"
@@ -100,7 +113,7 @@ trajectories:
     signature:
       - {dim: stage,   reducer: latest, op: "==", value: ESE}
       - {dim: metric,  var: gap_fraction,    reducer: min, op: ">=", value: null}
-      - {dim: metric,  var: crown_width_cv,  reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: crown_cv,  reducer: max, op: "<=", value: null}
 
   DS3c:
     name: "Unknown Cause - delayed transition to LSE"
@@ -108,8 +121,8 @@ trajectories:
     signature:
       - {dim: stage,   reducer: latest, op: "==", value: LSE}
       - {dim: metric,  var: gap_fraction,    reducer: min, op: ">=", value: null}
-      - {dim: metric,  var: crown_width_cv,  reducer: min, op: ">=", value: null}
-      - {dim: metric,  var: entropy,         reducer: min, op: ">=", value: null}
+      - {dim: metric,  var: crown_cv,  reducer: min, op: ">=", value: null}
+      - {dim: metric,  var: glcm_texture,         reducer: min, op: ">=", value: null}
 
   # --------------------------------------------------------------------------
   # Tree Establishment Failure
@@ -120,7 +133,7 @@ trajectories:
     group: EF
     signature:
       - {dim: stage,   reducer: all, op: "in", value: [LSI, ESE]}
-      - {dim: metric,  var: shrub_pct,     reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: shrub_fraction,     reducer: max, op: "<=", value: null}
       - {dim: metric,  var: gap_fraction,  reducer: min, op: ">=", value: null}
 
   EF2:
@@ -128,7 +141,7 @@ trajectories:
     group: EF
     signature:
       - {dim: stage,   reducer: all, op: "in", value: [LSI, ESE]}
-      - {dim: metric,  var: shrub_pct,     reducer: min, op: ">=", value: 0.50}
+      - {dim: metric,  var: shrub_fraction,     reducer: min, op: ">=", value: 0.50}
       - {dim: metric,  var: gap_fraction,  reducer: mean, op: ">=", value: 0.20}
 
   EF3:
@@ -208,27 +221,27 @@ trajectories:
     group: FC
     signature:
       - {dim: stage,   reducer: latest, op: "==", value: ESE}
-      - {dim: metric,  var: crown_width_cv, reducer: max, op: "<=", value: null}
-      - {dim: metric,  var: entropy,        reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: crown_cv, reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: glcm_texture,        reducer: max, op: "<=", value: null}
 
   FC2:
     name: "Row-structured tree plantation (young-mid rotation)"
     group: FC
     signature:
-      - {dim: metric,  var: crown_width_cv,  reducer: max, op: "<=", value: 0.20}
-      - {dim: metric,  var: row_periodicity, reducer: max, op: ">=", value: 0.50}
+      - {dim: metric,  var: crown_cv,  reducer: max, op: "<=", value: 0.20}
+      - {dim: metric,  var: row_directionality, reducer: max, op: ">=", value: 0.50}
 
   FC3:
     name: "Closed-canopy even-aged tree plantation"
     group: FC
     signature:
-      - {dim: metric,  var: crown_width_cv, reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: crown_cv, reducer: max, op: "<=", value: null}
       - {dim: metric,  var: gap_fraction,   reducer: max, op: "<=", value: null}
-      - {dim: metric,  var: entropy,        reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: glcm_texture,        reducer: max, op: "<=", value: null}
 
   FC4:
     name: "Tree plantation (mixed or type unknown)"
     group: FC
     signature:
-      - {dim: metric,  var: crown_width_cv, reducer: max, op: "<=", value: null}
-      - {dim: metric,  var: entropy,        reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: crown_cv, reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: glcm_texture,        reducer: max, op: "<=", value: null}

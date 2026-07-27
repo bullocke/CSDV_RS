@@ -80,8 +80,8 @@ def test_classify_trajectories_cli_smoke(tmp_path: Path, monkeypatch) -> None:
     for year in years:
         mdir = results / "metrics" / site / str(year) / "100m"
         _write_float(mdir / "gap_fraction.tif", np.full((4, 4), 0.05))
-        _write_float(mdir / "crown_width_cv.tif", np.full((4, 4), 0.05))
-        _write_float(mdir / "entropy.tif", np.full((4, 4), 0.10))
+        _write_float(mdir / "crown_cv.tif", np.full((4, 4), 0.05))
+        _write_float(mdir / "glcm_texture.tif", np.full((4, 4), 0.10))
         _write_float(mdir / "crown_fraction.tif", np.full((4, 4), 0.80))
         # LC1 also references ndvi_seasonal_amplitude (placeholder), but its
         # value is null in trajectories.yaml so the predicate never fires;
@@ -91,13 +91,13 @@ def test_classify_trajectories_cli_smoke(tmp_path: Path, monkeypatch) -> None:
         # Other metrics referenced by placeholder rules:
         for name in [
             "ndvi_trend",
-            "shrub_pct",
+            "shrub_fraction",
             "wetness_persistence",
             "impervious_fraction",
             "ndvi_mean",
             "linearity_index",
             "gap_persistence",
-            "row_periodicity",
+            "row_directionality",
         ]:
             _write_float(mdir / f"{name}.tif", np.zeros((4, 4)))
 

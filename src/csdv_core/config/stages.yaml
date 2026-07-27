@@ -7,12 +7,37 @@
 #   stage_codes  Integer codes written into stage rasters.
 #
 # Stage codes (V5): ESI, LSI, ESE, LSE, UR, MA_OW, OG.
-# Six metric families: crown_width_cv, gap_fraction, shrub_pct, entropy,
-# ndvi_trend, persistence (V5 Section 3).
 #
-# Production envelopes are placeholders pending V5 calibration. Tests use
-# their own fixture under tests/fixtures/ so production placeholders never
-# block the unit suite.
+# Metric names are the names the metric functions actually emit, so that a
+# metric raster or a stand metric dict can be matched against an envelope
+# without translation. The classification workbook and earlier drafts of this
+# file used different spellings; the mapping is:
+#
+#   crown_width_cv  -> crown_cv         (metrics.crown)
+#   crown_width_p90 -> crown_p90        (metrics.crown)
+#   entropy         -> glcm_texture     (metrics.texture)
+#   shrub_pct       -> shrub_fraction   (metrics.cover)
+#   persistence     -> gap_persistence  (metrics.gap)
+#
+# IMPORTANT: a metric with `{min: null, max: null}` is not "unconstrained", it
+# is a free point. `stages.envelopes.evaluate_envelope` returns True for any
+# finite value when both bounds are null, and `match_stage` then counts the
+# metric as both evaluated and matched. To leave a metric unconstrained, omit
+# it from the envelope so that it reduces the denominator instead.
+#
+# `ndvi_trend` appears in the workbook for every stage but has no
+# implementation, so it is omitted throughout.
+#
+# Site type keys:
+#   type_00  Site type not assigned. Carries the provisional, uncalibrated
+#            envelopes translated from the classification workbook's
+#            qualitative bands. Recorded by their author as unreviewed
+#            guesses. Do not read these as results.
+#   type_01  Floodplain / riparian hydric. The only envelope in this file with
+#            an external source. Every other site type is still empty.
+#
+# Tests use their own fixture under tests/fixtures/ so production placeholders
+# never block the unit suite.
 
 stage_order: [ESI, LSI, ESE, LSE, UR, MA_OW, OG]
 stage_codes:
@@ -28,70 +53,78 @@ stages:
 
   ESI:
     envelopes:
-      type_01:
-        gap_fraction:   {min: null, max: null}
-        crown_width_cv: {min: null, max: null}
-        shrub_pct:      {min: null, max: null}
-        entropy:        {min: null, max: null}
-        ndvi_trend:     {min: null, max: null}
-        persistence:    {min: null, max: null}
+      type_00:
+        gap_fraction:    {min: 0.75, max: 1.00}
+        crown_cv:        {min: 0.00, max: 0.10}
+        glcm_texture:    {min: 6.50, max: 8.00}
+        gap_persistence: {min: 0.00, max: 0.40}
+        # shrub_fraction is "not constrained" for this stage, so it is omitted.
+      type_01: {}
 
   LSI:
     envelopes:
-      type_01:
-        gap_fraction:   {min: null, max: null}
-        crown_width_cv: {min: null, max: null}
-        shrub_pct:      {min: null, max: null}
-        entropy:        {min: null, max: null}
-        ndvi_trend:     {min: null, max: null}
-        persistence:    {min: null, max: null}
+      type_00:
+        gap_fraction:    {min: 0.45, max: 0.75}
+        crown_cv:        {min: 0.10, max: 0.25}
+        glcm_texture:    {min: 4.00, max: 6.50}
+        shrub_fraction:  {min: 0.15, max: 0.40}
+        gap_persistence: {min: 0.00, max: 0.40}
+      type_01: {}
 
   ESE:
     envelopes:
-      type_01:
-        gap_fraction:   {min: null, max: null}
-        crown_width_cv: {min: null, max: null}
-        shrub_pct:      {min: null, max: null}
-        entropy:        {min: null, max: null}
-        ndvi_trend:     {min: null, max: null}
-        persistence:    {min: null, max: null}
+      type_00:
+        gap_fraction:    {min: 0.20, max: 0.45}
+        crown_cv:        {min: 0.25, max: 0.40}
+        glcm_texture:    {min: 4.00, max: 6.50}
+        shrub_fraction:  {min: 0.00, max: 0.15}
+        gap_persistence: {min: 0.40, max: 0.70}
+      type_01: {}
 
   LSE:
     envelopes:
+      type_00:
+        gap_fraction:    {min: 0.05, max: 0.20}
+        crown_cv:        {min: 0.10, max: 0.25}
+        glcm_texture:    {min: 0.00, max: 4.00}
+        shrub_fraction:  {min: 0.00, max: 0.15}
+        gap_persistence: {min: 0.70, max: 1.00}
       type_01:
         gap_fraction:    {min: 0.00, max: 0.10}
-        crown_width_cv:  {min: null, max: 0.30}
-        shrub_pct:       {min: null, max: null}
-        entropy:         {min: null, max: null}
-        ndvi_trend:      {min: null, max: null}
-        persistence:     {min: null, max: null}
+        crown_cv:        {min: null, max: 0.30}
 
+  # UR carries the same envelope as ESE. That is not a transcription error: the
+  # workbook describes understory reinitiation by the direction a metric is
+  # moving rather than the level it has reached, so the two stages are not
+  # separable on a single date. Because ties break toward the earlier stage in
+  # stage_order, UR can never be assigned while this holds. Resolving it needs
+  # either a rate-of-change term here or a move to the trajectory layer.
   UR:
     envelopes:
-      type_01:
-        gap_fraction:   {min: null, max: null}
-        crown_width_cv: {min: null, max: null}
-        shrub_pct:      {min: null, max: null}
-        entropy:        {min: null, max: null}
-        ndvi_trend:     {min: null, max: null}
-        persistence:    {min: null, max: null}
+      type_00:
+        gap_fraction:    {min: 0.20, max: 0.45}
+        crown_cv:        {min: 0.25, max: 0.40}
+        glcm_texture:    {min: 4.00, max: 6.50}
+        shrub_fraction:  {min: 0.00, max: 0.15}
+        gap_persistence: {min: 0.40, max: 0.70}
+      type_01: {}
 
   MA_OW:
     envelopes:
-      type_01:
-        gap_fraction:   {min: null, max: null}
-        crown_width_cv: {min: null, max: null}
-        shrub_pct:      {min: null, max: null}
-        entropy:        {min: null, max: null}
-        ndvi_trend:     {min: null, max: null}
-        persistence:    {min: null, max: null}
+      type_00:
+        gap_fraction:    {min: 0.20, max: 0.45}
+        crown_cv:        {min: 0.40, max: 0.60}
+        glcm_texture:    {min: 6.50, max: 8.00}
+        shrub_fraction:  {min: 0.00, max: 0.15}
+        gap_persistence: {min: 0.70, max: 1.00}
+      type_01: {}
 
   OG:
     envelopes:
-      type_01:
-        gap_fraction:   {min: null, max: null}
-        crown_width_cv: {min: null, max: null}
-        shrub_pct:      {min: null, max: null}
-        entropy:        {min: null, max: null}
-        ndvi_trend:     {min: null, max: null}
-        persistence:    {min: null, max: null}
+      type_00:
+        gap_fraction:    {min: 0.20, max: 0.45}
+        crown_cv:        {min: 0.60, max: 1.50}
+        glcm_texture:    {min: 6.50, max: 8.00}
+        shrub_fraction:  {min: 0.00, max: 0.15}
+        gap_persistence: {min: 0.70, max: 1.00}
+      type_01: {}
