@@ -205,6 +205,8 @@ def naip_mosaic(
     import rasterio
     from rasterio.enums import Resampling
     from rasterio.vrt import WarpedVRT
+    from rasterio.warp import transform_bounds
+    from rasterio.windows import Window, from_bounds
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -212,6 +214,7 @@ def naip_mosaic(
 
     mosaic = np.zeros((4, dst_height, dst_width), dtype="uint8")
     written = np.zeros((dst_height, dst_width), dtype=bool)
+    full = Window(col_off=0, row_off=0, width=dst_width, height=dst_height)
 
     env = {
         "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",
@@ -222,22 +225,39 @@ def naip_mosaic(
     with rasterio.Env(**env):
         for item in items:
             href = item.assets[NAIP_ASSET].href
-            with (
-                rasterio.open(href) as src,
-                WarpedVRT(
+            with rasterio.open(href) as src:
+                # Warp only into the part of the output this quad can reach.
+                # Reading the whole grid once per quad would multiply the work
+                # by the number of quads for no benefit.
+                quad = transform_bounds(src.crs, dst_crs, *src.bounds, densify_pts=21)
+                window = from_bounds(*quad, transform=dst_transform)
+                window = window.round_offsets().round_lengths()
+                try:
+                    window = window.intersection(full)
+                except rasterio.errors.WindowError:
+                    logger.debug("%s falls outside the target grid", item.id)
+                    continue
+                if window.width < 1 or window.height < 1:
+                    continue
+                sub_transform = rasterio.windows.transform(window, dst_transform)
+                with WarpedVRT(
                     src,
                     crs=dst_crs,
-                    transform=dst_transform,
-                    width=dst_width,
-                    height=dst_height,
+                    transform=sub_transform,
+                    width=int(window.width),
+                    height=int(window.height),
                     resampling=method,
-                ) as vrt,
-            ):
-                block = vrt.read()
+                ) as vrt:
+                    block = vrt.read()
+
+            rows = slice(int(window.row_off), int(window.row_off + window.height))
+            cols = slice(int(window.col_off), int(window.col_off + window.width))
             covered = block.any(axis=0)
-            fill = covered & ~written
-            mosaic[:, fill] = block[:, fill]
-            written |= covered
+            fill = covered & ~written[rows, cols]
+            target = mosaic[:, rows, cols]
+            target[:, fill] = block[:, fill]
+            mosaic[:, rows, cols] = target
+            written[rows, cols] |= covered
 
     coverage = float(written.mean())
     profile = {

@@ -142,21 +142,27 @@ def add_scale_bar(
     """Draw a scale bar in the lower left of an image axis.
 
     ``ax`` is expected to be showing an array in pixel coordinates, as
-    :func:`matplotlib.axes.Axes.imshow` produces.
+    :func:`matplotlib.axes.Axes.imshow` produces. That inverts the y axis, so
+    the bar is positioned from the axis limits by screen direction rather than
+    by value; reading the smaller limit as "the bottom" would put it in the top
+    corner, over the image.
     """
     from matplotlib.patches import Rectangle
 
     if pixel_size_m <= 0:
         return
-    xlim, ylim = ax.get_xlim(), ax.get_ylim()
-    x_range, y_range = abs(xlim[1] - xlim[0]), abs(ylim[1] - ylim[0])
+    x_left, x_right = ax.get_xlim()
+    y_bottom, y_top = ax.get_ylim()
+    x_range, y_range = abs(x_right - x_left), abs(y_top - y_bottom)
     bar_px = bar_m / pixel_size_m
     if bar_px > 0.7 * x_range:
         logger.debug("Scale bar of %.0f m is too wide for this panel", bar_m)
         return
-    x0 = min(xlim) + 0.05 * x_range
-    y0 = min(ylim) + 0.07 * y_range
-    height = 0.02 * y_range
+    # Positive is up the screen, whichever way the axis runs.
+    up = -1.0 if y_bottom > y_top else 1.0
+    x0 = min(x_left, x_right) + 0.05 * x_range
+    y0 = y_bottom + up * 0.06 * y_range
+    height = up * 0.02 * y_range
     ax.add_patch(
         Rectangle(
             (x0, y0),
@@ -170,10 +176,10 @@ def add_scale_bar(
     )
     ax.text(
         x0 + bar_px / 2,
-        y0 + height * 2.2,
+        y0 + height * 2.4,
         f"{bar_m:g} m",
         ha="center",
-        va="bottom",
+        va="bottom" if up > 0 else "top",
         fontsize=FONT_SIZE - 2,
         color=color,
         zorder=6,

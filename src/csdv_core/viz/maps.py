@@ -76,21 +76,48 @@ def stretch_rgb(
     return out
 
 
+def _decimated(
+    window: Window, max_px: int | None
+) -> tuple[tuple[int, int] | None, float]:
+    """Return the out_shape and scale factor for reading ``window`` decimated.
+
+    A whole mapping module is over a hundred megapixels, far more than any
+    printed panel can show. Reading it decimated keeps an overview figure
+    within memory and costs nothing visible at figure resolution.
+    """
+    height, width = int(window.height), int(window.width)
+    if max_px is None or max(height, width) <= max_px:
+        return None, 1.0
+    factor = max(height, width) / float(max_px)
+    return (max(1, int(height / factor)), max(1, int(width / factor))), factor
+
+
 def read_rgb_window(
     path: Path | str,
     bounds: tuple[float, float, float, float],
     *,
     bands: tuple[int, int, int] = (1, 2, 3),
+    max_px: int | None = 2400,
 ) -> tuple[np.ndarray, Any]:
-    """Read three bands over map ``bounds`` and return ``(H, W, 3)`` with its transform."""
+    """Read three bands over map ``bounds`` and return ``(H, W, 3)`` with its transform.
+
+    ``max_px`` caps the longer side of the returned block, decimating on read.
+    The returned transform describes the decimated grid, so an overlay drawn
+    with it still lands in the right place.
+    """
     with rasterio.open(path) as src:
         window = rasterio.windows.from_bounds(*bounds, transform=src.transform)
         window = window.round_offsets().round_lengths()
         window = window.intersection(
             Window(col_off=0, row_off=0, width=src.width, height=src.height)
         )
-        block = np.dstack([src.read(b, window=window) for b in bands])
+        out_shape, factor = _decimated(window, max_px)
+        block = np.dstack(
+            [src.read(b, window=window, out_shape=out_shape) for b in bands]
+        )
         transform = src.window_transform(window)
+    if factor != 1.0:
+        transform = transform * transform.scale(factor, factor)
     return block, transform
 
 
@@ -100,19 +127,27 @@ def read_band_window(
     *,
     band: int = 1,
     scale: float = 1.0,
+    max_px: int | None = 2400,
 ) -> tuple[np.ndarray, Any]:
-    """Read one band over map ``bounds``, nodata as NaN, scaled to metres."""
+    """Read one band over map ``bounds``, nodata as NaN, scaled to metres.
+
+    ``max_px`` caps the longer side, decimating on read, as in
+    :func:`read_rgb_window`.
+    """
     with rasterio.open(path) as src:
         window = rasterio.windows.from_bounds(*bounds, transform=src.transform)
         window = window.round_offsets().round_lengths()
         window = window.intersection(
             Window(col_off=0, row_off=0, width=src.width, height=src.height)
         )
-        arr = src.read(band, window=window).astype(np.float32)
+        out_shape, factor = _decimated(window, max_px)
+        arr = src.read(band, window=window, out_shape=out_shape).astype(np.float32)
         transform = src.window_transform(window)
         nodata = src.nodatavals[band - 1]
     if nodata is not None and np.isfinite(nodata):
         arr = np.where(arr == np.float32(nodata), np.nan, arr)
+    if factor != 1.0:
+        transform = transform * transform.scale(factor, factor)
     return arr * np.float32(scale), transform
 
 
@@ -189,9 +224,10 @@ def rgb_panel(
     geometry: BaseGeometry | None = None,
     title: str | None = None,
     gamma: float = 1.0,
+    max_px: int | None = 2400,
 ) -> Any:
     """Draw a NAIP true-colour panel, optionally with a stand outlined."""
-    block, transform = read_rgb_window(path, bounds)
+    block, transform = read_rgb_window(path, bounds, max_px=max_px)
     ax.imshow(stretch_rgb(block, gamma=gamma), interpolation="nearest")
     if geometry is not None:
         draw_stand_outline(ax, geometry, transform)
@@ -212,13 +248,14 @@ def chm_panel(
     vmax: float = CHM_VMAX_M,
     scale: float = 1.0,
     cmap: str = "viridis",
+    max_px: int | None = 2400,
 ):
     """Draw a canopy height panel, optionally with a stand outlined.
 
     Returns the image handle so a caller can attach one shared colourbar to a
     whole row rather than one per panel.
     """
-    arr, transform = read_band_window(path, bounds, scale=scale)
+    arr, transform = read_band_window(path, bounds, scale=scale, max_px=max_px)
     image = ax.imshow(arr, cmap=cmap, vmin=0.0, vmax=vmax, interpolation="nearest")
     if geometry is not None:
         draw_stand_outline(ax, geometry, transform)

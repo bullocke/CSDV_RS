@@ -127,15 +127,18 @@ def screening_scatter(
 
     Args:
         ax: Target axis.
-        stands: Frame with ``area_m2``, ``bbox_fill``, ``stand_id`` and the
-            grouping column.
+        stands: Frame with ``bbox_fill``, ``stand_id``, the grouping column,
+            and either ``acres`` or ``area_m2``.
         highlight: Stand identifiers to ring and label.
         group_column: Column used to colour the points.
         size_column: Optional column scaling marker area, for example the count
             of usable post-disturbance dates.
         group_colors: Optional colour per group value.
     """
-    acres = stands["area_m2"].to_numpy(dtype=float) / 4046.856
+    if "acres" in stands.columns:
+        acres = stands["acres"].to_numpy(dtype=float)
+    else:
+        acres = stands["area_m2"].to_numpy(dtype=float) / 4046.856
     fill = stands["bbox_fill"].to_numpy(dtype=float)
     groups = stands[group_column].astype(str).to_numpy()
 
