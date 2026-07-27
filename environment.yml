@@ -44,6 +44,10 @@ dependencies:
   # Topographic analysis (Phase 4 stratification)
   - richdem
 
+  # Imagery search and access (Microsoft Planetary Computer)
+  - pystac-client
+  - planetary-computer
+
   # Nice extras for this kind of project
   - requests
   - tqdm
