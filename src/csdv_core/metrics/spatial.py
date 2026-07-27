@@ -37,7 +37,7 @@ from csdv_core.metrics.registry import register
 logger = logging.getLogger(__name__)
 
 
-def _edge_mask(mask: np.ndarray) -> np.ndarray:
+def edge_mask(mask: np.ndarray) -> np.ndarray:
     """Boolean edge map: True where a pixel differs from any 4-neighbor."""
     m = mask.astype(bool)
     edge = np.zeros_like(m)
@@ -48,7 +48,7 @@ def _edge_mask(mask: np.ndarray) -> np.ndarray:
     return edge
 
 
-def _hough_peak_ratio(edges: np.ndarray, *, n_angles: int = 90) -> float:
+def hough_peak_ratio(edges: np.ndarray, *, n_angles: int = 90) -> float:
     """Ratio of the strongest Hough accumulator peak to the mean.
 
     Returns 0.0 if no edge pixels are present. Higher values indicate a
@@ -96,8 +96,8 @@ def linearity_index(
     n_rows, n_cols = tile_shape(mask.shape[0], mask.shape[1], window_px)
     out = np.full((n_rows, n_cols), np.nan, dtype=np.float32)
     for r, c, tile in iter_tiles(mask, window_px):
-        edges = _edge_mask(tile)
-        out[r, c] = _hough_peak_ratio(edges, n_angles=n_angles)
+        edges = edge_mask(tile)
+        out[r, c] = hough_peak_ratio(edges, n_angles=n_angles)
     logger.info(
         "linearity_index: %dx%d windows (%.0fm, px=%.2fm, n_angles=%d)",
         n_rows,
@@ -145,7 +145,7 @@ def edge_density(
     px = grid.pixel_size_m
     window_area_m2 = float(window_m * window_m)
     for r, c, tile in iter_tiles(mask, window_px):
-        edges = _edge_mask(tile)
+        edges = edge_mask(tile)
         edge_len_m = float(edges.sum()) * px
         out[r, c] = edge_len_m / window_area_m2
     logger.info(
@@ -166,7 +166,7 @@ def edge_density(
     )
 
 
-def _fft_directionality(tile: np.ndarray, *, n_bins: int = 36) -> float:
+def fft_directionality(tile: np.ndarray, *, n_bins: int = 36) -> float:
     """Ratio of peak angular power-spectrum bin to the mean over bins.
 
     Returns 0 for flat or single-value tiles. Higher values mean energy is
@@ -235,7 +235,7 @@ def row_directionality(
     n_rows, n_cols = tile_shape(arr.shape[0], arr.shape[1], window_px)
     out = np.full((n_rows, n_cols), np.nan, dtype=np.float32)
     for r, c, tile in iter_tiles(arr, window_px):
-        out[r, c] = _fft_directionality(tile, n_bins=n_bins)
+        out[r, c] = fft_directionality(tile, n_bins=n_bins)
     logger.info(
         "row_directionality: %dx%d windows (%.0fm, px=%.2fm, bins=%d)",
         n_rows,
@@ -255,4 +255,19 @@ def row_directionality(
     )
 
 
-__all__ = ["linearity_index", "edge_density", "row_directionality"]
+# The three kernels above are pure functions of an array and are reused by
+# csdv_core.zonal.spatial, which applies them inside a stand polygon rather than
+# over a grid of windows. They keep their old private names as aliases so that
+# any existing import continues to resolve.
+_edge_mask = edge_mask
+_hough_peak_ratio = hough_peak_ratio
+_fft_directionality = fft_directionality
+
+__all__ = [
+    "edge_density",
+    "edge_mask",
+    "fft_directionality",
+    "hough_peak_ratio",
+    "linearity_index",
+    "row_directionality",
+]

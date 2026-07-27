@@ -185,7 +185,9 @@ def download_conditioning_rasters(
             f"Conditioning rasters still missing in {out_dir} after download: "
             f"{missing}."
         )
-    logger.info("All %d conditioning rasters present in %s", len(REQUIRED_RASTERS), out_dir)
+    logger.info(
+        "All %d conditioning rasters present in %s", len(REQUIRED_RASTERS), out_dir
+    )
     return out_dir
 
 

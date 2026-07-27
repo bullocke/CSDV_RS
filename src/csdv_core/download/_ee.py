@@ -68,8 +68,7 @@ def site_aoi(site_code: str, half_km: float) -> ee.Geometry:
     entry = sites.get(site_code.upper())
     if entry.center_lonlat is None:
         raise ValueError(
-            f"Site {site_code!r} has no center_lonlat in sites.yaml; "
-            "cannot build AOI."
+            f"Site {site_code!r} has no center_lonlat in sites.yaml; cannot build AOI."
         )
     lon, lat = entry.center_lonlat
     return ee.Geometry.Point([lon, lat]).buffer(half_km * 1000.0).bounds()

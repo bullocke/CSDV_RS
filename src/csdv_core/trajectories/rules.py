@@ -40,8 +40,7 @@ def _stage_value_to_code(value, stage_codes: Mapping[str, int]) -> int:
             return int(stage_codes[value])
         except KeyError as exc:
             raise ValueError(
-                f"Unknown stage abbreviation {value!r}; "
-                f"known: {sorted(stage_codes)}"
+                f"Unknown stage abbreviation {value!r}; known: {sorted(stage_codes)}"
             ) from exc
     if isinstance(value, bool):
         raise ValueError("stage value must be a code or abbreviation, not bool")

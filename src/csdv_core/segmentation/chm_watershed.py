@@ -58,6 +58,7 @@ def segment_crowns(
     smooth_kernel: int = 3,
     min_peak_distance_m: float = 3.0,
     min_crown_area_m2: float = 1.0,
+    mean_height_m: float | None = None,
 ) -> gpd.GeoDataFrame:
     """Segment individual tree crowns from a CHM.
 
@@ -69,6 +70,12 @@ def segment_crowns(
         smooth_kernel: Side length of the mean-filter kernel.
         min_peak_distance_m: Minimum separation between local maxima.
         min_crown_area_m2: Polygons smaller than this are dropped.
+        mean_height_m: Canopy height used to size the local-maximum footprint.
+            Defaults to the mean of the masked input, which makes the footprint
+            depend on how much surrounding forest the caller happened to pass
+            in. Pass one value computed over the whole scene when segmenting it
+            in blocks or per stand, so that every crown is found under the same
+            rule and crown statistics stay comparable between stands.
 
     Returns:
         GeoDataFrame with columns ``segment_id, area_m2, crown_diam_m``
@@ -86,7 +93,9 @@ def segment_crowns(
             crs=crs,
         )
 
-    mean_h = float(np.nanmean(masked))
+    mean_h = (
+        float(np.nanmean(masked)) if mean_height_m is None else float(mean_height_m)
+    )
     min_dist_px = _peak_distance_px(min_peak_distance_m, px, mean_h)
 
     # Local maxima -> tree-top markers.
