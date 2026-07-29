@@ -60,6 +60,16 @@ class ProjectPaths:
     def chm_model_dir(self) -> Path:
         return self.data_root / "chm_model"
 
+    def satellite_dir(self, site: str) -> Path:
+        """Per-stand satellite observation cache under ``data_root/satellite/<site>/``.
+
+        This sits under ``data_root`` rather than ``results_root`` because it is
+        a cache of an external archive, not something the pipeline derived. The
+        per-year metrics computed from it are a result and live under
+        :meth:`stands_dir`.
+        """
+        return self.data_root / "satellite" / site
+
     # ---- output subpaths ------------------------------------------------
 
     def metrics_dir(self, site: str, year: int, window_m: int | float) -> Path:
@@ -98,6 +108,15 @@ class ProjectPaths:
         if window_m is None:
             return base
         return base / f"{int(window_m)}m"
+
+    def stands_dir(self, site: str) -> Path:
+        """Per-stand derived products under ``results_root/stands/<site>/``.
+
+        Holds the stand metric table, the per-year satellite metrics, the stage
+        and trajectory tables, and the cached crown segmentations. This is the
+        polygon-based counterpart to :meth:`metrics_dir`, which is windowed.
+        """
+        return self.results_root / "stands" / site
 
     def figures_dir(self) -> Path:
         return self.results_root / "figures"

@@ -1,0 +1,106 @@
+# Satellite index extraction and per-year metric derivation.
+#
+# Schema:
+#   earth_engine     Connection and request shaping.
+#   extraction       What is reduced, over what, and how the work is chunked.
+#   qa               Masking and the per-observation quality gates.
+#   annual_defaults  Defaults shared by every annual metric.
+#   annual_metrics.<name>
+#                    index    Observation column the metric reads.
+#                    units    Display units.
+#                    params   Per-metric overrides, merged over annual_defaults.
+#
+# Metric names must stay exactly ndvi_mean, ndvi_seasonal_amplitude and
+# ndvi_trend. trajectories.yaml references those spellings in DS2, DS3a, EF3,
+# LC1, LC3, LC5 and LC6, and stages.yaml references the first two. A rename
+# here silently unhooks nine rules, so a unit test pins the names both ways.
+
+earth_engine:
+  project: dyce-biomass
+  high_volume: true
+  deadline_ms: 300000
+  workload_tag: csdv-satellite
+  max_workers: 4
+
+extraction:
+  sensors: [L4, L5, L7, L8, L9]
+  indices: [ndvi]
+  start_year: 1985
+  end_year: 2025
+  scale_m: 30.0
+  tile_scale: 2
+  page_size: 5000
+  chunk: year                 # year | half_year | month. The retry ladder walks down.
+  max_scene_cloud_cover: 80.0 # Generous: a stand can be clear under a cloudy scene.
+  aoi_buffer_m: 1000.0
+  simplify_tolerance_m: 1.0   # One thirtieth of a pixel. Keeps the expression small.
+  max_attempts: 4
+  backoff_base_s: 2.0
+  backoff_max_s: 60.0
+
+qa:
+  # Collection 2 QA_PIXEL bits 0-5. The Earth Engine prototype in
+  # scripts/ee/test_retrieve_Landsat_NDVI.py masked only cloud and cloud shadow
+  # (bits 3 and 4, i.e. 24), which leaves fill, dilated cloud, cirrus and snow
+  # in the sample. A stand here is 5 to 20 Landsat pixels, so one dilated-cloud
+  # pixel moves the mean and one snow pixel drives a closed-canopy NDVI toward
+  # zero.
+  mask_bits: [fill, dilated_cloud, cirrus, cloud, cloud_shadow, snow]
+  # Off by default. Bit 1 already catches most of what this adds, and turning it
+  # on thins the winter tail that the harmonic amplitude fit needs.
+  mask_cloud_confidence_medium: false
+  mask_saturated_bands: true
+  reflectance_min: 0.0
+  reflectance_max: 1.0
+  index_valid_range: [-1.0, 1.0]
+  min_pixels: 4
+  min_effective_pixels: 2.0
+  # Fraction of the stand that survived masking. Falls in proportion to area
+  # lost to cloud, to shadow, or to a Landsat 7 SLC-off gap alike, so one gate
+  # covers all three. This is why SLC-off scenes are kept rather than excluded:
+  # dropping them would void 2012 entirely, the year between the end of
+  # Landsat 5 and the start of Landsat 8.
+  min_coverage_fraction: 0.60
+  # Four Landsat pixels. Below this the value is dominated by the point spread
+  # function of neighbouring pixels rather than by the stand.
+  min_area_m2: 3600.0
+
+annual_defaults:
+  doy_min: 1
+  doy_max: 366
+  min_obs: 6
+
+annual_metrics:
+  ndvi_mean:
+    index: ndvi
+    units: index
+    params:
+      # 1 June to 15 September. At 39 N green-up finishes near day 130 and
+      # senescence starts near day 270, so this window sits inside the plateau
+      # and a two-week shift in acquisition date does not move the value. All
+      # six Elkinsville NAIP dates fall inside it.
+      doy_min: 152
+      doy_max: 258
+      min_obs: 3
+
+  ndvi_seasonal_amplitude:
+    index: ndvi
+    units: index (peak to trough)
+    params:
+      # Full calendar year: the winter trough is half the signal.
+      doy_min: 1
+      doy_max: 366
+      min_obs: 6            # 3 parameters plus 3 residual degrees of freedom
+      min_doy_span: 150.0
+      max_condition: 30.0
+      max_amplitude: 1.5
+
+  ndvi_trend:
+    index: ndvi
+    units: index per year
+    params:
+      # Theil-Sen slope of the annual ndvi_mean series over a trailing window,
+      # so a single bad year cannot set the sign the way a least-squares slope
+      # would.
+      window_years: 5
+      min_years: 4

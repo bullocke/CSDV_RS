@@ -25,8 +25,47 @@
 # metric as both evaluated and matched. To leave a metric unconstrained, omit
 # it from the envelope so that it reduces the denominator instead.
 #
-# `ndvi_trend` appears in the workbook for every stage but has no
-# implementation, so it is omitted throughout.
+# Landsat metrics (csdv_core.satellite, added after the first Elkinsville run):
+#
+#   ndvi_mean                growing-season mean NDVI, 1 Jun to 15 Sep
+#   ndvi_seasonal_amplitude  peak-to-trough size of the annual cycle
+#
+# The bands below are set from the Elkinsville module's own Landsat record,
+# 1,640 stand-years over 977 scenes, not from published values. Three things
+# that record shows have to be read together with them.
+#
+# First, what these metrics actually separate is open ground from closed
+# canopy, not one developmental stage from the next. Stand ELKNE-U16-0-0a, the
+# 2.8 acre clearcut of 2007 that never regrew, reads 0.53 to 0.64 growing-season
+# NDVI for a decade with an amplitude of 0.26 to 0.48. Every closed stand reads
+# 0.87 to 0.90 with an amplitude of 0.57 to 0.77. Between those two ends the
+# metric says almost nothing: grouped by the stage the NAIP metrics assign, the
+# median growing-season NDVI is 0.878 for ESE, 0.872 for LSI and 0.874 for ESI.
+# The bands for the closed-canopy stages therefore overlap almost completely,
+# by necessity rather than by oversight.
+#
+# Second, the resolution limit is real and is not a code problem. A three acre
+# clearcut is thirteen Landsat pixels, most of them on the boundary, inside
+# continuous forest. ELKNE-U13-0-0 was cut in 2016-17 and still read 0.845 in
+# 2018. Landsat cannot see a small opening in a closed matrix, and NDVI
+# saturates above roughly 0.7 leaf area index in any case.
+#
+# Third, the signal is far stronger through time than across space. The median
+# within-stand range of growing-season NDVI is 0.141, while the spread of
+# per-stand medians is 0.023, a factor of six. These metrics earn their place
+# in the trajectory layer and in the pre-NAIP record much more than in a
+# single-date stage envelope.
+#
+# The arithmetic consequence of adding them anyway: two metrics that match for
+# every closed-canopy stage raise all five of those stages' scores by the same
+# amount, so the ranking among them is unchanged but scores that previously sat
+# below `min_score` are pushed over it. Fewer stand-dates come back
+# unclassified than before, and that is the scoring rule working as specified
+# rather than new evidence arriving.
+#
+# `ndvi_trend` is implemented but stays out of these envelopes. It is a rate,
+# and a rate has no meaning in a single-date envelope. It belongs to the
+# trajectory layer, where DS2, DS3a and EF3 reference it.
 #
 # Site type keys:
 #   type_00  Site type not assigned. Carries the provisional, uncalibrated
@@ -58,6 +97,8 @@ stages:
         crown_cv:        {min: 0.00, max: 0.10}
         glcm_texture:    {min: 6.50, max: 8.00}
         gap_persistence: {min: 0.00, max: 0.40}
+        ndvi_mean:       {min: 0.45, max: 0.80}
+        ndvi_seasonal_amplitude: {min: 0.15, max: 0.50}
         # shrub_fraction is "not constrained" for this stage, so it is omitted.
       type_01: {}
 
@@ -69,6 +110,8 @@ stages:
         glcm_texture:    {min: 4.00, max: 6.50}
         shrub_fraction:  {min: 0.15, max: 0.40}
         gap_persistence: {min: 0.00, max: 0.40}
+        ndvi_mean:       {min: 0.70, max: 0.88}
+        ndvi_seasonal_amplitude: {min: 0.40, max: 0.75}
       type_01: {}
 
   ESE:
@@ -79,6 +122,8 @@ stages:
         glcm_texture:    {min: 4.00, max: 6.50}
         shrub_fraction:  {min: 0.00, max: 0.15}
         gap_persistence: {min: 0.40, max: 0.70}
+        ndvi_mean:       {min: 0.82, max: 0.92}
+        ndvi_seasonal_amplitude: {min: 0.45, max: 0.80}
       type_01: {}
 
   LSE:
@@ -89,6 +134,8 @@ stages:
         glcm_texture:    {min: 0.00, max: 4.00}
         shrub_fraction:  {min: 0.00, max: 0.15}
         gap_persistence: {min: 0.70, max: 1.00}
+        ndvi_mean:       {min: 0.85, max: 0.93}
+        ndvi_seasonal_amplitude: {min: 0.45, max: 0.80}
       type_01:
         gap_fraction:    {min: 0.00, max: 0.10}
         crown_cv:        {min: null, max: 0.30}
@@ -107,6 +154,8 @@ stages:
         glcm_texture:    {min: 4.00, max: 6.50}
         shrub_fraction:  {min: 0.00, max: 0.15}
         gap_persistence: {min: 0.40, max: 0.70}
+        ndvi_mean:       {min: 0.83, max: 0.92}
+        ndvi_seasonal_amplitude: {min: 0.45, max: 0.80}
       type_01: {}
 
   MA_OW:
@@ -117,6 +166,8 @@ stages:
         glcm_texture:    {min: 6.50, max: 8.00}
         shrub_fraction:  {min: 0.00, max: 0.15}
         gap_persistence: {min: 0.70, max: 1.00}
+        ndvi_mean:       {min: 0.72, max: 0.90}
+        ndvi_seasonal_amplitude: {min: 0.30, max: 0.70}
       type_01: {}
 
   OG:
@@ -127,4 +178,6 @@ stages:
         glcm_texture:    {min: 6.50, max: 8.00}
         shrub_fraction:  {min: 0.00, max: 0.15}
         gap_persistence: {min: 0.70, max: 1.00}
+        ndvi_mean:       {min: 0.84, max: 0.93}
+        ndvi_seasonal_amplitude: {min: 0.45, max: 0.80}
       type_01: {}
