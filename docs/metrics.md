@@ -78,13 +78,13 @@ Source module: `zonal/pixel.py`. All three metrics split the CHM at `CANOPY_HEIG
 
 Share of valid in-stand pixels whose canopy height falls below the 2 m threshold.
 
-**Source.** NAIP-derived CHM, single band, heights in metres.
+**Source.** NAIP-derived CHM, single band, heights in metres.  
 **Calculation.** Take the in-stand pixels that are finite, test each against the threshold, return the mean of the boolean. Returns NaN when the stand holds no valid pixel.
-**Units.** Fraction, 0 to 1.
-**Parameters.** `height_threshold_m = 2.0`, from `CANOPY_HEIGHT_THRESHOLD_M` in `zonal/pixel.py`. The raster path reads `defaults.chm_gap_threshold_m` in `config/metrics.yaml`, which carries the same value.
-**Feeds.** Every stage envelope, ESI through OG. Fourteen trajectory rules across all four groups.
-**Support.** `support_n_valid_pixels`, `support_nodata_fraction`.
-**Windowed variant.** `metrics/gap.py::gap_fraction`, `window_m = 25.0`. Same arithmetic per tile.
+**Units.** Fraction, 0 to 1.  
+**Parameters.** `height_threshold_m = 2.0`, from `CANOPY_HEIGHT_THRESHOLD_M` in `zonal/pixel.py`. The raster path reads `defaults.chm_gap_threshold_m` in `config/metrics.yaml`, which carries the same value.  
+**Feeds.** Every stage envelope, ESI through OG. Fourteen trajectory rules across all four groups.  
+**Support.** `support_n_valid_pixels`, `support_nodata_fraction`.  
+**Windowed variant.** `metrics/gap.py::gap_fraction`, `window_m = 25.0`. Same arithmetic per tile.  
 
 ### crown_fraction
 
