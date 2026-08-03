@@ -33,6 +33,9 @@ deepforest = ["deepforest"]
 # so we only need torch here. Set NAIPCHM_REPO_DIR to a clone of
 # https://github.com/smorf-ntsg/naip-chm to enable the subprocess path.
 chm_inference = ["torch"]
+# Per-stand satellite index series from Earth Engine (csdv_core.satellite).
+# pyarrow is what pandas uses to write the observation and annual caches.
+satellite = ["earthengine-api", "pyarrow"]
 dev = [
     "pytest",
     "pytest-cov",

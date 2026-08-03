@@ -22,9 +22,10 @@
 # Optional environment:
 #   CSDV_CONDITIONING_DIR - location of the NAIP-CHM conditioning rasters.
 #       Defaults to $CSDV_DATA_ROOT/chm_model/conditioning. The e2e script
-#       auto-fetches them (~1.65 GB) if absent, but you should run
-#       `csdv download conditioning` once on the login node beforehand so the
-#       transfer does not consume this GPU allocation.
+#       auto-fetches them (~1.65 GB) if absent, but compute nodes have no
+#       outbound internet, so an in-job download times out (Errno 110).
+#       Pre-fetch them once on a CHPC data transfer node with
+#       `csdv download conditioning` (see docs/workflow_chpc.md, step 1a).
 #
 # Loads the project env (mamba) then dispatches to run_site_e2e.sh.
 

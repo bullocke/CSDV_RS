@@ -44,6 +44,14 @@ dependencies:
   # Topographic analysis (Phase 4 stratification)
   - richdem
 
+  # Imagery search and access (Microsoft Planetary Computer)
+  - pystac-client
+  - planetary-computer
+
+  # Tabular caches (stand metrics, satellite observations) are written as
+  # parquet, which pandas cannot do without an engine.
+  - pyarrow
+
   # Nice extras for this kind of project
   - requests
   - tqdm
@@ -52,6 +60,11 @@ dependencies:
 
   - pip:
       - streamlit-folium
+      # Earth Engine backs the satellite metric extraction (csdv_core.satellite)
+      # and the NAIP / NAIP-CHM downloaders. wxee provides the .wx accessor the
+      # image exporters use. Both are pip-only.
+      - earthengine-api
+      - wxee
 
 
 

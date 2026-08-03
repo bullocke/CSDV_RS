@@ -82,6 +82,13 @@ def _attach_trajectories() -> None:
     main.add_command(_traj_cli, name="classify-trajectories")
 
 
+def _attach_satellite() -> None:
+    """Attach the satellite group. Only its ``fetch`` command imports ``ee``."""
+    from csdv_core.satellite.cli import cli as _sat_cli
+
+    main.add_command(_sat_cli, name="satellite")
+
+
 def _attach_check() -> None:
     from csdv_core.check import cli as _check_cli
 
@@ -98,6 +105,7 @@ _attach_stratification()
 _attach_metrics()
 _attach_stages()
 _attach_trajectories()
+_attach_satellite()
 _attach_check()
 
 

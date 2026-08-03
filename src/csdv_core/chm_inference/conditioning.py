@@ -35,8 +35,7 @@ REQUIRED_RASTERS: tuple[str, ...] = (
 #: HTTP directory holding the CONUS-wide conditioning rasters on the UMT
 #: rangeland server. Files there are named exactly as in ``REQUIRED_RASTERS``.
 CONDITIONING_BASE_URL = (
-    "http://rangeland.ntsg.umt.edu/data/naip-chm/inference-resources/"
-    "conditioning-data"
+    "http://rangeland.ntsg.umt.edu/data/naip-chm/inference-resources/conditioning-data"
 )
 
 

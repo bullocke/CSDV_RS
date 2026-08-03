@@ -41,8 +41,6 @@ htmlcov/
 CLAUDE.md
 .github/copilot-instructions.md
 AGENTS.md
-docs/architecture.md
 docs/conventions.md
-docs/data_layout.md
 src/csdv_core/AGENTS.md
 chpc_env.md

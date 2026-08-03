@@ -21,6 +21,31 @@
 # rules with placeholder predicates effectively never fire. A handful of rules
 # (DS1, EF2, LC1, FC2) carry concrete starter thresholds derived from the V5
 # qualitative descriptors, intended for the PoC validation pass.
+#
+# The ndvi_mean, ndvi_seasonal_amplitude and ndvi_trend thresholds in DS2, DS3a,
+# EF3, LC1, LC3, LC5 and LC6 were filled once csdv_core.satellite made those
+# metrics available. They are anchored on the Elkinsville module's own Landsat
+# record, where closed deciduous forest reads 0.87 to 0.90 growing-season NDVI
+# with an amplitude of 0.57 to 0.77, and where the year-to-year noise in a
+# stable stand is about 0.005 NDVI. Row crops in this landscape swing further
+# than any forest can, which is what LC1's amplitude threshold rests on.
+#
+# The module contains no land conversion and no plantation, so the LC rules
+# firing on none of its 40 stands is the correct answer and is the check these
+# thresholds were given. They remain provisional.
+#
+# Metric names are the names the metric functions actually emit. Earlier drafts
+# used the workbook spellings; the mapping is crown_width_cv -> crown_cv,
+# crown_width_p90 -> crown_p90, entropy -> glcm_texture, shrub_pct ->
+# shrub_fraction, persistence -> gap_persistence, row_periodicity ->
+# row_directionality. The same mapping is applied in stages.yaml.
+#
+# UNRESOLVED, DS1: the entropy threshold below is 0.30, which belongs to a 0-1
+# normalised scale. metrics.texture reports Shannon entropy in bits, roughly
+# 0-8 at 16 grey levels, which is also the scale the stage envelopes use. As
+# written the DS1 predicate can never be satisfied. Either the threshold is
+# rescaled or the metric is normalised; that is a decision for the team, so it
+# is flagged here rather than silently changed.
 
 trajectory_order:
   - DS1
@@ -75,16 +100,16 @@ trajectories:
     group: DS
     signature:
       - {dim: stage,   reducer: all, op: "in", value: [ESE, LSE]}
-      - {dim: metric,  var: crown_width_cv, reducer: max, op: "<=", value: 0.15}
+      - {dim: metric,  var: crown_cv, reducer: max, op: "<=", value: 0.15}
       - {dim: metric,  var: gap_fraction,   reducer: max, op: "<=", value: 0.10}
-      - {dim: metric,  var: entropy,        reducer: max, op: "<=", value: 0.30}
+      - {dim: metric,  var: glcm_texture,        reducer: max, op: "<=", value: 0.30}
 
   DS2:
     name: "Chronic Defoliation Stagnation"
     group: DS
     signature:
       - {dim: stage,   reducer: all, op: "in", value: [ESE, LSE]}
-      - {dim: metric,  var: ndvi_trend, reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: ndvi_trend, reducer: max, op: "<=", value: -0.004}
 
   DS3a:
     name: "Unknown Cause - delayed transition to LSI"
@@ -92,7 +117,7 @@ trajectories:
     signature:
       - {dim: stage,   reducer: latest, op: "==", value: LSI}
       - {dim: metric,  var: gap_fraction, reducer: min, op: ">=", value: null}
-      - {dim: metric,  var: ndvi_trend,   reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: ndvi_trend,   reducer: max, op: "<=", value: 0.002}
 
   DS3b:
     name: "Unknown Cause - delayed transition to ESE"
@@ -100,7 +125,7 @@ trajectories:
     signature:
       - {dim: stage,   reducer: latest, op: "==", value: ESE}
       - {dim: metric,  var: gap_fraction,    reducer: min, op: ">=", value: null}
-      - {dim: metric,  var: crown_width_cv,  reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: crown_cv,  reducer: max, op: "<=", value: null}
 
   DS3c:
     name: "Unknown Cause - delayed transition to LSE"
@@ -108,8 +133,8 @@ trajectories:
     signature:
       - {dim: stage,   reducer: latest, op: "==", value: LSE}
       - {dim: metric,  var: gap_fraction,    reducer: min, op: ">=", value: null}
-      - {dim: metric,  var: crown_width_cv,  reducer: min, op: ">=", value: null}
-      - {dim: metric,  var: entropy,         reducer: min, op: ">=", value: null}
+      - {dim: metric,  var: crown_cv,  reducer: min, op: ">=", value: null}
+      - {dim: metric,  var: glcm_texture,         reducer: min, op: ">=", value: null}
 
   # --------------------------------------------------------------------------
   # Tree Establishment Failure
@@ -120,7 +145,7 @@ trajectories:
     group: EF
     signature:
       - {dim: stage,   reducer: all, op: "in", value: [LSI, ESE]}
-      - {dim: metric,  var: shrub_pct,     reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: shrub_fraction,     reducer: max, op: "<=", value: null}
       - {dim: metric,  var: gap_fraction,  reducer: min, op: ">=", value: null}
 
   EF2:
@@ -128,7 +153,7 @@ trajectories:
     group: EF
     signature:
       - {dim: stage,   reducer: all, op: "in", value: [LSI, ESE]}
-      - {dim: metric,  var: shrub_pct,     reducer: min, op: ">=", value: 0.50}
+      - {dim: metric,  var: shrub_fraction,     reducer: min, op: ">=", value: 0.50}
       - {dim: metric,  var: gap_fraction,  reducer: mean, op: ">=", value: 0.20}
 
   EF3:
@@ -137,7 +162,7 @@ trajectories:
     signature:
       - {dim: stage,   reducer: latest, op: "==", value: ESE}
       - {dim: metric,  var: gap_fraction, reducer: min, op: ">=", value: null}
-      - {dim: metric,  var: ndvi_trend,   reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: ndvi_trend,   reducer: max, op: "<=", value: 0.002}
 
   # --------------------------------------------------------------------------
   # Non-forest Land Conversion (stage-agnostic; persistent non-forest)
@@ -149,7 +174,7 @@ trajectories:
     signature:
       - {dim: metric,  var: crown_fraction, reducer: max,  op: "<=", value: 0.05}
       - {dim: metric,  var: gap_fraction,   reducer: min,  op: ">=", value: 0.85}
-      - {dim: metric,  var: ndvi_seasonal_amplitude, reducer: min, op: ">=", value: null}
+      - {dim: metric,  var: ndvi_seasonal_amplitude, reducer: min, op: ">=", value: 0.90}
 
   LC2:
     name: "Wetland"
@@ -165,7 +190,7 @@ trajectories:
     signature:
       - {dim: metric,  var: crown_fraction, reducer: max, op: "<=", value: null}
       - {dim: metric,  var: gap_fraction,   reducer: min, op: ">=", value: null}
-      - {dim: metric,  var: ndvi_seasonal_amplitude, reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: ndvi_seasonal_amplitude, reducer: max, op: "<=", value: 0.35}
 
   LC4:
     name: "Human Development"
@@ -181,7 +206,7 @@ trajectories:
     signature:
       - {dim: metric,  var: crown_fraction, reducer: max, op: "<=", value: null}
       - {dim: metric,  var: gap_fraction,   reducer: min, op: ">=", value: null}
-      - {dim: metric,  var: ndvi_seasonal_amplitude, reducer: min, op: ">=", value: null}
+      - {dim: metric,  var: ndvi_seasonal_amplitude, reducer: min, op: ">=", value: 0.60}
 
   LC6:
     name: "Surface Mining"
@@ -189,7 +214,7 @@ trajectories:
     signature:
       - {dim: metric,  var: crown_fraction, reducer: max, op: "<=", value: null}
       - {dim: metric,  var: gap_fraction,   reducer: min, op: ">=", value: null}
-      - {dim: metric,  var: ndvi_mean,      reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: ndvi_mean,      reducer: max, op: "<=", value: 0.40}
 
   LC7:
     name: "Utility Corridor"
@@ -208,27 +233,27 @@ trajectories:
     group: FC
     signature:
       - {dim: stage,   reducer: latest, op: "==", value: ESE}
-      - {dim: metric,  var: crown_width_cv, reducer: max, op: "<=", value: null}
-      - {dim: metric,  var: entropy,        reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: crown_cv, reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: glcm_texture,        reducer: max, op: "<=", value: null}
 
   FC2:
     name: "Row-structured tree plantation (young-mid rotation)"
     group: FC
     signature:
-      - {dim: metric,  var: crown_width_cv,  reducer: max, op: "<=", value: 0.20}
-      - {dim: metric,  var: row_periodicity, reducer: max, op: ">=", value: 0.50}
+      - {dim: metric,  var: crown_cv,  reducer: max, op: "<=", value: 0.20}
+      - {dim: metric,  var: row_directionality, reducer: max, op: ">=", value: 0.50}
 
   FC3:
     name: "Closed-canopy even-aged tree plantation"
     group: FC
     signature:
-      - {dim: metric,  var: crown_width_cv, reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: crown_cv, reducer: max, op: "<=", value: null}
       - {dim: metric,  var: gap_fraction,   reducer: max, op: "<=", value: null}
-      - {dim: metric,  var: entropy,        reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: glcm_texture,        reducer: max, op: "<=", value: null}
 
   FC4:
     name: "Tree plantation (mixed or type unknown)"
     group: FC
     signature:
-      - {dim: metric,  var: crown_width_cv, reducer: max, op: "<=", value: null}
-      - {dim: metric,  var: entropy,        reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: crown_cv, reducer: max, op: "<=", value: null}
+      - {dim: metric,  var: glcm_texture,        reducer: max, op: "<=", value: null}

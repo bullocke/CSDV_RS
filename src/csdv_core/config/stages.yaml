@@ -7,12 +7,76 @@
 #   stage_codes  Integer codes written into stage rasters.
 #
 # Stage codes (V5): ESI, LSI, ESE, LSE, UR, MA_OW, OG.
-# Six metric families: crown_width_cv, gap_fraction, shrub_pct, entropy,
-# ndvi_trend, persistence (V5 Section 3).
 #
-# Production envelopes are placeholders pending V5 calibration. Tests use
-# their own fixture under tests/fixtures/ so production placeholders never
-# block the unit suite.
+# Metric names are the names the metric functions actually emit, so that a
+# metric raster or a stand metric dict can be matched against an envelope
+# without translation. The classification workbook and earlier drafts of this
+# file used different spellings; the mapping is:
+#
+#   crown_width_cv  -> crown_cv         (metrics.crown)
+#   crown_width_p90 -> crown_p90        (metrics.crown)
+#   entropy         -> glcm_texture     (metrics.texture)
+#   shrub_pct       -> shrub_fraction   (metrics.cover)
+#   persistence     -> gap_persistence  (metrics.gap)
+#
+# IMPORTANT: a metric with `{min: null, max: null}` is not "unconstrained", it
+# is a free point. `stages.envelopes.evaluate_envelope` returns True for any
+# finite value when both bounds are null, and `match_stage` then counts the
+# metric as both evaluated and matched. To leave a metric unconstrained, omit
+# it from the envelope so that it reduces the denominator instead.
+#
+# Landsat metrics (csdv_core.satellite, added after the first Elkinsville run):
+#
+#   ndvi_mean                growing-season mean NDVI, 1 Jun to 15 Sep
+#   ndvi_seasonal_amplitude  peak-to-trough size of the annual cycle
+#
+# The bands below are set from the Elkinsville module's own Landsat record,
+# 1,640 stand-years over 977 scenes, not from published values. Three things
+# that record shows have to be read together with them.
+#
+# First, what these metrics actually separate is open ground from closed
+# canopy, not one developmental stage from the next. Stand ELKNE-U16-0-0a, the
+# 2.8 acre clearcut of 2007 that never regrew, reads 0.53 to 0.64 growing-season
+# NDVI for a decade with an amplitude of 0.26 to 0.48. Every closed stand reads
+# 0.87 to 0.90 with an amplitude of 0.57 to 0.77. Between those two ends the
+# metric says almost nothing: grouped by the stage the NAIP metrics assign, the
+# median growing-season NDVI is 0.878 for ESE, 0.872 for LSI and 0.874 for ESI.
+# The bands for the closed-canopy stages therefore overlap almost completely,
+# by necessity rather than by oversight.
+#
+# Second, the resolution limit is real and is not a code problem. A three acre
+# clearcut is thirteen Landsat pixels, most of them on the boundary, inside
+# continuous forest. ELKNE-U13-0-0 was cut in 2016-17 and still read 0.845 in
+# 2018. Landsat cannot see a small opening in a closed matrix, and NDVI
+# saturates above roughly 0.7 leaf area index in any case.
+#
+# Third, the signal is far stronger through time than across space. The median
+# within-stand range of growing-season NDVI is 0.141, while the spread of
+# per-stand medians is 0.023, a factor of six. These metrics earn their place
+# in the trajectory layer and in the pre-NAIP record much more than in a
+# single-date stage envelope.
+#
+# The arithmetic consequence of adding them anyway: two metrics that match for
+# every closed-canopy stage raise all five of those stages' scores by the same
+# amount, so the ranking among them is unchanged but scores that previously sat
+# below `min_score` are pushed over it. Fewer stand-dates come back
+# unclassified than before, and that is the scoring rule working as specified
+# rather than new evidence arriving.
+#
+# `ndvi_trend` is implemented but stays out of these envelopes. It is a rate,
+# and a rate has no meaning in a single-date envelope. It belongs to the
+# trajectory layer, where DS2, DS3a and EF3 reference it.
+#
+# Site type keys:
+#   type_00  Site type not assigned. Carries the provisional, uncalibrated
+#            envelopes translated from the classification workbook's
+#            qualitative bands. Recorded by their author as unreviewed
+#            guesses. Do not read these as results.
+#   type_01  Floodplain / riparian hydric. The only envelope in this file with
+#            an external source. Every other site type is still empty.
+#
+# Tests use their own fixture under tests/fixtures/ so production placeholders
+# never block the unit suite.
 
 stage_order: [ESI, LSI, ESE, LSE, UR, MA_OW, OG]
 stage_codes:
@@ -28,70 +92,92 @@ stages:
 
   ESI:
     envelopes:
-      type_01:
-        gap_fraction:   {min: null, max: null}
-        crown_width_cv: {min: null, max: null}
-        shrub_pct:      {min: null, max: null}
-        entropy:        {min: null, max: null}
-        ndvi_trend:     {min: null, max: null}
-        persistence:    {min: null, max: null}
+      type_00:
+        gap_fraction:    {min: 0.75, max: 1.00}
+        crown_cv:        {min: 0.00, max: 0.10}
+        glcm_texture:    {min: 6.50, max: 8.00}
+        gap_persistence: {min: 0.00, max: 0.40}
+        ndvi_mean:       {min: 0.45, max: 0.80}
+        ndvi_seasonal_amplitude: {min: 0.15, max: 0.50}
+        # shrub_fraction is "not constrained" for this stage, so it is omitted.
+      type_01: {}
 
   LSI:
     envelopes:
-      type_01:
-        gap_fraction:   {min: null, max: null}
-        crown_width_cv: {min: null, max: null}
-        shrub_pct:      {min: null, max: null}
-        entropy:        {min: null, max: null}
-        ndvi_trend:     {min: null, max: null}
-        persistence:    {min: null, max: null}
+      type_00:
+        gap_fraction:    {min: 0.45, max: 0.75}
+        crown_cv:        {min: 0.10, max: 0.25}
+        glcm_texture:    {min: 4.00, max: 6.50}
+        shrub_fraction:  {min: 0.15, max: 0.40}
+        gap_persistence: {min: 0.00, max: 0.40}
+        ndvi_mean:       {min: 0.70, max: 0.88}
+        ndvi_seasonal_amplitude: {min: 0.40, max: 0.75}
+      type_01: {}
 
   ESE:
     envelopes:
-      type_01:
-        gap_fraction:   {min: null, max: null}
-        crown_width_cv: {min: null, max: null}
-        shrub_pct:      {min: null, max: null}
-        entropy:        {min: null, max: null}
-        ndvi_trend:     {min: null, max: null}
-        persistence:    {min: null, max: null}
+      type_00:
+        gap_fraction:    {min: 0.20, max: 0.45}
+        crown_cv:        {min: 0.25, max: 0.40}
+        glcm_texture:    {min: 4.00, max: 6.50}
+        shrub_fraction:  {min: 0.00, max: 0.15}
+        gap_persistence: {min: 0.40, max: 0.70}
+        ndvi_mean:       {min: 0.82, max: 0.92}
+        ndvi_seasonal_amplitude: {min: 0.45, max: 0.80}
+      type_01: {}
 
   LSE:
     envelopes:
+      type_00:
+        gap_fraction:    {min: 0.05, max: 0.20}
+        crown_cv:        {min: 0.10, max: 0.25}
+        glcm_texture:    {min: 0.00, max: 4.00}
+        shrub_fraction:  {min: 0.00, max: 0.15}
+        gap_persistence: {min: 0.70, max: 1.00}
+        ndvi_mean:       {min: 0.85, max: 0.93}
+        ndvi_seasonal_amplitude: {min: 0.45, max: 0.80}
       type_01:
         gap_fraction:    {min: 0.00, max: 0.10}
-        crown_width_cv:  {min: null, max: 0.30}
-        shrub_pct:       {min: null, max: null}
-        entropy:         {min: null, max: null}
-        ndvi_trend:      {min: null, max: null}
-        persistence:     {min: null, max: null}
+        crown_cv:        {min: null, max: 0.30}
 
+  # UR carries the same envelope as ESE. That is not a transcription error: the
+  # workbook describes understory reinitiation by the direction a metric is
+  # moving rather than the level it has reached, so the two stages are not
+  # separable on a single date. Because ties break toward the earlier stage in
+  # stage_order, UR can never be assigned while this holds. Resolving it needs
+  # either a rate-of-change term here or a move to the trajectory layer.
   UR:
     envelopes:
-      type_01:
-        gap_fraction:   {min: null, max: null}
-        crown_width_cv: {min: null, max: null}
-        shrub_pct:      {min: null, max: null}
-        entropy:        {min: null, max: null}
-        ndvi_trend:     {min: null, max: null}
-        persistence:    {min: null, max: null}
+      type_00:
+        gap_fraction:    {min: 0.20, max: 0.45}
+        crown_cv:        {min: 0.25, max: 0.40}
+        glcm_texture:    {min: 4.00, max: 6.50}
+        shrub_fraction:  {min: 0.00, max: 0.15}
+        gap_persistence: {min: 0.40, max: 0.70}
+        ndvi_mean:       {min: 0.83, max: 0.92}
+        ndvi_seasonal_amplitude: {min: 0.45, max: 0.80}
+      type_01: {}
 
   MA_OW:
     envelopes:
-      type_01:
-        gap_fraction:   {min: null, max: null}
-        crown_width_cv: {min: null, max: null}
-        shrub_pct:      {min: null, max: null}
-        entropy:        {min: null, max: null}
-        ndvi_trend:     {min: null, max: null}
-        persistence:    {min: null, max: null}
+      type_00:
+        gap_fraction:    {min: 0.20, max: 0.45}
+        crown_cv:        {min: 0.40, max: 0.60}
+        glcm_texture:    {min: 6.50, max: 8.00}
+        shrub_fraction:  {min: 0.00, max: 0.15}
+        gap_persistence: {min: 0.70, max: 1.00}
+        ndvi_mean:       {min: 0.72, max: 0.90}
+        ndvi_seasonal_amplitude: {min: 0.30, max: 0.70}
+      type_01: {}
 
   OG:
     envelopes:
-      type_01:
-        gap_fraction:   {min: null, max: null}
-        crown_width_cv: {min: null, max: null}
-        shrub_pct:      {min: null, max: null}
-        entropy:        {min: null, max: null}
-        ndvi_trend:     {min: null, max: null}
-        persistence:    {min: null, max: null}
+      type_00:
+        gap_fraction:    {min: 0.20, max: 0.45}
+        crown_cv:        {min: 0.60, max: 1.50}
+        glcm_texture:    {min: 6.50, max: 8.00}
+        shrub_fraction:  {min: 0.00, max: 0.15}
+        gap_persistence: {min: 0.70, max: 1.00}
+        ndvi_mean:       {min: 0.84, max: 0.93}
+        ndvi_seasonal_amplitude: {min: 0.45, max: 0.80}
+      type_01: {}

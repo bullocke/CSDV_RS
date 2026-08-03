@@ -122,7 +122,13 @@ pytest
 csdv --help
 ```
 
-See `docs/workflow_chpc.md` for high-performance computing and Colab setup.
+## Documentation
+
+For detailed guides, API references, and data structures, please refer to the following documentation files (in development):
+
+* [**Architecture**](docs/architecture.md) — describes the library's structure, including the main modules and their responsibilities.
+* [**Metrics**](docs/metrics.md) — describes the structural metrics extracted from NAIP and NAIP-CHM rasters, including their definitions, units, examples, and how they are computed.
+* [**Data layout**](docs/data_layout.md) — describes the expected layout of the `data/` and `results/` directories, including the purpose of each subdirectory and how to configure the environment variables that control their locations.
 
 ## Repository layout
 
