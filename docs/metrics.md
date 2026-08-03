@@ -78,37 +78,38 @@ Source module: `zonal/pixel.py`. All three metrics split the CHM at `CANOPY_HEIG
 
 Share of valid in-stand pixels whose canopy height falls below the 2 m threshold.
 
-**Source.** NAIP-derived CHM, single band, heights in metres.
-**Calculation.** Take the in-stand pixels that are finite, test each against the threshold, return the mean of the boolean. Returns NaN when the stand holds no valid pixel.
-**Units.** Fraction, 0 to 1.
-**Parameters.** `height_threshold_m = 2.0`, from `CANOPY_HEIGHT_THRESHOLD_M` in `zonal/pixel.py`. The raster path reads `defaults.chm_gap_threshold_m` in `config/metrics.yaml`, which carries the same value.
-**Feeds.** Every stage envelope, ESI through OG. Fourteen trajectory rules across all four groups.
-**Support.** `support_n_valid_pixels`, `support_nodata_fraction`.
-**Windowed variant.** `metrics/gap.py::gap_fraction`, `window_m = 25.0`. Same arithmetic per tile.
+**Source.** NAIP-derived CHM, single band, heights in metres.  
+**Calculation.** Take the in-stand pixels that are finite, test each against the threshold, return the mean of the boolean. Returns NaN when the stand holds no valid pixel.  
+**Units.** Fraction, 0 to 1.  
+**Parameters.** `height_threshold_m = 2.0`, from `CANOPY_HEIGHT_THRESHOLD_M` in `zonal/pixel.py`. The raster path reads `defaults.chm_gap_threshold_m` in `config/metrics.yaml`, which carries the same value.  
+**Feeds.** Every stage envelope, ESI through OG. Fourteen trajectory rules across all four groups.  
+**Support.** `support_n_valid_pixels`, `support_nodata_fraction`.  
+**Windowed variant.** `metrics/gap.py::gap_fraction`, `window_m = 25.0`. Same arithmetic per tile.  
+**Example.** [Clearcut and regrowth](#gap_fraction-clearcut-and-regrowth)  
 
 ### crown_fraction
 
 Share of valid in-stand pixels at or above 2 m. The complement of `gap_fraction`.
 
-**Source.** NAIP-derived CHM.
-**Calculation.** `1 - gap_fraction`, computed on the same pixel set so the two always sum to 1. NaN propagates.
-**Units.** Fraction, 0 to 1.
-**Parameters.** `height_threshold_m = 2.0`.
-**Feeds.** No stage envelope. Seven land-conversion trajectory rules, LC1 through LC7.
-**Support.** Same as `gap_fraction`.
-**Windowed variant.** `metrics/gap.py::crown_fraction`, `window_m = 25.0`.
+**Source.** NAIP-derived CHM.  
+**Calculation.** `1 - gap_fraction`, computed on the same pixel set so the two always sum to 1. NaN propagates.  
+**Units.** Fraction, 0 to 1.  
+**Parameters.** `height_threshold_m = 2.0`.  
+**Feeds.** No stage envelope. Seven land-conversion trajectory rules, LC1 through LC7.  
+**Support.** Same as `gap_fraction`.  
+**Windowed variant.** `metrics/gap.py::crown_fraction`, `window_m = 25.0`.  
 
 ### gap_persistence
 
 Share of pixels that read as gap at both of two dates.
 
-**Source.** Two NAIP-derived CHMs on an identical grid.
-**Calculation.** The denominator is in-stand pixels that are finite at both dates, so a hole in one date does not count against the other. The numerator is pixels below 2 m at both dates. The two rasters must share a transform. A mismatch raises rather than resampling, because a difference across dates already compounds the error of both inputs.
-**Units.** Fraction, 0 to 1.
-**Parameters.** `height_threshold_m = 2.0`.
-**Feeds.** Every stage envelope. LC7.
-**Support.** NaN at the first date of a stand's series, with the reason `"first date of the series, nothing to compare to"`.
-**Windowed variant.** `metrics/gap.py::gap_persistence`, `window_m = 25.0`. It is the one registered metric that takes two arrays, so a generic caller has to special-case it.
+**Source.** Two NAIP-derived CHMs on an identical grid.  
+**Calculation.** The denominator is in-stand pixels that are finite at both dates, so a hole in one date does not count against the other. The numerator is pixels below 2 m at both dates. The two rasters must share a transform. A mismatch raises rather than resampling, because a difference across dates already compounds the error of both inputs.  
+**Units.** Fraction, 0 to 1.  
+**Parameters.** `height_threshold_m = 2.0`.  
+**Feeds.** Every stage envelope. LC7.  
+**Support.** NaN at the first date of a stand's series, with the reason `"first date of the series, nothing to compare to"`.  
+**Windowed variant.** `metrics/gap.py::gap_persistence`, `window_m = 25.0`. It is the one registered metric that takes two arrays, so a generic caller has to special-case it.  
 
 ---
 
@@ -129,73 +130,73 @@ The bands are half-open, `[lo, hi)`. They do not partition the height range. Not
 
 Share of valid in-stand pixels between 0.5 m and 2 m. Reads as low woody cover and regenerating shrubs.
 
-**Source.** NAIP-derived CHM.
-**Calculation.** `height_band_fraction` tests each finite in-stand pixel against `lo <= h < hi` and returns the mean.
-**Units.** Fraction, 0 to 1.
-**Parameters.** `lo_m = 0.5`, `hi_m = 2.0`, from `SHRUB_BAND_M`. Mirrored in `config/metrics.yaml` for the raster path.
-**Feeds.** Six stage envelopes, LSI through OG. ESI omits it on purpose, because shrub cover is not constrained at that stage. EF1 and EF2.
-**Support.** `support_n_valid_pixels`.
-**Windowed variant.** `metrics/cover.py::shrub_fraction`, `window_m = 25.0`.
+**Source.** NAIP-derived CHM.  
+**Calculation.** `height_band_fraction` tests each finite in-stand pixel against `lo <= h < hi` and returns the mean.  
+**Units.** Fraction, 0 to 1.  
+**Parameters.** `lo_m = 0.5`, `hi_m = 2.0`, from `SHRUB_BAND_M`. Mirrored in `config/metrics.yaml` for the raster path.  
+**Feeds.** Six stage envelopes, LSI through OG. ESI omits it on purpose, because shrub cover is not constrained at that stage. EF1 and EF2.  
+**Support.** `support_n_valid_pixels`.  
+**Windowed variant.** `metrics/cover.py::shrub_fraction`, `window_m = 25.0`.  
 
 ### small_tree_fraction
 
 Share of valid in-stand pixels between 2 m and 10 m.
 
-**Source.** NAIP-derived CHM.
-**Calculation.** As above with `lo_m = 2.0`, `hi_m = 10.0`.
-**Units.** Fraction, 0 to 1.
-**Parameters.** `SMALL_TREE_BAND_M`.
-**Feeds.** No stage envelope and no trajectory rule. Computed for description and figures.
-**Support.** `support_n_valid_pixels`.
-**Windowed variant.** `metrics/cover.py::small_tree_fraction`, `window_m = 25.0`.
+**Source.** NAIP-derived CHM.  
+**Calculation.** As above with `lo_m = 2.0`, `hi_m = 10.0`.  
+**Units.** Fraction, 0 to 1.  
+**Parameters.** `SMALL_TREE_BAND_M`.  
+**Feeds.** No stage envelope and no trajectory rule. Computed for description and figures.  
+**Support.** `support_n_valid_pixels`.  
+**Windowed variant.** `metrics/cover.py::small_tree_fraction`, `window_m = 25.0`.  
 
 ### mid_canopy_fraction
 
 Share of valid in-stand pixels between 10 m and 20 m.
 
-**Source.** NAIP-derived CHM.
-**Calculation.** As above with `lo_m = 10.0`, `hi_m = 20.0`.
-**Units.** Fraction, 0 to 1.
-**Parameters.** `MID_CANOPY_BAND_M`.
-**Feeds.** No rule.
-**Support.** `support_n_valid_pixels`.
-**Windowed variant.** `metrics/cover.py::mid_canopy_fraction`, `window_m = 25.0`.
+**Source.** NAIP-derived CHM.  
+**Calculation.** As above with `lo_m = 10.0`, `hi_m = 20.0`.  
+**Units.** Fraction, 0 to 1.  
+**Parameters.** `MID_CANOPY_BAND_M`.  
+**Feeds.** No rule.  
+**Support.** `support_n_valid_pixels`.  
+**Windowed variant.** `metrics/cover.py::mid_canopy_fraction`, `window_m = 25.0`.  
 
 ### tall_canopy_fraction
 
 Share of valid in-stand pixels between 20 m and 100 m.
 
-**Source.** NAIP-derived CHM.
-**Calculation.** As above with `lo_m = 20.0`, `hi_m = 100.0`. The upper bound rejects CHM artefacts rather than describing a real ceiling.
-**Units.** Fraction, 0 to 1.
-**Parameters.** `TALL_CANOPY_BAND_M`.
-**Feeds.** No rule.
-**Support.** `support_n_valid_pixels`.
-**Windowed variant.** `metrics/cover.py::tall_canopy_fraction`, `window_m = 25.0`.
+**Source.** NAIP-derived CHM.  
+**Calculation.** As above with `lo_m = 20.0`, `hi_m = 100.0`. The upper bound rejects CHM artefacts rather than describing a real ceiling.  
+**Units.** Fraction, 0 to 1.  
+**Parameters.** `TALL_CANOPY_BAND_M`.  
+**Feeds.** No rule.  
+**Support.** `support_n_valid_pixels`.  
+**Windowed variant.** `metrics/cover.py::tall_canopy_fraction`, `window_m = 25.0`.  
 
 ### height_mean, height_median, height_p90, height_max
 
 Central tendency and upper tail of the canopy height surface.
 
-**Source.** NAIP-derived CHM.
-**Calculation.** `height_stats` first drops every pixel below 2 m, so the statistics describe the canopy instead of a mixture of canopy and ground. It then takes the mean, median, 90th percentile and maximum of what remains. All five statistics return NaN together below `MIN_CANOPY_PIXELS = 10` canopy pixels.
-**Units.** Metres.
-**Parameters.** `height_threshold_m = 2.0`, `min_pixels = 10`. Both are module constants in `zonal/pixel.py` with no YAML entry.
-**Feeds.** No rule. These describe stand condition and support the worked examples.
-**Support.** `support_n_valid_pixels`.
-**Windowed variant.** None. The registered windowed metrics have no height-statistic equivalent.
+**Source.** NAIP-derived CHM.  
+**Calculation.** `height_stats` first drops every pixel below 2 m, so the statistics describe the canopy instead of a mixture of canopy and ground. It then takes the mean, median, 90th percentile and maximum of what remains. All five statistics return NaN together below `MIN_CANOPY_PIXELS = 10` canopy pixels.  
+**Units.** Metres.  
+**Parameters.** `height_threshold_m = 2.0`, `min_pixels = 10`. Both are module constants in `zonal/pixel.py` with no YAML entry.  
+**Feeds.** No rule. These describe stand condition and support the worked examples.  
+**Support.** `support_n_valid_pixels`.  
+**Windowed variant.** None. The registered windowed metrics have no height-statistic equivalent.  
 
 ### height_cv
 
 Coefficient of variation of canopy height, a measure of vertical roughness.
 
-**Source.** NAIP-derived CHM.
-**Calculation.** Standard deviation of canopy pixels over their mean. NaN when the mean is zero or negative, and NaN below 10 canopy pixels.
-**Units.** Dimensionless.
-**Parameters.** Same as the other height statistics.
-**Feeds.** No rule.
-**Support.** `support_n_valid_pixels`.
-**Windowed variant.** None.
+**Source.** NAIP-derived CHM.  
+**Calculation.** Standard deviation of canopy pixels over their mean. NaN when the mean is zero or negative, and NaN below 10 canopy pixels.  
+**Units.** Dimensionless.  
+**Parameters.** Same as the other height statistics.  
+**Feeds.** No rule.  
+**Support.** `support_n_valid_pixels`.  
+**Windowed variant.** None.  
 
 ---
 
@@ -213,49 +214,49 @@ Every statistic except `crown_count` returns NaN below `MIN_CROWNS = 3` crowns, 
 
 Coefficient of variation of crown diameter. The primary structural diagnostic in the classifier.
 
-**Source.** Crown polygons, `crown_diam_m` column.
-**Calculation.** Standard deviation of the in-stand crown diameters over their mean. Low values mean crowns of one size, which is the signature of an even-aged closed canopy. High values mean a mixed size distribution, which is the signature of old growth or a mature stand with a broken canopy.
-**Units.** Dimensionless.
-**Parameters.** `min_crowns = 3`, from `MIN_CROWNS`. The raster path reads `defaults.min_crowns_per_window` in `config/metrics.yaml`, same value.
-**Feeds.** Every stage envelope, and it carries the widest spread of any stage metric, 0.0 to 0.1 at ESI up to 0.6 to 1.5 at OG. Seven trajectory rules including DS1, FC1 and FC2.
-**Support.** `support_n_crowns`.
-**Windowed variant.** `metrics/crown.py::crown_cv`, `window_m = 50.0`, built from the shared `crown_stats` engine. Crowns are assigned to a tile by centroid there too.
+**Source.** Crown polygons, `crown_diam_m` column.  
+**Calculation.** Standard deviation of the in-stand crown diameters over their mean. Low values mean crowns of one size, which is the signature of an even-aged closed canopy. High values mean a mixed size distribution, which is the signature of old growth or a mature stand with a broken canopy.  
+**Units.** Dimensionless.  
+**Parameters.** `min_crowns = 3`, from `MIN_CROWNS`. The raster path reads `defaults.min_crowns_per_window` in `config/metrics.yaml`, same value.  
+**Feeds.** Every stage envelope, and it carries the widest spread of any stage metric, 0.0 to 0.1 at ESI up to 0.6 to 1.5 at OG. Seven trajectory rules including DS1, FC1 and FC2.  
+**Support.** `support_n_crowns`.  
+**Windowed variant.** `metrics/crown.py::crown_cv`, `window_m = 50.0`, built from the shared `crown_stats` engine. Crowns are assigned to a tile by centroid there too.  
 
 ### crown_p90
 
 90th percentile crown diameter. The diagnostic for removal of the largest trees.
 
-**Source.** Crown polygons, `crown_diam_m` column.
-**Calculation.** 90th percentile of the in-stand crown diameters. A drop between dates with the count roughly held means the big crowns went, which separates high-grading from a general thinning.
-**Units.** Metres.
-**Parameters.** `min_crowns = 3`.
-**Feeds.** No rule directly. Its change metric `d_crown_p90` carries the V5 code dCW90.
-**Support.** `support_n_crowns`.
-**Windowed variant.** `metrics/crown.py::crown_p90`, `window_m = 50.0`.
+**Source.** Crown polygons, `crown_diam_m` column.  
+**Calculation.** 90th percentile of the in-stand crown diameters. A drop between dates with the count roughly held means the big crowns went, which separates high-grading from a general thinning.  
+**Units.** Metres.  
+**Parameters.** `min_crowns = 3`.  
+**Feeds.** No rule directly. Its change metric `d_crown_p90` carries the V5 code dCW90.  
+**Support.** `support_n_crowns`.  
+**Windowed variant.** `metrics/crown.py::crown_p90`, `window_m = 50.0`.  
 
 ### crown_mean, crown_median, crown_std
 
 Central tendency and spread of crown diameter.
 
-**Source.** Crown polygons, `crown_diam_m` column.
-**Calculation.** Mean, median and standard deviation of the in-stand crown diameters. `crown_std` is the unnormalised counterpart of `crown_cv`.
-**Units.** Metres.
-**Parameters.** `min_crowns = 3`.
-**Feeds.** No rule.
-**Support.** `support_n_crowns`.
-**Windowed variant.** `metrics/crown.py::crown_mean` at `window_m = 50.0`. `crown_median` and `crown_std` reach the raster path only through `crown_stats(stat=...)` and are not registered.
+**Source.** Crown polygons, `crown_diam_m` column.  
+**Calculation.** Mean, median and standard deviation of the in-stand crown diameters. `crown_std` is the unnormalised counterpart of `crown_cv`.  
+**Units.** Metres.  
+**Parameters.** `min_crowns = 3`.  
+**Feeds.** No rule.  
+**Support.** `support_n_crowns`.  
+**Windowed variant.** `metrics/crown.py::crown_mean` at `window_m = 50.0`. `crown_median` and `crown_std` reach the raster path only through `crown_stats(stat=...)` and are not registered.  
 
 ### crown_count
 
 Number of crowns whose centroid falls inside the stand.
 
-**Source.** Crown polygons.
-**Calculation.** A count, not a density. Compare it against `area_m2` to reason about stem density, or use `d_crown_count` to read removal between dates.
-**Units.** Count.
-**Parameters.** None. `min_crowns` does not apply.
-**Feeds.** No rule.
-**Support.** `support_n_crowns`, which holds the same value.
-**Windowed variant.** `metrics/crown.py::crown_count`, `window_m = 50.0`. The windowed version initialises empty tiles to `0.0` rather than NaN, so an empty tile and a zero-crown tile look the same.
+**Source.** Crown polygons.  
+**Calculation.** A count, not a density. Compare it against `area_m2` to reason about stem density, or use `d_crown_count` to read removal between dates.  
+**Units.** Count.  
+**Parameters.** None. `min_crowns` does not apply.  
+**Feeds.** No rule.  
+**Support.** `support_n_crowns`, which holds the same value.  
+**Windowed variant.** `metrics/crown.py::crown_count`, `window_m = 50.0`. The windowed version initialises empty tiles to `0.0` rather than NaN, so an empty tile and a zero-crown tile look the same.  
 
 ---
 
@@ -267,14 +268,14 @@ Source module: `zonal/texture.py`.
 
 Shannon entropy of the grey-level co-occurrence matrix. High entropy means a visually varied canopy surface, low entropy means a uniform one.
 
-**Source.** NAIP band 4, the near infrared band, read over the stand bounding box. This is the one structural metric that reads reflectance instead of the CHM.
-**Calculation.** Three steps. `quantize_masked` stretches the in-stand values linearly to 16 grey levels using the in-stand minimum and maximum. `masked_glcm` then counts pixel pairs at the four angles, keeping a pair only when both members are in-stand. `glcm_entropy` returns `-sum(p * log2 p)` over the normalised matrix.
-**Units.** Bits. The theoretical maximum is `2 * log2(levels)`, so 8.0 at 16 levels. Observed forest values sit between 4 and 8.
-**Parameters.** `levels = 16`, `distances = (1,)`, `angles = (0, pi/4, pi/2, 3pi/4)`, `min_valid_pixels = 256`. All are module constants in `zonal/texture.py`. `config/metrics.yaml` sets `levels: 16` and `prop: entropy` for the raster path.
-**Feeds.** Every stage envelope, and it is the metric that separates LSE, at 0.0 to 4.0 bits, from the rest. DS1, DS3c, FC1, FC3, FC4.
-**Support.** `support_texture_n_valid`. NaN below 256 valid pixels, and NaN when the stand has no tonal variation. Both reasons are recorded.
+**Source.** NAIP band 4, the near infrared band, read over the stand bounding box. This is the one structural metric that reads reflectance instead of the CHM.  
+**Calculation.** Three steps. `quantize_masked` stretches the in-stand values linearly to 16 grey levels using the in-stand minimum and maximum. `masked_glcm` then counts pixel pairs at the four angles, keeping a pair only when both members are in-stand. `glcm_entropy` returns `-sum(p * log2 p)` over the normalised matrix.  
+**Units.** Bits. The theoretical maximum is `2 * log2(levels)`, so 8.0 at 16 levels. Observed forest values sit between 4 and 8.  
+**Parameters.** `levels = 16`, `distances = (1,)`, `angles = (0, pi/4, pi/2, 3pi/4)`, `min_valid_pixels = 256`. All are module constants in `zonal/texture.py`. `config/metrics.yaml` sets `levels: 16` and `prop: entropy` for the raster path.  
+**Feeds.** Every stage envelope, and it is the metric that separates LSE, at 0.0 to 4.0 bits, from the rest. DS1, DS3c, FC1, FC3, FC4.  
+**Support.** `support_texture_n_valid`. NaN below 256 valid pixels, and NaN when the stand has no tonal variation. Both reasons are recorded.  
 **Caveat.** `config/trajectories.yaml` rule DS1 tests `glcm_texture <= 0.30`, which is a 0 to 1 scale. The metric emits bits. That predicate can never fire. See [Known gaps](#known-gaps).
-**Windowed variant.** `metrics/texture.py::glcm_texture`, `window_m = 50.0`, via `skimage.feature.graycomatrix`. The two disagree on purpose. The windowed version sets invalid pixels to grey level 0, which puts a spurious spike at cell (0, 0) proportional to the share of the box outside the stand. For a polygon it reports the shape of the bounding box as much as the texture of the canopy. Use the stand version for stand work.
+**Windowed variant.** `metrics/texture.py::glcm_texture`, `window_m = 50.0`, via `skimage.feature.graycomatrix`. The two disagree on purpose. The windowed version sets invalid pixels to grey level 0, which puts a spurious spike at cell (0, 0) proportional to the share of the box outside the stand. For a polygon it reports the shape of the bounding box as much as the texture of the canopy. Use the stand version for stand work.  
 
 ---
 
@@ -290,37 +291,37 @@ The normalisations in `linearity_index` and `row_directionality` are not calibra
 
 Canopy edge length per unit stand area.
 
-**Source.** NAIP-derived CHM, thresholded at 2 m into a canopy mask.
-**Calculation.** Count interior edge pixels, multiply by pixel size to get an edge length in metres, divide by the in-stand area in square metres. Dividing by stand area rather than box area keeps a long thin stand comparable to a compact one.
-**Units.** 1/m. Values scale with pixel size, so compare only across a common resolution.
-**Parameters.** `height_threshold_m = 2.0`.
-**Feeds.** No stage envelope and no trajectory rule. Its change metric `d_edge_density` carries the V5 code dEdge.
-**Support.** `support_support_fraction`, the in-stand share of the bounding box. NaN when the stand holds no pixels.
-**Windowed variant.** `metrics/spatial.py::edge_density`, `window_m = 50.0`. It divides by window area and counts the polygon outline as an edge, so it reads higher on any stand that does not fill its window.
+**Source.** NAIP-derived CHM, thresholded at 2 m into a canopy mask.  
+**Calculation.** Count interior edge pixels, multiply by pixel size to get an edge length in metres, divide by the in-stand area in square metres. Dividing by stand area rather than box area keeps a long thin stand comparable to a compact one.  
+**Units.** 1/m. Values scale with pixel size, so compare only across a common resolution.  
+**Parameters.** `height_threshold_m = 2.0`.  
+**Feeds.** No stage envelope and no trajectory rule. Its change metric `d_edge_density` carries the V5 code dEdge.  
+**Support.** `support_support_fraction`, the in-stand share of the bounding box. NaN when the stand holds no pixels.  
+**Windowed variant.** `metrics/spatial.py::edge_density`, `window_m = 50.0`. It divides by window area and counts the polygon outline as an edge, so it reads higher on any stand that does not fill its window.  
 
 ### linearity_index
 
 How much the gap pattern lines up along a single direction.
 
-**Source.** NAIP-derived CHM, thresholded at 2 m into a gap mask.
-**Calculation.** Run an edge detector over the interior gap mask, then take a Hough transform over `n_angles` orientations. The value is `clip(1 - mean/peak, 0, 1)` of the accumulator. A strong single peak against a low mean means the openings align, which is the signature of a utility corridor or another maintained strip.
-**Units.** Dimensionless, 0 to 1. Uncalibrated.
-**Parameters.** `n_angles = 90`. `stand_spatial_metrics` takes it as a keyword default. `config/metrics.yaml` carries the same value for the raster path.
-**Feeds.** No stage envelope. LC7, utility corridor.
-**Support.** `support_support_fraction`. NaN with the reason `"no gap edges inside the stand"` when the interior gap mask is empty.
-**Windowed variant.** `metrics/spatial.py::linearity_index`, `window_m = 50.0`. It returns `0.0` rather than NaN on an empty window, so the windowed output is effectively never NaN.
+**Source.** NAIP-derived CHM, thresholded at 2 m into a gap mask.  
+**Calculation.** Run an edge detector over the interior gap mask, then take a Hough transform over `n_angles` orientations. The value is `clip(1 - mean/peak, 0, 1)` of the accumulator. A strong single peak against a low mean means the openings align, which is the signature of a utility corridor or another maintained strip.  
+**Units.** Dimensionless, 0 to 1. Uncalibrated.  
+**Parameters.** `n_angles = 90`. `stand_spatial_metrics` takes it as a keyword default. `config/metrics.yaml` carries the same value for the raster path.  
+**Feeds.** No stage envelope. LC7, utility corridor.  
+**Support.** `support_support_fraction`. NaN with the reason `"no gap edges inside the stand"` when the interior gap mask is empty.  
+**Windowed variant.** `metrics/spatial.py::linearity_index`, `window_m = 50.0`. It returns `0.0` rather than NaN on an empty window, so the windowed output is effectively never NaN.  
 
 ### row_directionality
 
 How regularly and directionally spaced the canopy is. Targets row-structured plantations.
 
-**Source.** NAIP-derived CHM as a continuous surface, not a mask.
-**Calculation.** Apply a Hanning window, take a 2-D FFT, bin the power spectrum into `n_bins` angular bins over `[0, pi)`, then return `clip(1 - mean/peak, 0, 1)`. Invalid pixels are filled with the in-stand mean before the transform.
-**Units.** Dimensionless, 0 to 1. Uncalibrated.
-**Parameters.** `n_bins = 36`, a keyword default on `stand_spatial_metrics`, with the same value in `config/metrics.yaml` for the raster path. `min_support = MIN_DIRECTIONALITY_SUPPORT = 0.5`.
-**Feeds.** No stage envelope. FC2, row-structured plantation, at a threshold of 0.50.
-**Support.** `support_support_fraction`. Reported only when the stand fills at least half its bounding box. Below that the transform measures the shape of the mask instead of the canopy, so the value is NaN with the reason recorded.
-**Windowed variant.** `metrics/spatial.py::row_directionality`, `window_m = 50.0`. No support gate, because a full window has no mask to confound it.
+**Source.** NAIP-derived CHM as a continuous surface, not a mask.  
+**Calculation.** Apply a Hanning window, take a 2-D FFT, bin the power spectrum into `n_bins` angular bins over `[0, pi)`, then return `clip(1 - mean/peak, 0, 1)`. Invalid pixels are filled with the in-stand mean before the transform.  
+**Units.** Dimensionless, 0 to 1. Uncalibrated.  
+**Parameters.** `n_bins = 36`, a keyword default on `stand_spatial_metrics`, with the same value in `config/metrics.yaml` for the raster path. `min_support = MIN_DIRECTIONALITY_SUPPORT = 0.5`.  
+**Feeds.** No stage envelope. FC2, row-structured plantation, at a threshold of 0.50.  
+**Support.** `support_support_fraction`. Reported only when the stand fills at least half its bounding box. Below that the transform measures the shape of the mask instead of the canopy, so the value is NaN with the reason recorded.  
+**Windowed variant.** `metrics/spatial.py::row_directionality`, `window_m = 50.0`. No support gate, because a full window has no mask to confound it.  
 
 ---
 
@@ -382,36 +383,36 @@ The observation table stores the reduced index under the bare index name, plus `
 
 Growing-season mean NDVI for one stand in one year. The level term.
 
-**Source.** The `ndvi` observation series for that stand and year, after QC.
-**Calculation.** Unweighted mean of every surviving observation with day of year between 152 and 258, which is 1 June to 15 September. NaN below `min_obs = 3` observations.
-**Units.** Index, dimensionless.
-**Parameters.** `doy_min = 152`, `doy_max = 258`, `min_obs = 3`, in `config/satellite.yaml` under `annual_metrics.ndvi_mean.params`.
-**Feeds.** Every stage envelope. LC6, at a threshold of 0.40.
-**Support.** `sat_ndvi_mean_n_obs`, `sat_ndvi_mean_median`, plus the shared `sat_median_coverage_fraction` and `sat_n_sensors`.
+**Source.** The `ndvi` observation series for that stand and year, after QC.  
+**Calculation.** Unweighted mean of every surviving observation with day of year between 152 and 258, which is 1 June to 15 September. NaN below `min_obs = 3` observations.  
+**Units.** Index, dimensionless.  
+**Parameters.** `doy_min = 152`, `doy_max = 258`, `min_obs = 3`, in `config/satellite.yaml` under `annual_metrics.ndvi_mean.params`.  
+**Feeds.** Every stage envelope. LC6, at a threshold of 0.40.  
+**Support.** `sat_ndvi_mean_n_obs`, `sat_ndvi_mean_median`, plus the shared `sat_median_coverage_fraction` and `sat_n_sensors`.  
 **Caveat.** NDVI saturates over closed canopy, so the bands for the five closed-canopy stages overlap almost completely. Adding it raises every closed-canopy stage score by the same amount without changing the ranking.
 
 ### ndvi_seasonal_amplitude
 
 Peak-to-trough swing of the annual NDVI cycle. Separates deciduous forest from agriculture, pasture and evergreen cover.
 
-**Source.** The `ndvi` observation series for that stand and year, full calendar year.
-**Calculation.** `fit_single_harmonic` fits `y(t) = offset + b1*cos(2*pi*t) + b2*sin(2*pi*t)` by least squares, with `t = doy / days_in_year` and 366 days in a leap year. The value is `2 * hypot(b1, b2)`, so it is peak to trough rather than an amplitude about the mean.
-**Units.** Index, peak to trough. Theoretical maximum 2.0.
-**Parameters.** `doy_min = 1`, `doy_max = 366`, `min_obs = 6`, `min_doy_span = 150.0`, `max_condition = 30.0`, `max_amplitude = 1.5`, in `config/satellite.yaml`.
-**Feeds.** Every stage envelope. LC1, LC3, LC5.
-**Support.** `sat_amplitude_n_obs`, `sat_amplitude_doy_span`, `sat_amplitude_condition`, `sat_amplitude_rmse`, `sat_amplitude_r2`, `sat_amplitude_phase_doy`, `sat_amplitude_offset`.
+**Source.** The `ndvi` observation series for that stand and year, full calendar year.  
+**Calculation.** `fit_single_harmonic` fits `y(t) = offset + b1*cos(2*pi*t) + b2*sin(2*pi*t)` by least squares, with `t = doy / days_in_year` and 366 days in a leap year. The value is `2 * hypot(b1, b2)`, so it is peak to trough rather than an amplitude about the mean.  
+**Units.** Index, peak to trough. Theoretical maximum 2.0.  
+**Parameters.** `doy_min = 1`, `doy_max = 366`, `min_obs = 6`, `min_doy_span = 150.0`, `max_condition = 30.0`, `max_amplitude = 1.5`, in `config/satellite.yaml`.  
+**Feeds.** Every stage envelope. LC1, LC3, LC5.  
+**Support.** `sat_amplitude_n_obs`, `sat_amplitude_doy_span`, `sat_amplitude_condition`, `sat_amplitude_rmse`, `sat_amplitude_r2`, `sat_amplitude_phase_doy`, `sat_amplitude_offset`.  
 **Guards.** Four guards fire in a fixed order: observation count, day-of-year span, design-matrix condition number, then implausible amplitude. `r2` is recorded but is deliberately not a guard, because a low `r2` is the expected outcome over closed-canopy forest and using it would void the stands the classifier most needs.
 
 ### ndvi_trend
 
 Multi-year rate of change in growing-season NDVI. The only satellite metric that describes a rate.
 
-**Source.** The yearly `ndvi_mean` series for that stand.
-**Calculation.** Theil-Sen slope over a trailing window of years, labelled at the last year of the window. `scipy.stats.theilslopes` supplies the slope and a confidence interval. The metric calls `get_annual("ndvi_mean")` and reuses that metric's season parameters, so level and trend can never be computed over different seasons.
-**Units.** Index per year.
-**Parameters.** `window_years = 5`, `min_years = 4`, in `config/satellite.yaml`.
-**Feeds.** No stage envelope, on purpose. A rate has no meaning in a single-date envelope, so it lives at the trajectory layer. DS2 at `<= -0.004`, DS3a and EF3 at `<= 0.002`.
-**Support.** `sat_trend_n_years`, `sat_trend_window_years`, `sat_trend_slope_lo`, `sat_trend_slope_hi`. Use the interval to tell a real decline from a flat series with noise.
+**Source.** The yearly `ndvi_mean` series for that stand.  
+**Calculation.** Theil-Sen slope over a trailing window of years, labelled at the last year of the window. `scipy.stats.theilslopes` supplies the slope and a confidence interval. The metric calls `get_annual("ndvi_mean")` and reuses that metric's season parameters, so level and trend can never be computed over different seasons.  
+**Units.** Index per year.  
+**Parameters.** `window_years = 5`, `min_years = 4`, in `config/satellite.yaml`.  
+**Feeds.** No stage envelope, on purpose. A rate has no meaning in a single-date envelope, so it lives at the trajectory layer. DS2 at `<= -0.004`, DS3a and EF3 at `<= 0.002`.  
+**Support.** `sat_trend_n_years`, `sat_trend_window_years`, `sat_trend_slope_lo`, `sat_trend_slope_hi`. Use the interval to tell a real decline from a flat series with noise.  
 
 ### Metric names are pinned
 
@@ -502,3 +503,27 @@ Each of these is real in the code today. Check them before acting on a rule or a
 - **Only the first index survives extraction.** `satellite/extract.py` normalises and selects columns for `indices[0]` alone, and derives the coverage band from it. Passing `--indices ndvi,nbr` silently drops `nbr`.
 - **Five stand metrics have no windowed counterpart.** `height_mean`, `height_median`, `height_p90`, `height_max`, `height_cv`, plus `crown_median` and `crown_std`, exist only in the stand path.
 - **Windowed and stand values disagree for three metrics.** `edge_density`, `linearity_index` and `glcm_texture` are reimplemented in `zonal/` with different denominators and masking. The two are not interchangeable for the same ground area. Use the stand version for stand work.
+
+---
+
+## Worked examples
+
+Each example draws one metric on one stand from the Indiana Elkinsville calibration delivery.
+
+> Note: Thresholds have not been calibrated, so read the stage bands as the current working envelopes rather than as results.
+
+### gap_fraction: clearcut and regrowth
+
+![Gap fraction for a clearcut with reserves, showing imagery, canopy height, the two-class split at 2 m, and the full series against the stage envelopes](images/metrics/gap_fraction.png)
+
+Stand `ELKNE-U9-0-0` is 11.4 acres of Indiana hardwood that interpreters mapped as a clearcut with reserves between the 2016 and 2017 imagery dates. The three columns are the last image before the cut, the first image after it, and the stand four years into recovery.
+
+The bottom image row is the metric before it is reduced to a number. It splits the canopy height model at 2 m and washes out every pixel whose centre falls outside the polygon, because those pixels are not counted. Gap fraction holds near 0.007 through 2016, rises to 0.816 in 2018, stays at 0.813 in 2020, and falls to 0.156 by 2022. The green islands scattered through the 2018 panel are the reserve trees the harvest left standing, which is why the value stops well short of 1.0.
+
+The 2022 column is the one to read carefully. Gap fraction says 0.156, so 84 percent of the stand is canopy again. The canopy height panel directly above it is almost uniformly dark: mean canopy height inside the stand is 4.6 m and the 90th percentile is 7.2 m. `gap_fraction` counts pixels against a threshold and says nothing about height above it. A stand of six-year-old saplings and a closed mature stand can return the same value. Read it alongside `height_mean` or `tall_canopy_fraction`.
+
+The shaded bands are the `gap_fraction` envelopes for each stage under site type `type_00`. Two things stand out. The three pre-disturbance dates sit at 0.007, below the 0.05 floor of the lowest band, so a closed mature hardwood stand falls outside every `gap_fraction` envelope in the current table. After the cut the stand lands squarely in ESI, and by 2022 it is back inside LSE at 0.156.
+
+The band between 0.20 and 0.45 belongs to ESE, UR, MA_OW and OG at once. No date in this series lands there, but the stand passes through it twice between observations. Gap fraction alone cannot tell those four stages apart, which is why a stage assignment evaluates seven metrics together rather than any one of them.
+
+[Back to the gap_fraction entry](#gap_fraction)
