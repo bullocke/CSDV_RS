@@ -33,10 +33,13 @@ def quarter_gap() -> tuple[np.ndarray, np.ndarray]:
     # stand covering x 5..15, y 5..15.
     chm[15:20, 5:10] = 0.5
     sw = stand_window(box(5.0, 5.0, 15.0, 15.0), TRANSFORM, SHAPE)
-    return chm[
-        sw.window.row_off : sw.window.row_off + sw.window.height,
-        sw.window.col_off : sw.window.col_off + sw.window.width,
-    ], sw.mask
+    return (
+        chm[
+            sw.window.row_off : sw.window.row_off + sw.window.height,
+            sw.window.col_off : sw.window.col_off + sw.window.width,
+        ],
+        sw.mask,
+    )
 
 
 def test_gap_fraction_is_exact(quarter_gap):

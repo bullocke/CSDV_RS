@@ -67,7 +67,12 @@ RESULTS = REPO / "results/stands" / SITE
 RESULTS.mkdir(parents=True, exist_ok=True)
 
 METRICS_PARQUET = RESULTS / "stand_metrics.parquet"
-CROWNS_DIR = RESULTS / "crowns"
+# Crowns live under a hash of the segmentation parameters, so this script
+# cannot pick up crowns produced by a different parameter set. The flat
+# `crowns/` directory holds the pre-2026 segmentation and is left alone.
+from csdv_core.segmentation.params import DEFAULT_PARAMS  # noqa: E402
+
+CROWNS_DIR = RESULTS / "crowns" / f"seg-{DEFAULT_PARAMS.key}"
 CROWNS_DIR.mkdir(parents=True, exist_ok=True)
 print("Repository:", REPO)
 
@@ -195,7 +200,7 @@ for date in dates:
     with rasterio.open(date.chm_path) as src:
         chm = src.read(1, masked=True).filled(np.nan).astype("float32")
         transform, crs = src.transform, src.crs
-    found = segment_scene_crowns(chm, transform, crs, block_px=2048, overlap_px=64)
+    found = segment_scene_crowns(chm, transform, crs, block_px=2048)
     found.to_file(cached, driver="GPKG")
     crowns_by_year[date.year] = found
     print(

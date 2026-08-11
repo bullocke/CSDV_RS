@@ -723,9 +723,9 @@ def annual_table(
     for stand_id, raw_group in obs.groupby("stand_id", sort=True):
         kept, qc_counts = filter_observations(
             raw_group,
-            index=cfg.annual_metrics[metrics[0]].index
-            if cfg.annual_metrics
-            else "ndvi",
+            index=(
+                cfg.annual_metrics[metrics[0]].index if cfg.annual_metrics else "ndvi"
+            ),
             min_pixels=cfg.qa.min_pixels,
             min_effective_pixels=cfg.qa.min_effective_pixels,
             min_coverage_fraction=cfg.qa.min_coverage_fraction,

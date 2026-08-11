@@ -108,9 +108,11 @@ def fetch_cli(
     if dry_run:
         chunks = date_chunks(first, last, granularity=cfg.extraction.chunk)
         vertices = sum(
-            len(geom.exterior.coords)
-            if geom.geom_type == "Polygon"
-            else sum(len(part.exterior.coords) for part in geom.geoms)
+            (
+                len(geom.exterior.coords)
+                if geom.geom_type == "Polygon"
+                else sum(len(part.exterior.coords) for part in geom.geoms)
+            )
             for geom in frame.geometry
         )
         click.echo(f"site         {site}")

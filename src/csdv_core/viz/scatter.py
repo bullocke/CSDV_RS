@@ -86,9 +86,11 @@ def cover_class_agreement(
 
     midpoints = np.array(
         [
-            np.mean(class_ranges.get(int(c), (np.nan, np.nan)))
-            if np.isfinite(c)
-            else np.nan
+            (
+                np.mean(class_ranges.get(int(c), (np.nan, np.nan)))
+                if np.isfinite(c)
+                else np.nan
+            )
             for c in classes
         ]
     )

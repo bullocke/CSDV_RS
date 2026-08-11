@@ -200,6 +200,65 @@ def change_panel(
     ax.grid(axis="y", alpha=0.35)
 
 
+def _connected_line(
+    ax: Axes,
+    years: np.ndarray,
+    values: np.ndarray,
+    *,
+    color: str,
+    label: str | None,
+    gap_label: str | None,
+) -> int:
+    """Draw a series that runs across the years it has no value for.
+
+    Two paths rather than one. A segment joining two consecutive reported years
+    is solid, and a segment that has to jump over one or more missing years is
+    dashed and faded. The reader gets a single continuous trajectory and can
+    still see which parts of it are drawn between measurements.
+
+    Both paths are assembled with NaN separators so the whole series costs two
+    ``plot`` calls rather than one per segment.
+
+    Returns:
+        The number of dashed segments, which is zero when every year reports.
+    """
+    reported = np.flatnonzero(np.isfinite(values))
+    if reported.size == 0:
+        return 0
+
+    solid_x, solid_y, gap_x, gap_y = [], [], [], []
+    for start, end in zip(reported[:-1], reported[1:], strict=True):
+        # Adjacent in the year array means nothing was skipped between them.
+        x_pair = [years[start], years[end], np.nan]
+        y_pair = [values[start], values[end], np.nan]
+        if end == start + 1:
+            solid_x.extend(x_pair)
+            solid_y.extend(y_pair)
+        else:
+            gap_x.extend(x_pair)
+            gap_y.extend(y_pair)
+
+    n_gaps = len(gap_x) // 3
+    if gap_x:
+        ax.plot(
+            gap_x,
+            gap_y,
+            "--",
+            color=color,
+            lw=1.0,
+            alpha=0.55,
+            zorder=3,
+            label=gap_label,
+        )
+    # The solid path is drawn second so it wins wherever the two meet at a
+    # shared point, and it carries the series label even on a record whose
+    # first segment happens to be a gap.
+    ax.plot(solid_x, solid_y, "-", color=color, lw=1.4, zorder=3, label=label)
+    if n_gaps:
+        logger.info("Series crosses %d year(s) with no value", n_gaps)
+    return n_gaps
+
+
 def satellite_panel(
     ax: Axes,
     years: Sequence[float],
@@ -216,6 +275,7 @@ def satellite_panel(
     series_label: str | None = None,
     xlim: tuple[float, float] | None = None,
     marginal_at_or_below: float = MARGINAL_SUPPORT_OBS,
+    gap_label: str | None = "spans a year with no value",
 ) -> None:
     """One Landsat metric a year, over the whole satellite record.
 
@@ -228,6 +288,13 @@ def satellite_panel(
 
     Years resting on few observations are drawn hollow, matching how
     ``metric_panel`` marks canopy heights derived from coarser imagery.
+
+    A year the metric could not compute breaks nothing. The line runs on across
+    it, dashed and faded over the years it had to skip, so the reader still sees
+    one trajectory rather than a scatter of disconnected fragments. Leaving a
+    real break there reads as the end of the record instead of as a year that
+    happened to be cloudy, and the Landsat record is sparse enough in the 1980s
+    and 1990s that a strict line is broken more often than not.
 
     The NAIP dates are ticked along the bottom, because the band above this one
     is on a different and much shorter time base and the two need tying
@@ -253,6 +320,8 @@ def satellite_panel(
             are drawn hollow. Pass the metric's own configured ``min_obs``, so
             a hollow marker always means the same thing: this year sits on the
             fewest observations the metric will accept.
+        gap_label: Legend name for the dashed segments that cross a year with
+            no value. None leaves them out of the legend.
     """
     years = np.asarray(years, dtype=float)
     values = np.asarray(values, dtype=float)
@@ -288,7 +357,9 @@ def satellite_panel(
                 clip_on=False,
             )
 
-    ax.plot(years, values, "-", color=color, lw=1.4, zorder=3, label=series_label)
+    _connected_line(
+        ax, years, values, color=color, label=series_label, gap_label=gap_label
+    )
     if n_obs is None:
         ax.plot(years, values, "o", color=color, ms=3.4, zorder=4)
     else:

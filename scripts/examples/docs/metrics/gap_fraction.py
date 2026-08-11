@@ -1,15 +1,17 @@
-"""Build the ``gap_fraction`` example figure for ``docs/metrics.md``.
+"""Build the ``gap_fraction`` example figures for ``docs/metrics.md``.
 
 Renders one stand at three dates: imagery, canopy height, and the canopy height
 model split at the 2 m threshold, over the full gap fraction series with the
 stage envelopes shaded behind it.
 
-The default stand is a clearcut with reserves at Elkinsville. Gap fraction sits
-near zero through 2016, rises above 0.8 once the stand is cut, and falls back to
-about 0.16 as the regrowth crosses 2 m.
+Two presets. ``clearcut`` is a clearcut with reserves that opens above 0.8 and
+only partly closes. ``closure`` is a stand cut earlier in the record that opens
+to 0.73 and closes all the way back, which is the half the first figure cannot
+show.
 
 Run:
     .micromamba/envs/CSDV/bin/python scripts/examples/docs/metrics/gap_fraction.py
+    .micromamba/envs/CSDV/bin/python scripts/examples/docs/metrics/gap_fraction.py --preset closure
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _lib import (  # noqa: E402
     CANOPY_THRESHOLD_M,
-    DOC_FIGURE_DIR,
+    ExamplePreset,
     build_parser,
     column_year_labels,
     configure_logging,
@@ -39,7 +41,7 @@ from _lib import (  # noqa: E402
     height_class_panel,
     load_example_context,
     mark_mapped_dates,
-    parse_years,
+    resolve_preset,
     row_label,
     stage_envelope_bands,
     stand_metric_series,
@@ -53,8 +55,20 @@ from csdv_core.viz.style import setup_style  # noqa: E402
 logger = logging.getLogger(__name__)
 
 METRIC = "gap_fraction"
-DEFAULT_STAND = "ELKNE-U9-0-0"
-DEFAULT_YEARS = (2016, 2018, 2022)
+
+#: The two figures in the docs. ``closure`` uses 2016, 2020 and 2022 because
+#: the cut falls between 2012 and 2013, so the only pre-disturbance date is
+#: 2012 at 1.0 m native resolution. Including it would put a resolution change
+#: inside a figure about a change in the forest, and the ``clearcut`` figure
+#: already carries the intact state.
+PRESETS = {
+    "clearcut": ExamplePreset(
+        stand="ELKNE-U9-0-0", years=(2016, 2018, 2022), slug="gap_fraction"
+    ),
+    "closure": ExamplePreset(
+        stand="ELKNE-U4-0-0", years=(2016, 2020, 2022), slug="gap_fraction_closure"
+    ),
+}
 
 CHIP_IN = 2.1
 SERIES_IN = 2.5
@@ -64,20 +78,17 @@ ROW_LABELS = ("NAIP", "Canopy height", f"Split at {CANOPY_THRESHOLD_M:g} m")
 def main() -> int:
     """Build the figure and write it to disk."""
     configure_logging()
-    parser = build_parser(
-        __doc__ or "",
-        default_stand=DEFAULT_STAND,
-        default_years=DEFAULT_YEARS,
-        default_out=DOC_FIGURE_DIR / f"{METRIC}.png",
-    )
+    parser = build_parser(__doc__ or "", PRESETS, default="clearcut")
     args = parser.parse_args()
-    years = parse_years(args.years)
+    preset = resolve_preset(args, PRESETS)
+    years = list(preset.years)
+    out_path = args.out or preset.out_path
 
     setup_style()
     site = elkinsville()
     context = load_example_context(site)
-    stand = stand_row(context.stands, args.stand_id)
-    series = stand_metric_series(context.metrics, args.stand_id)
+    stand = stand_row(context.stands, preset.stand)
+    series = stand_metric_series(context.metrics, preset.stand)
     last_pre, first_post = disturbance_years(stand)
 
     bounds = padded_bounds(
@@ -88,7 +99,7 @@ def main() -> int:
     )
     logger.info(
         "Stand %s, %s, %.1f acres, disturbance between %s and %s",
-        args.stand_id,
+        preset.stand,
         stand.get("dist_label", "unlabelled"),
         float(stand.get("Acres", float("nan"))),
         last_pre,
@@ -157,7 +168,7 @@ def main() -> int:
         first_post=first_post,
     )
 
-    written = finish(fig, args.out, dpi=args.dpi, optimize=args.optimize)
+    written = finish(fig, out_path, dpi=args.dpi, optimize=args.optimize)
     logger.info("Wrote %s", written)
     return 0
 
