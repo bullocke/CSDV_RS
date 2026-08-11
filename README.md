@@ -6,13 +6,11 @@ The central idea is that 0.6 m imagery resolves individual tree crowns and canop
 
 ## Status
 
-This is a proof-of-concept and is very much in development. The code in this repository is essentially a test of the project's classification system: it checks whether the structural metrics the classifier needs can be reliably extracted from NAIP and whether they separate developmental stages cleanly. The metrics are evaluated against airborne lidar benchmarks at NEON sites (SCBI in Virginia, Harvard Forest in Massachusetts, Talladega in Alabama).
+This is a proof-of-concept and is very much in development. The code in this repository is essentially a test of the project's classification system. iIt checks whether the structural metrics the classifier needs can be reliably extracted from NAIP and whether they separate developmental stages cleanly. The metrics are evaluated against airborne lidar benchmarks at NEON sites (SCBI in Virginia, Harvard Forest in Massachusetts, Talladega in Alabama).
 
 Everything here is preliminary and unpublished. The classification thresholds and rule logic have not been calibrated, so all stage and trajectory assignments shown below are tentative illustrations of the workflow rather than validated results.
 
 ## How the classification system works
-
-The classifier operates in three layers.
 
 ### Layer 1: Ecological stratification
 
@@ -69,9 +67,11 @@ The system inventories many candidate metrics. A smaller set appears most often 
 | Gap persistence | Multi-temporal CHM threshold |
 | Linearity index | Spatial pattern on the gap mask |
 
-## Worked example: closing canopy at SCBI, 2008 to 2023
+## Example: closing canopy at SCBI, 2008 to 2023
 
 This example walks through the full workflow for a single 50 m window at the SCBI NEON site in northern Virginia, on a mesic till upland. Eight NAIP dates span 2008 to 2023. The disturbance that reset this stand predates the imagery record, so only the recovery limb is observed.
+
+> Note: The code supports both window-level and stand-level analysis. The example here is a window-level analysis, which was developed first for testing. The same workflow applies to the stand level, where the metrics are aggregated across polygons. Production runs will be at the stand level.
 
 ### 1. NAIP image strip
 

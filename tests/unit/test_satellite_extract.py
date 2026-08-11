@@ -93,9 +93,9 @@ def test_a_fully_masked_page_has_no_index_column_and_is_filled_not_raised() -> N
 def test_declared_dtypes_survive_normalisation() -> None:
     out = _normalize_observations(_raw_page(), "ndvi", _AREAS)
     for name, dtype in OBSERVATION_COLUMNS.items():
-        assert str(out[name].dtype) == dtype, (
-            f"{name} is {out[name].dtype}, expected {dtype}"
-        )
+        assert (
+            str(out[name].dtype) == dtype
+        ), f"{name} is {out[name].dtype}, expected {dtype}"
 
 
 def test_mask_propagation_check_catches_an_unmasked_coverage_band() -> None:

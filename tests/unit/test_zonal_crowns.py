@@ -54,7 +54,10 @@ def test_crowns_in_stand_handles_an_empty_frame():
 
 def test_diameter_statistics_are_exact():
     crowns = _crowns([(i * 20.0, 0.0, d) for i, d in enumerate([2.0, 4.0, 6.0, 8.0])])
-    stats = crown_diameter_stats(crowns)
+    # min_crowns is given explicitly. The production floor is 75, measured
+    # against the stage band resolution, and this test is about the arithmetic
+    # rather than the support threshold.
+    stats = crown_diameter_stats(crowns, min_crowns=4)
     assert stats.n_crowns == 4
     assert stats.mean == pytest.approx(5.0)
     assert stats.median == pytest.approx(5.0)
@@ -66,7 +69,7 @@ def test_diameter_statistics_are_exact():
 
 def test_uniform_crowns_have_zero_variability():
     crowns = _crowns([(i * 20.0, 0.0, 5.0) for i in range(6)])
-    assert crown_diameter_stats(crowns).cv == pytest.approx(0.0)
+    assert crown_diameter_stats(crowns, min_crowns=6).cv == pytest.approx(0.0)
 
 
 def test_below_the_minimum_crown_count_nothing_is_reported():
@@ -111,22 +114,48 @@ def cone_scene() -> tuple[np.ndarray, object]:
 
 
 def test_scene_segmentation_finds_the_planted_lattice(cone_scene):
+    """Every planted cone is found exactly once.
+
+    The six by six lattice holds 36 trees. This used to be asserted as a range
+    of 30 to 42, because the engine read the search window as a peak separation
+    and spread tree tops twice as far apart as intended, so the count drifted.
+    With the window read as a diameter the count is exact.
+    """
     chm, transform = cone_scene
     crowns = segment_scene_crowns(chm, transform, "EPSG:26916", block_px=240)
-    # Six by six lattice of trees.
-    assert 30 <= len(crowns) <= 42
+    assert len(crowns) == 36
     assert crowns["crown_diam_m"].min() > 0.0
 
 
-def test_block_splitting_does_not_duplicate_or_lose_crowns(cone_scene):
-    """Segmenting in blocks must give the same crown count as one pass, which
-    is only true because the peak footprint is held to the scene mean."""
+@pytest.mark.parametrize("block_px", [60, 80, 120])
+def test_block_splitting_does_not_duplicate_or_lose_crowns(cone_scene, block_px):
+    """Blocking must give the same crowns as one pass, at any block size.
+
+    Blocks used to need a scene-wide mean height threaded through them, because
+    the search window was derived from whatever array a block happened to hold.
+    The window is now evaluated per pixel, so blocks are independent and the
+    only thing the halo has to cover is competition between neighbours.
+    """
     chm, transform = cone_scene
     one_pass = segment_scene_crowns(chm, transform, "EPSG:26916", block_px=240)
-    blocked = segment_scene_crowns(
-        chm, transform, "EPSG:26916", block_px=80, overlap_px=32
-    )
+    blocked = segment_scene_crowns(chm, transform, "EPSG:26916", block_px=block_px)
     assert len(blocked) == len(one_pass)
+
+
+def test_default_halo_covers_a_full_crown_diameter():
+    """The derived halo is two crown radii plus the smoothing kernel.
+
+    One radius is not enough. A crown's boundary is set by competition with its
+    neighbours, so those neighbours have to be complete too.
+    """
+    from csdv_core.segmentation.params import SegmentationParams
+    from csdv_core.zonal.crowns import default_overlap_px
+
+    params = SegmentationParams(max_crown_radius_m=8.0, smooth_radius_m=0.6)
+    halo_px = default_overlap_px(params, 0.6)
+    assert halo_px * 0.6 >= 2 * 8.0
+    # With no ceiling there is no crown size to derive from, so it falls back.
+    assert default_overlap_px(params.replace(max_crown_radius_m=None), 0.6) >= 128
 
 
 def test_scene_segmentation_returns_empty_below_the_height_threshold():

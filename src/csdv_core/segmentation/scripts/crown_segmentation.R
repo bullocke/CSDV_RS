@@ -1,29 +1,36 @@
-# 02_crown_segmentation.R
+# crown_segmentation.R
 #
-# Individual tree crown segmentation from the NEON ALS canopy height model
-# at SCBI using lidR. Produces:
-#   (1) A GeoPackage of crown polygons with per-crown diameter estimates
-#   (2) A raster of crown width CV computed per 50m analysis window
+# Individual tree crown segmentation from a canopy height model using lidR.
+# This is the independent reference implementation. Production segmentation
+# runs in Python (csdv_core.segmentation.chm_watershed); this script exists so
+# the Python engine can be checked against a published algorithm.
 #
-# Both outputs land in Results/summary_document/intermediate/.
+# Every parameter is named and every length is in METRES. The pixel-valued
+# arguments lidR takes are converted here from terra::res(), because a
+# pixel-valued parameter changes physical meaning with resolution. lidR's
+# dalponte2016 default of max_cr = 10 pixels, for instance, is a 10 m crown
+# radius on a 1 m CHM and a 6 m radius on a 0.6 m CHM. Comparing two
+# implementations across that difference measures the units, not the
+# algorithms.
 #
 # Algorithm
 # ---------
-#   1. Load the NEON CHM (1m, EPSG:5070).
-#   2. Smooth with a 3x3 mean kernel to reduce pitting artifacts.
-#   3. Detect local maxima (tree tops) using the lmf() variable-window function.
-#      Window size scales with canopy height following a simple linear function
-#      fitted to eastern hardwood literature (ws = 2 + 0.5 * height).
-#   4. Segment crowns with the Dalponte–Coomes algorithm (dalponte2016).
-#   5. Vectorize crown raster to polygons; compute area and estimated diameter.
-#   6. Build a 50m grid; for each cell compute CV of crown diameters from all
-#      crowns whose centroid falls in that cell.
-#   7. Write outputs.
+#   1. Load the CHM, optionally rescaling raw values to metres.
+#   2. Mean-smooth with a kernel whose radius is given in metres.
+#   3. Mask below the canopy floor.
+#   4. Locate tree tops with lmf(), variable window, ws given as a DIAMETER.
+#   5. Segment with dalponte2016().
+#   6. Vectorize, compute area and area-equivalent diameter, drop noise.
+#   7. Optionally write a crown-diameter CV raster on a grid.
 #
 # Usage
 # -----
-#   Rscript 02_crown_segmentation.R
-#   (Run from any directory; paths are resolved relative to this script's location.)
+#   Rscript crown_segmentation.R --chm=<in.tif> --out-crowns=<out.gpkg> \
+#       [--ws-a=0.6] [--ws-b=0.33] [--ws-c=0.0] [--ws-lo=3] [--ws-hi=12] \
+#       [--smooth-radius-m=0.6] [--min-height-m=2] \
+#       [--th-seed=0.45] [--th-cr=0.55] [--max-crown-radius-m=8] \
+#       [--min-crown-area-m2=1] [--scale-factor=1] \
+#       [--out-cv-raster=<out.tif>] [--cv-grid-m=50] [--cv-min-crowns=3]
 
 suppressPackageStartupMessages({
   library(lidR)
@@ -32,181 +39,171 @@ suppressPackageStartupMessages({
 })
 
 # ---------------------------------------------------------------------------
-# Paths
+# Arguments
 # ---------------------------------------------------------------------------
-# Resolve script location from commandArgs (works with Rscript)
-args <- commandArgs(trailingOnly = FALSE)
-script_path <- sub("--file=", "", args[grep("--file=", args)])
-if (length(script_path) == 1 && nchar(script_path) > 0) {
-  script_dir <- dirname(normalizePath(script_path, mustWork = FALSE))
-} else {
-  script_dir <- getwd()
+parse_args <- function(argv) {
+  out <- list()
+  for (a in argv) {
+    if (!grepl("^--", a)) {
+      stop("Arguments must be --name=value form, got: ", a)
+    }
+    kv <- sub("^--", "", a)
+    key <- sub("=.*$", "", kv)
+    val <- sub("^[^=]*=", "", kv)
+    out[[gsub("-", "_", key)]] <- val
+  }
+  out
 }
 
-project_root <- normalizePath(file.path(script_dir, "..", "..", ".."))
+arg_num <- function(args, name, default) {
+  if (is.null(args[[name]])) return(default)
+  as.numeric(args[[name]])
+}
 
-# Allow optional positional args: <chm_path> <out_gpkg> <out_tif>
-# This lets the zoom pipeline call this script with different paths.
-trailing_args <- commandArgs(trailingOnly = TRUE)
+arg_chr <- function(args, name, default = NULL) {
+  if (is.null(args[[name]])) return(default)
+  args[[name]]
+}
 
-if (length(trailing_args) >= 3) {
-  neon_chm_path <- trailing_args[1]
-  out_crowns    <- trailing_args[2]
-  out_cv_raster <- trailing_args[3]
-  out_dir       <- dirname(out_crowns)
-} else {
-  neon_chm_path <- file.path(
-    project_root, "ProofOfConcept", "Data", "NEON", "CHM",
-    "NEON_CHM_SCBI_Subset_2023.tif"
+args <- parse_args(commandArgs(trailingOnly = TRUE))
+
+chm_path   <- arg_chr(args, "chm")
+out_crowns <- arg_chr(args, "out_crowns")
+if (is.null(chm_path) || is.null(out_crowns)) {
+  stop("--chm and --out-crowns are required")
+}
+
+ws_a  <- arg_num(args, "ws_a", 0.60)
+ws_b  <- arg_num(args, "ws_b", 0.33)
+ws_c  <- arg_num(args, "ws_c", 0.00)
+ws_lo <- arg_num(args, "ws_lo", 3.0)
+ws_hi <- arg_num(args, "ws_hi", 12.0)
+
+smooth_radius_m    <- arg_num(args, "smooth_radius_m", 0.6)
+min_height_m       <- arg_num(args, "min_height_m", 2.0)
+th_seed            <- arg_num(args, "th_seed", 0.45)
+th_cr              <- arg_num(args, "th_cr", 0.55)
+max_crown_radius_m <- arg_num(args, "max_crown_radius_m", 8.0)
+min_crown_area_m2  <- arg_num(args, "min_crown_area_m2", 1.0)
+scale_factor       <- arg_num(args, "scale_factor", 1.0)
+
+out_cv_raster <- arg_chr(args, "out_cv_raster", NULL)
+cv_grid_m     <- arg_num(args, "cv_grid_m", 50)
+cv_min_crowns <- arg_num(args, "cv_min_crowns", 3)
+
+if (!file.exists(chm_path)) stop("CHM not found: ", chm_path)
+dir.create(dirname(out_crowns), recursive = TRUE, showWarnings = FALSE)
+
+# ---------------------------------------------------------------------------
+# 1. Load
+# ---------------------------------------------------------------------------
+chm <- terra::rast(chm_path)
+if (scale_factor != 1.0) chm <- chm * scale_factor
+
+pixel_size_m <- mean(terra::res(chm))
+cat("CHM   :", chm_path, "\n")
+cat("Pixel :", pixel_size_m, "m\n")
+
+# ---------------------------------------------------------------------------
+# 2. Smooth. Radius in metres -> odd kernel in pixels, matching
+#    csdv_core.segmentation.chm_watershed.smooth_kernel_px exactly.
+# ---------------------------------------------------------------------------
+kernel_px <- 2 * max(round(smooth_radius_m / pixel_size_m), 0) + 1
+cat("Smooth:", smooth_radius_m, "m ->", kernel_px, "x", kernel_px, "px\n")
+if (kernel_px > 1) {
+  chm_smooth <- terra::focal(
+    chm, w = matrix(1, kernel_px, kernel_px), fun = "mean", na.rm = TRUE
   )
-  out_dir <- file.path(
-    project_root, "ProofOfConcept", "Results", "summary_document", "intermediate"
-  )
-  out_crowns    <- file.path(out_dir, "crown_polygons_SCBI.gpkg")
-  out_cv_raster <- file.path(out_dir, "crown_cv_50m_SCBI.tif")
-}
-
-# Optional 4th positional arg: scale factor applied to raw CHM values.
-# Default 1.0 (NEON CHM is already in meters).
-# Pass 0.01 for NAIP-CHM stored as UInt16 (height_m * 100).
-if (length(trailing_args) >= 4) {
-  scale_factor <- as.numeric(trailing_args[4])
 } else {
-  scale_factor <- 1.0
+  chm_smooth <- chm
 }
 
-cat("Project root :", project_root, "\n")
-cat("CHM path     :", neon_chm_path, "\n")
-cat("Scale factor :", scale_factor, "\n")
-cat("Output dir   :", out_dir, "\n")
-
-if (!file.exists(neon_chm_path)) {
-  stop("NEON CHM not found: ", neon_chm_path,
-       "\nRun 01_download_data.py and the setup step first.")
-}
-dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+# ---------------------------------------------------------------------------
+# 3. Canopy floor
+# ---------------------------------------------------------------------------
+chm_smooth[chm_smooth < min_height_m] <- NA
 
 # ---------------------------------------------------------------------------
-# 1. Load and inspect CHM
+# 4. Tree tops. ws is the search window DIAMETER in metres, which is what
+#    lmf() expects. The implied minimum separation between tops is ws/2.
 # ---------------------------------------------------------------------------
-cat("\n[1/6] Loading CHM ...\n")
-chm <- terra::rast(neon_chm_path)
-if (scale_factor != 1.0) {
-  cat("  Applying scale factor:", scale_factor, "\n")
-  chm <- chm * scale_factor
-}
-cat("  CRS  :", terra::crs(chm, describe = TRUE)$authority,
-    terra::crs(chm, describe = TRUE)$code, "\n")
-cat("  Res  :", paste(terra::res(chm), collapse = " x "), "m\n")
-cat("  Dims :", paste(dim(chm)[1:2], collapse = " rows x "), "cols\n")
-cat("  Range:", round(terra::minmax(chm)[1], 1), "–",
-    round(terra::minmax(chm)[2], 1), "m\n")
-
-# ---------------------------------------------------------------------------
-# 2. Smooth CHM (3x3 mean) to reduce pitting
-# ---------------------------------------------------------------------------
-cat("\n[2/6] Smoothing CHM (3x3 mean kernel) ...\n")
-chm_smooth <- terra::focal(chm, w = matrix(1, 3, 3), fun = "mean", na.rm = TRUE)
-
-# Mask pixels below 2m (non-forest / ground returns treated as gaps)
-chm_smooth[chm_smooth < 2] <- NA
-
-# ---------------------------------------------------------------------------
-# 3. Detect tree tops (local maxima)
-# ---------------------------------------------------------------------------
-cat("\n[3/6] Detecting tree tops with variable-window lmf ...\n")
-
-# Window size function: ws = 2 + 0.5 * h, bounded [3, 12] m
-# Tuned for eastern hardwood stands (moderate crown size variability)
 ws_fun <- function(h) {
-  pmax(3, pmin(12, 2 + 0.5 * h))
+  pmax(ws_lo, pmin(ws_hi, ws_a + ws_b * h + ws_c * h * h))
 }
-
-ttops <- lidR::locate_trees(chm_smooth, lidR::lmf(ws = ws_fun))
-cat("  Tree tops detected:", nrow(ttops), "\n")
+ttops <- lidR::locate_trees(
+  chm_smooth, lidR::lmf(ws = ws_fun, hmin = min_height_m, shape = "circular")
+)
+cat("Tops  :", nrow(ttops), "\n")
+if (nrow(ttops) == 0) stop("No tree tops detected")
 
 # ---------------------------------------------------------------------------
-# 4. Crown segmentation (Dalponte–Coomes watershed)
+# 5. Segment. max_cr is in PIXELS in lidR, so convert from metres here.
 # ---------------------------------------------------------------------------
-cat("\n[4/6] Segmenting crowns (Dalponte 2016 algorithm) ...\n")
-# dalponte2016() returns a closure; invoke it directly on the CHM raster
-algo <- lidR::dalponte2016(chm_smooth, ttops)
+max_cr_px <- max(1, round(max_crown_radius_m / pixel_size_m))
+cat("max_cr:", max_crown_radius_m, "m ->", max_cr_px, "px\n")
+algo <- lidR::dalponte2016(
+  chm_smooth, ttops,
+  th_tree = min_height_m, th_seed = th_seed, th_cr = th_cr, max_cr = max_cr_px
+)
 crown_raster <- algo()
-cat("  Segmentation complete.\n")
 
 # ---------------------------------------------------------------------------
-# 5. Vectorize to polygons; compute per-crown diameter
+# 6. Vectorize
 # ---------------------------------------------------------------------------
-cat("\n[5/6] Vectorizing crown segments to polygons ...\n")
-
-# Convert to terra SpatVector polygons, dissolve by segment ID
-crown_polys_terra <- terra::as.polygons(crown_raster, dissolve = TRUE)
-
-# Convert to sf for easier attribute handling
-crown_sf <- sf::st_as_sf(crown_polys_terra)
+crown_sf <- sf::st_as_sf(terra::as.polygons(crown_raster, dissolve = TRUE))
 names(crown_sf)[1] <- "segment_id"
-
-# Remove NA segment (background / unsegmented pixels)
 crown_sf <- crown_sf[!is.na(crown_sf$segment_id), ]
-
-# Compute area and estimated crown diameter (assuming circular crown)
 crown_sf$area_m2 <- as.numeric(sf::st_area(crown_sf))
 crown_sf$crown_diam_m <- 2 * sqrt(crown_sf$area_m2 / pi)
+crown_sf <- crown_sf[crown_sf$area_m2 >= min_crown_area_m2, ]
 
-# Basic QC: remove very small segments (< 1 m² = likely noise)
-crown_sf <- crown_sf[crown_sf$area_m2 >= 1, ]
+# Carry the tree-top height and position, so the Python and R outputs can be
+# compared on the same terms. apex height is taken at the top, never as the
+# maximum over the segment, because a segment maximum grows with segment size.
+tt <- sf::st_as_sf(ttops)
+tt_coords <- sf::st_coordinates(tt)
+height_col <- if ("Z" %in% names(tt)) {
+  "Z"
+} else {
+  names(tt)[sapply(tt, is.numeric)][1]
+}
+tt_id <- if ("treeID" %in% names(tt)) tt$treeID else seq_len(nrow(tt))
+match_idx <- match(crown_sf$segment_id, tt_id)
+crown_sf$apex_h_m <- as.numeric(tt[[height_col]])[match_idx]
+crown_sf$seed_x <- tt_coords[match_idx, 1]
+crown_sf$seed_y <- tt_coords[match_idx, 2]
 
-cat("  Crown polygons retained:", nrow(crown_sf), "\n")
-cat("  Crown diam range (m):", round(range(crown_sf$crown_diam_m), 1), "\n")
+cat("Crowns:", nrow(crown_sf), "\n")
+cat("Diam  :", round(range(crown_sf$crown_diam_m), 2), "m\n")
+cat("Mean  :", round(mean(crown_sf$crown_diam_m), 2), "m\n")
 
-sf::st_write(crown_sf, out_crowns, layer = "crowns", delete_dsn = TRUE, quiet = TRUE)
-cat("  Saved:", out_crowns, "\n")
+sf::st_write(crown_sf, out_crowns, layer = "crowns",
+             delete_dsn = TRUE, quiet = TRUE)
+cat("Saved :", out_crowns, "\n")
 
 # ---------------------------------------------------------------------------
-# 6. Per-50m-window crown width CV raster
+# 7. Optional crown-diameter CV raster
 # ---------------------------------------------------------------------------
-cat("\n[6/6] Computing crown width CV on 50m grid ...\n")
+if (!is.null(out_cv_raster)) {
+  dir.create(dirname(out_cv_raster), recursive = TRUE, showWarnings = FALSE)
+  ext <- terra::ext(chm)
+  grid <- terra::rast(
+    xmin = ext$xmin, xmax = ext$xmax, ymin = ext$ymin, ymax = ext$ymax,
+    resolution = cv_grid_m, crs = terra::crs(chm)
+  )
+  centroid_coords <- sf::st_coordinates(sf::st_centroid(crown_sf))
+  cell_ids <- terra::cellFromXY(grid, centroid_coords)
+  ok <- !is.na(cell_ids)
+  cell_cv <- tapply(crown_sf$crown_diam_m[ok], cell_ids[ok], function(x) {
+    if (length(x) < cv_min_crowns) return(NA_real_)
+    sd(x) / mean(x)
+  })
+  cv_values <- rep(NA_real_, terra::ncell(grid))
+  cv_values[as.integer(names(cell_cv))] <- as.numeric(cell_cv)
+  terra::values(grid) <- cv_values
+  terra::writeRaster(grid, out_cv_raster, overwrite = TRUE,
+                     datatype = "FLT4S", NAflag = -9999)
+  cat("Saved :", out_cv_raster, "\n")
+}
 
-# Build 50m grid aligned to CHM extent
-ext <- terra::ext(chm)
-grid_50m <- terra::rast(
-  xmin = ext$xmin, xmax = ext$xmax,
-  ymin = ext$ymin, ymax = ext$ymax,
-  resolution = 50,
-  crs = terra::crs(chm)
-)
-
-# Crown centroids
-centroids <- sf::st_centroid(crown_sf)
-centroid_coords <- sf::st_coordinates(centroids)
-
-# Rasterize CV: for each 50m cell, compute CV of crown diameters
-cv_mat <- matrix(NA_real_, nrow = nrow(grid_50m), ncol = ncol(grid_50m))
-
-# Map each centroid to a grid cell
-cell_ids <- terra::cellFromXY(grid_50m, centroid_coords)
-diams <- crown_sf$crown_diam_m
-
-# Aggregate by cell
-valid_mask <- !is.na(cell_ids)
-cell_ids_v <- cell_ids[valid_mask]
-diams_v <- diams[valid_mask]
-
-cell_cv <- tapply(diams_v, cell_ids_v, function(x) {
-  if (length(x) < 3) return(NA_real_)   # need >= 3 crowns per cell for CV
-  sd(x) / mean(x)
-})
-
-cv_values <- rep(NA_real_, terra::ncell(grid_50m))
-cv_values[as.integer(names(cell_cv))] <- as.numeric(cell_cv)
-terra::values(grid_50m) <- cv_values
-
-terra::writeRaster(grid_50m, out_cv_raster, overwrite = TRUE,
-                   datatype = "FLT4S", NAflag = -9999)
-cat("  Saved:", out_cv_raster, "\n")
-
-non_na_cells <- sum(!is.na(cv_values))
-cat("  Cells with data:", non_na_cells, "of", terra::ncell(grid_50m), "\n")
-cat("  CV range (non-NA):", round(range(cv_values, na.rm = TRUE), 3), "\n")
-
-cat("\n=== Crown segmentation complete ===\n")
+cat("=== done ===\n")
