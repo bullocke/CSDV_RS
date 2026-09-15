@@ -4,14 +4,14 @@ def test_2024_naip_availability():
     # ---------------------------------------------------------
     # STEP 1: Query the service for 2024 data
     # ---------------------------------------------------------
-    query_url = "https://gis.apfo.usda.gov/arcgis/rest/services/NAIP/USDA_CONUS_PRIME/ImageServer/query"
-    
+    # query_url = "https://gis.apfo.usda.gov/arcgis/rest/services/NAIP/USDA_CONUS_PRIME/ImageServer/query"
+    query_url = "https://apps.geo.fpac.usda.gov/geo-imagery/rest/services/naip/conus_naip/ImageServer/query"
     # Filter for 2024 data in Pennsylvania. 
     # Change to "Year_ts = 2024" to search the entire country.
-    where_clause = "Year_ts > 2021" 
+    where_clause = "Year_ts = 2024" 
     
     query_params = {
-        "where": "Year_ts > 2021",
+        "where": "year_ts = 2019",
         "returnGeometry": "true",
         "outSR": "4326",
         "outFields": "Name,ST,Year_ts,QQDATE",
