@@ -149,10 +149,28 @@ def test_crown_metrics_use_the_supplied_crowns(series, stands):
         geometry=[Point(15.0 + 5 * i, 20.0).buffer(2.0) for i in range(8)],
         crs=CRS,
     )
-    record = compute_stand_record("S1", stands.geometry[0], series[0], crowns=crowns)
+    # min_crowns is given explicitly. The production floor is 75, measured
+    # against the stage band resolution, and this test is about whether the
+    # supplied crowns reach the statistic rather than about the threshold.
+    record = compute_stand_record(
+        "S1", stands.geometry[0], series[0], crowns=crowns, min_crowns=8
+    )
     assert record.support["n_crowns"] == pytest.approx(8.0)
     assert np.isfinite(record.value("crown_cv"))
     assert "crown_cv" not in record.reasons
+
+
+def test_crown_metrics_report_a_reason_below_the_support_floor(series, stands):
+    """Too few crowns gives NaN with the count and the reason kept."""
+    crowns = gpd.GeoDataFrame(
+        {"segment_id": range(4), "crown_diam_m": [3.0, 4.0, 5.0, 6.0]},
+        geometry=[Point(15.0 + 5 * i, 20.0).buffer(2.0) for i in range(4)],
+        crs=CRS,
+    )
+    record = compute_stand_record("S1", stands.geometry[0], series[0], crowns=crowns)
+    assert record.support["n_crowns"] == pytest.approx(4.0)
+    assert np.isnan(record.value("crown_cv"))
+    assert "crown_cv" in record.reasons
 
 
 def test_texture_reports_a_reason_without_naip(series, stands):

@@ -50,6 +50,13 @@ def test_subpath_helpers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
         == tmp_path / "r" / "trajectories" / "SCBI" / "100m"
     )
     assert p.figures_dir() == tmp_path / "r" / "figures"
+    # The satellite observation cache is an input (a cache of an external
+    # archive); the per-year metrics derived from it are a result.
+    assert (
+        p.satellite_dir("ElkinsvilleNE")
+        == tmp_path / "d" / "satellite" / "ElkinsvilleNE"
+    )
+    assert p.stands_dir("ElkinsvilleNE") == tmp_path / "r" / "stands" / "ElkinsvilleNE"
 
 
 def test_project_paths_is_frozen() -> None:

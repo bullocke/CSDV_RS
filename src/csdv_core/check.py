@@ -81,8 +81,12 @@ _REQUIRED_IMPORTS = (
     "pydantic",
     "yaml",
     "scipy",
+    # The stand metric and satellite observation caches are parquet. Without an
+    # engine the pipeline runs to completion and then fails on the write, which
+    # is the worst place to find out.
+    "pyarrow",
 )
-_OPTIONAL_IMPORTS = ("torch", "ee", "rpy2", "deepforest")
+_OPTIONAL_IMPORTS = ("torch", "ee", "wxee", "rpy2", "deepforest")
 
 
 def _check_imports(rows: list[CheckRow]) -> None:

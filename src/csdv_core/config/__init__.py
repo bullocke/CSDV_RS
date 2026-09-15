@@ -17,6 +17,7 @@ import yaml
 
 from csdv_core.config._models import (
     MetricsConfig,
+    SatelliteConfig,
     SitesConfig,
     SiteTypesConfig,
     StagesConfig,
@@ -29,12 +30,14 @@ __all__ = [
     "load_sites",
     "load_site_types",
     "load_metrics",
+    "load_satellite",
     "load_stages",
     "load_trajectories",
     "reload_config",
     "SitesConfig",
     "SiteTypesConfig",
     "MetricsConfig",
+    "SatelliteConfig",
     "StagesConfig",
     "TrajectoriesConfig",
 ]
@@ -76,6 +79,12 @@ def load_metrics() -> MetricsConfig:
 
 
 @lru_cache(maxsize=1)
+def load_satellite() -> SatelliteConfig:
+    """Load and validate ``satellite.yaml``."""
+    return SatelliteConfig.model_validate(load_yaml("satellite"))
+
+
+@lru_cache(maxsize=1)
 def load_stages() -> StagesConfig:
     """Load and validate ``stages.yaml``."""
     return StagesConfig.model_validate(load_yaml("stages"))
@@ -93,6 +102,7 @@ def reload_config() -> None:
         load_sites,
         load_site_types,
         load_metrics,
+        load_satellite,
         load_stages,
         load_trajectories,
     ):

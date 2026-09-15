@@ -121,9 +121,11 @@ def median_date_tag(datetimes: Sequence[str | datetime]) -> str:
     if not datetimes:
         raise ValueError("No acquisition dates supplied")
     parsed = sorted(
-        value
-        if isinstance(value, datetime)
-        else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        (
+            value
+            if isinstance(value, datetime)
+            else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        )
         for value in datetimes
     )
     return parsed[len(parsed) // 2].strftime("%Y%m%d")

@@ -25,12 +25,6 @@ csdv --help
 
 # External: upstream NAIP-CHM repo for the inference subcommand
 git clone https://github.com/smorf-ntsg/naip-chm ../naip-chm
-
-# One-time: static CONUS-wide conditioning rasters for NAIP-CHM inference (~1.65 GB).
-# Run this on the login node, not inside a GPU job, so the transfer does not
-# consume a GPU allocation.
-csdv download conditioning
-# writes to $CSDV_DATA_ROOT/chm_model/conditioning/ (override with CSDV_CONDITIONING_DIR)
 ```
 
 Add to your `~/.bashrc` (or a project-local `env.sh` you `source` per session):
@@ -52,6 +46,50 @@ csdv check
 ```
 
 A clean report has zero `[FAIL]` rows. `[INFO]` rows for optional imports (`torch`, `rpy2`, `ee`) are fine if you do not need that capability.
+
+### 1a. Conditioning rasters (one-time, on a data transfer node)
+
+NAIP-CHM inference needs five static, CONUS-wide conditioning rasters (~1.65 GB total). Fetch them once. Do not do this on a login node (the CHPC arbiter kills sustained processes) or inside a compute/GPU job (compute nodes have no outbound internet, so the download times out with `Errno 110`). Use a CHPC **data transfer node**, which has external internet and no process limits. Confirm the current hostname in the CHPC data services docs (the `dtn*.chpc.utah.edu` nodes).
+
+```bash
+ssh $USER@dtn07.chpc.utah.edu        # or whichever DTN CHPC lists
+cd /uufs/chpc.utah.edu/common/home/dycelab/users/$USER/code/CSDV/CSDV_RS
+source env.sh                        # the CSDV_* env vars from step 1
+micromamba activate ./.micromamba/csdv
+csdv download conditioning
+# writes to $CSDV_DATA_ROOT/chm_model/conditioning/ (override with CSDV_CONDITIONING_DIR)
+```
+
+If you prefer not to load the env on the DTN, pull the files directly with a resumable transfer:
+
+```bash
+DEST=$CSDV_DATA_ROOT/chm_model/conditioning
+BASE=http://rangeland.ntsg.umt.edu/data/naip-chm/inference-resources/conditioning-data
+mkdir -p "$DEST"
+for f in elevation.tif climate_pca.tif soil_pca.tif nlcd.tif ecoregion.tif; do
+    wget -c -O "$DEST/$f" "$BASE/$f"
+done
+```
+
+These are static and shared across every site and year, so this is a one-time step. Once the five files are present, the e2e script and SLURM jobs skip the download automatically (the `ecoregion.tif` sentinel).
+
+### 1b. Landsat observations (per site, on a data transfer node)
+
+`csdv satellite fetch` reduces forty years of Landsat inside each stand polygon on Earth Engine's servers and writes the result to `$CSDV_DATA_ROOT/satellite/<site>/`. It talks to Google over the network for the whole run, so it has the same constraint as step 1a: it cannot run inside a SLURM job, because compute nodes have no outbound internet. Run it on a data transfer node.
+
+```bash
+ssh $USER@dtn07.chpc.utah.edu
+cd /uufs/chpc.utah.edu/common/home/dycelab/users/$USER/code/CSDV/CSDV_RS
+source env.sh
+micromamba activate ./.micromamba/csdv
+earthengine authenticate           # once per machine, opens a browser flow
+csdv satellite fetch --site ElkinsvilleNE
+csdv satellite annual --site ElkinsvilleNE
+```
+
+The fetch takes roughly twenty minutes for forty stands over 1985 to 2025 and writes about half a megabyte. Check the manifest for failed chunks before moving on. `csdv satellite annual` is pure computation on the cached parquet and can run anywhere, including inside a job.
+
+Both outputs are caches. Delete them and refetch if the quality gates or the index definitions change; nothing downstream needs the Earth Engine session again.
 
 ## 2. Per-session warm-up
 
@@ -125,7 +163,7 @@ sbatch scripts/slurm/run_site_e2e.sbatch SCBI 2014,2018,2022 50
 
 The sbatch wrapper activates the project env, prints the `csdv --version`, then execs `run_site_e2e.sh` with the forwarded arguments. SLURM stdout/stderr live in `results/logs/slurm/csdv_e2e-<jobid>.out`. Per-step e2e logs still go to `$CSDV_RESULTS_ROOT/logs/<SITE>/<RUN_ID>/`.
 
-Run `csdv download conditioning` once on the login node before submitting. The batch job will fetch the conditioning rasters itself if they are absent, but doing it beforehand keeps the 1.65 GB transfer off the GPU allocation.
+Make sure the conditioning rasters are already in place before submitting (see step 1a). The batch job will attempt to fetch them if absent, but compute nodes have no outbound internet, so an in-job download times out. Pre-fetch on a data transfer node.
 
 Resource defaults: 1 GPU, 8 CPU, 48 GB, 6 h. Tune `--gres`, `--mem`, and `--time` in `scripts/slurm/run_site_e2e.sbatch` for larger AOIs.
 
@@ -136,7 +174,8 @@ Resource defaults: 1 GPU, 8 CPU, 48 GB, 6 h. Tune `--gres`, `--mem`, and `--time
 | `csdv check` shows `[FAIL] data_root MISSING` | env vars | `CSDV_DATA_ROOT` unset or pointing at a path you cannot write to. |
 | `csdv check` shows `[INFO] import torch (optional) not installed` | env | Only matters if step 3 (`chm-inference`) is in scope. Install with `pip install -e ".[chm_inference]"` or use Colab. |
 | `chm-X` step fails with "Upstream naip-chm repo not found" | `$NAIPCHM_REPO_DIR` | Either set the env var or pass `--repo-dir` via the underlying CLI. |
-| `chm-X` step fails with "Conditioning rasters missing in ..." | `$CSDV_DATA_ROOT/chm_model/conditioning/` (or `$CSDV_CONDITIONING_DIR`) | Rasters not downloaded, or the conditioning step was skipped under `--skip-download`. Run `csdv download conditioning`. |
+| `chm-X` step fails with "Conditioning rasters missing in ..." | `$CSDV_DATA_ROOT/chm_model/conditioning/` (or `$CSDV_CONDITIONING_DIR`) | Rasters not downloaded, or the conditioning step was skipped under `--skip-download`. Pre-fetch them on a data transfer node (step 1a). |
+| `conditioning` step fails with `URLError ... Errno 110 Connection timed out` | the SLURM/compute node | Compute nodes have no outbound internet, so the in-job download cannot reach the server. Pre-fetch the rasters on a data transfer node (step 1a); the job will then skip the download. |
 | `crowns-X` step fails with "no CHM tif found" | `data/naip_chm/<SITE>/<YEAR>/` | Step 3 did not produce output. Check `chm-<year>.log`. |
 | `metrics-X` step fails with "CHM required for ..." | metric registry | A Pass-1 metric needs CHM and none was found. Confirm step 3 ran. |
 | `compute-metrics` writes nothing visible | `results/metrics/.../manifest.yaml` | The script writes a metric stack TIF and a manifest. Inspect `manifest.yaml` to see which metrics were computed. |

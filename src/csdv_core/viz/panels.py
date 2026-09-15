@@ -50,13 +50,40 @@ CHANGE_PANELS: tuple[tuple[str, str], ...] = (
     ("d_crown_p90", "Change in crown width P90 (m)"),
 )
 
+#: Landsat metrics, with display labels and axis limits. These run on their own
+#: time base: the NAIP metrics have six dates over ten years, these have one
+#: value a year back to the mid-1980s, which reaches disturbances that happened
+#: before the aerial record on hand.
+#:
+#: The limits start above zero because nothing in this landscape reaches there.
+#: The lowest growing-season NDVI in the Elkinsville record is 0.53, from a
+#: clearcut that never regrew, so an axis running to zero would spend a third of
+#: its height on values no forest stand can take. The limits are still fixed
+#: rather than fitted per stand, so the same height means the same thing on
+#: every figure.
+SATELLITE_PANELS: tuple[tuple[str, str, tuple[float, float]], ...] = (
+    ("ndvi_mean", "Growing-season NDVI", (0.30, 1.0)),
+    ("ndvi_seasonal_amplitude", "NDVI seasonal amplitude", (0.20, 1.0)),
+)
+
+#: Fallback for the hollow-marker rule when the caller gives no floor. Callers
+#: should pass ``marginal_at_or_below`` from the metric's own configured
+#: ``min_obs``, because that number differs by metric: a growing-season mean
+#: needs three observations and a seasonal fit needs six. Applying one figure
+#: to both drew nearly every mean hollow and nearly every amplitude filled,
+#: which said more about the threshold than about the data.
+MARGINAL_SUPPORT_OBS = 3
+
 __all__ = [
     "CHANGE_PANELS",
     "ENVELOPE_PANELS",
+    "MARGINAL_SUPPORT_OBS",
+    "SATELLITE_PANELS",
     "blocking_chart",
     "change_panel",
     "mark_disturbance",
     "metric_panel",
+    "satellite_panel",
     "stage_strip",
 ]
 
@@ -173,6 +200,188 @@ def change_panel(
     ax.grid(axis="y", alpha=0.35)
 
 
+def _connected_line(
+    ax: Axes,
+    years: np.ndarray,
+    values: np.ndarray,
+    *,
+    color: str,
+    label: str | None,
+    gap_label: str | None,
+) -> int:
+    """Draw a series that runs across the years it has no value for.
+
+    Two paths rather than one. A segment joining two consecutive reported years
+    is solid, and a segment that has to jump over one or more missing years is
+    dashed and faded. The reader gets a single continuous trajectory and can
+    still see which parts of it are drawn between measurements.
+
+    Both paths are assembled with NaN separators so the whole series costs two
+    ``plot`` calls rather than one per segment.
+
+    Returns:
+        The number of dashed segments, which is zero when every year reports.
+    """
+    reported = np.flatnonzero(np.isfinite(values))
+    if reported.size == 0:
+        return 0
+
+    solid_x, solid_y, gap_x, gap_y = [], [], [], []
+    for start, end in zip(reported[:-1], reported[1:], strict=True):
+        # Adjacent in the year array means nothing was skipped between them.
+        x_pair = [years[start], years[end], np.nan]
+        y_pair = [values[start], values[end], np.nan]
+        if end == start + 1:
+            solid_x.extend(x_pair)
+            solid_y.extend(y_pair)
+        else:
+            gap_x.extend(x_pair)
+            gap_y.extend(y_pair)
+
+    n_gaps = len(gap_x) // 3
+    if gap_x:
+        ax.plot(
+            gap_x,
+            gap_y,
+            "--",
+            color=color,
+            lw=1.0,
+            alpha=0.55,
+            zorder=3,
+            label=gap_label,
+        )
+    # The solid path is drawn second so it wins wherever the two meet at a
+    # shared point, and it carries the series label even on a record whose
+    # first segment happens to be a gap.
+    ax.plot(solid_x, solid_y, "-", color=color, lw=1.4, zorder=3, label=label)
+    if n_gaps:
+        logger.info("Series crosses %d year(s) with no value", n_gaps)
+    return n_gaps
+
+
+def satellite_panel(
+    ax: Axes,
+    years: Sequence[float],
+    values: Sequence[float],
+    *,
+    label: str,
+    ylim: tuple[float, float] | None = None,
+    n_obs: Sequence[float] | None = None,
+    observations: tuple[Sequence[float], Sequence[float]] | None = None,
+    last_pre: float | None = None,
+    first_post: float | None = None,
+    imagery_years: Sequence[float] | None = None,
+    color: str = ACCENT,
+    series_label: str | None = None,
+    xlim: tuple[float, float] | None = None,
+    marginal_at_or_below: float = MARGINAL_SUPPORT_OBS,
+    gap_label: str | None = "spans a year with no value",
+) -> None:
+    """One Landsat metric a year, over the whole satellite record.
+
+    Three things are drawn beyond the line itself, each earning its place.
+
+    The individual clear observations sit behind it as faint dots, on the same
+    axis where that makes sense, so a reader can see how much evidence a year's
+    value rests on rather than taking the line on trust. That is the same
+    argument for printing the metric count under a stage cell.
+
+    Years resting on few observations are drawn hollow, matching how
+    ``metric_panel`` marks canopy heights derived from coarser imagery.
+
+    A year the metric could not compute breaks nothing. The line runs on across
+    it, dashed and faded over the years it had to skip, so the reader still sees
+    one trajectory rather than a scatter of disconnected fragments. Leaving a
+    real break there reads as the end of the record instead of as a year that
+    happened to be cloudy, and the Landsat record is sparse enough in the 1980s
+    and 1990s that a strict line is broken more often than not.
+
+    The NAIP dates are ticked along the bottom, because the band above this one
+    is on a different and much shorter time base and the two need tying
+    together.
+
+    Args:
+        ax: Target axis.
+        years: Calendar years, ascending.
+        values: The metric at each year. NaN where it could not be computed.
+        label: Y-axis label.
+        ylim: Y-axis limits.
+        n_obs: Observations behind each year, for the hollow-marker rule.
+        observations: ``(decimal_year, value)`` for the individual clear
+            observations. Only meaningful for a metric on the same scale as the
+            observations, so it is passed only for the level panel.
+        last_pre: Last imagery date on which the disturbance was absent.
+        first_post: First date on which it was present.
+        imagery_years: NAIP years to tick.
+        color: Line colour.
+        series_label: Legend name, which tells two impact polygons apart.
+        xlim: X-axis limits. Shared across panels so the band reads as one.
+        marginal_at_or_below: Years resting on this many observations or fewer
+            are drawn hollow. Pass the metric's own configured ``min_obs``, so
+            a hollow marker always means the same thing: this year sits on the
+            fewest observations the metric will accept.
+        gap_label: Legend name for the dashed segments that cross a year with
+            no value. None leaves them out of the legend.
+    """
+    years = np.asarray(years, dtype=float)
+    values = np.asarray(values, dtype=float)
+    if xlim is not None:
+        ax.set_xlim(*xlim)
+    elif years.size:
+        ax.set_xlim(years.min() - 1, years.max() + 1)
+
+    if observations is not None:
+        obs_x, obs_y = (np.asarray(a, dtype=float) for a in observations)
+        ax.plot(
+            obs_x,
+            obs_y,
+            ".",
+            color=GRID,
+            ms=2.2,
+            zorder=1,
+            rasterized=True,
+        )
+
+    mark_disturbance(ax, last_pre, first_post)
+
+    if imagery_years is not None:
+        bottom = (ylim or ax.get_ylim())[0]
+        span = (ylim or ax.get_ylim())[1] - bottom
+        for year in imagery_years:
+            ax.plot(
+                [year, year],
+                [bottom, bottom + 0.045 * span],
+                color=MUTED,
+                lw=1.0,
+                zorder=2,
+                clip_on=False,
+            )
+
+    _connected_line(
+        ax, years, values, color=color, label=series_label, gap_label=gap_label
+    )
+    if n_obs is None:
+        ax.plot(years, values, "o", color=color, ms=3.4, zorder=4)
+    else:
+        counts = np.asarray(n_obs, dtype=float)
+        firm = counts > marginal_at_or_below
+        ax.plot(years[firm], values[firm], "o", color=color, ms=3.4, zorder=4)
+        ax.plot(
+            years[~firm],
+            values[~firm],
+            "o",
+            mfc="white",
+            mec=color,
+            mew=1.1,
+            ms=3.4,
+            zorder=4,
+        )
+    ax.set_ylabel(label)
+    if ylim:
+        ax.set_ylim(*ylim)
+    ax.grid(alpha=0.35)
+
+
 def stage_strip(
     ax: Axes,
     years: Sequence[float],
@@ -189,7 +398,9 @@ def stage_strip(
     """
     years = list(years)
     for i, stage in enumerate(stages):
-        ax.add_patch(plt_rectangle(i - 0.45, 0.0, 0.9, 1.0, stage))
+        # Cells nearly touch. The gaps between them carried no information and
+        # spread the strip over more of the figure than it earned.
+        ax.add_patch(plt_rectangle(i - 0.48, 0.0, 0.96, 1.0, stage))
         ax.text(
             i,
             0.5,
@@ -204,9 +415,9 @@ def stage_strip(
             note = f"n={int(n_evaluated[i])}"
             if scores is not None and np.isfinite(scores[i]):
                 note += f"  {scores[i]:.2f}"
-            ax.text(i, -0.22, note, ha="center", va="top", fontsize=7, color=MUTED)
-    ax.set_xlim(-0.6, len(years) - 0.4)
-    ax.set_ylim(-0.45, 1.0)
+            ax.text(i, -0.14, note, ha="center", va="top", fontsize=7, color=MUTED)
+    ax.set_xlim(-0.55, len(years) - 0.45)
+    ax.set_ylim(-0.38, 1.0)
     ax.set_xticks(range(len(years)))
     ax.set_xticklabels([str(int(y)) for y in years])
     ax.set_yticks([])
