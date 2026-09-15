@@ -120,7 +120,7 @@ Share of pixels that read as gap at both of two dates.
 
 Source module: `zonal/pixel.py`. Four cover fractions split the CHM into height bands. Five summary statistics describe the canopy surface.
 
-The bands are half-open, `[lo, hi)`. They do not partition the height range. Nothing falls in `[0, 0.5)`, and the shrub band straddles the 2 m canopy threshold, so `shrub_fraction` and `gap_fraction` overlap by design.
+The bands are half-open, `[lo, hi)`. They do not partition the height range. Nothing falls in `[0, 0.5)`. The shrub band lies entirely below the 2 m canopy threshold, so shrub pixels also count toward `gap_fraction`.
 
 | Metric | Band |
 |---|---|
@@ -611,7 +611,7 @@ The grey band is the 10th to 90th percentile across all 40 stands at each date. 
 
 ![Mean canopy height for a clearcut with reserves, showing the reserve trees surviving in the counted row and a mean that falls as the canopy closes](images/metrics/height_mean_reserves.png)
 
-Stand `ELKNE-U9-0-0` is the 11.4 acre clearcut with reserves from the `gap_fraction` and `gap_persistence` figures above. The `gap_fraction` caption ends by telling the reader to pair that metric with this one. This is what happens when they do.
+Stand `ELKNE-U9-0-0` is the 11.4 acre clearcut with reserves from the `gap_fraction` and `gap_persistence` figures above. This example shows why mean canopy height can fall as canopy cover recovers.
 
 The reserve trees are easy to find in the middle column of the third row. They are the scattered bright points that survive the 2 m cut while everything around them turns grey. They are also why the 90th percentile barely moves at first. It reads 28.06 m in 2016, 23.70 m in 2018 and 21.19 m in 2020, across a harvest that took 82 percent of the canopy. Twenty-three thousand pixels out of 128,029 clear the threshold on those two post-harvest dates, and almost all of them are reserve trees.
 
@@ -627,7 +627,7 @@ So the pairing the `gap_fraction` caption recommends does not work on its own. G
 
 ![Crown segments over imagery, the crown diameter distribution at six dates, and a flat crown_cv series](images/metrics/crown_cv_stable.png)
 
-Stand `ELKNE-U44-0-0` is a 191 acre uneven-age selection harvest cut between 2012 and 2013. It carries between 5168 and 6646 segments at every date, far above the 75 crown support floor. If `crown_cv` works anywhere in this data set, it works here.
+Stand `ELKNE-U44-0-0` is a 191 acre uneven-age selection harvest cut between 2012 and 2013. It carries between 5168 and 6646 segments at every date, far above the 75 crown support floor.
 
 The top row is a 250 m detail box, not the whole stand. At full extent a 10 m segment is a few pixels wide. Segments are drawn only inside the stand, which is why they stop at the outline. Compare a coloured patch against the tree crowns visible beside it. Under the 2026 segmentation a segment is roughly one dominant crown, about 10 m across at 67 per hectare, where the same stand carries 200 to 600 stems. Subdominant trees are still missing, so read these as canopy patches rather than a stem map.
 
@@ -647,7 +647,7 @@ Segment counts run 81, 73, 106, 37, 12 and 119 across the six dates. The middle 
 
 The bottom panel draws all six dates, but only the filled markers are reported. `MIN_CROWNS = 75` withholds 2014, 2018 and 2020, drawn hollow on a dashed line. The floor is the sample size at which the crown_cv interval becomes narrower than the narrowest stage band, so below it the metric cannot place a stand in a band. The withheld values are plotted rather than dropped because three isolated points with no line between them read as missing data, when the truth is a value the sample was too small to trust.
 
-Read the hollow section and it is clear what the floor is protecting against. `crown_cv` climbs to 0.55 in 2018 and 0.62 in 2020, which would put a freshly clearcut stand in the MA_OW envelope for a mature forest or open woodland, the opposite of what happened on the ground. Twelve crowns produced that. Under the previous threshold of 3 the pipeline would have reported it.
+Read the hollow section and it is clear what the floor is protecting against. `crown_cv` climbs to 0.55 in 2018 and 0.62 in 2020, which would put a freshly clearcut stand in the MA_OW envelope for a mature forest or open woodland, the opposite of what happened on the ground. The previous threshold of three crowns would have allowed the pipeline to report this estimate from only 12 crowns.
 
 A small stand therefore loses the metric exactly when it is disturbed, which is when a trajectory rule most needs it. Twenty-six of the forty stands in this module clear the floor at all. `crown_mean` has no such problem and tracks the disturbance closely, falling from 10.7 m to 4.0 m and recovering to 7.2 m.
 
@@ -665,7 +665,7 @@ The three rows above the series take the metric apart. The second row is NAIP ba
 
 Compare the second row across the columns. The in-stand values span 24 to 243 DN in 2016, 1 to 241 in 2018, and 107 to 225 in 2022, which is a little under half the range. The quantization stretch is refitted from those bounds each time, so the 2022 panel spends all 16 levels on half the tonal range and comes out looking no flatter than the others. The metric never sees that the scene changed.
 
-The series is the consequence. The stand reads 4.79, 3.01, 6.31, 6.09, 5.84 and 5.56 bits across the six dates. The grey line is the median across all 40 stands in the module and reads 5.30, 4.09, 6.31, 6.13, 5.70 and 5.45. The stand tracks the module almost exactly, including a 3.3 bit rise between 2014 and 2016 when nothing happened on the ground at either date. The harvest itself moved the value 0.22 bits, from 6.31 to 6.09, while gap fraction went from 0.001 to 0.224.
+The stand reads 4.79, 3.01, 6.31, 6.09, 5.84 and 5.56 bits across the six dates. The grey line is the median across all 40 stands in the module and reads 5.30, 4.09, 6.31, 6.13, 5.70 and 5.45. The stand tracks the module almost exactly, including a 3.3 bit rise between 2014 and 2016 when nothing happened on the ground at either date. The harvest itself moved the value 0.22 bits, from 6.31 to 6.09, while gap fraction went from 0.001 to 0.224.
 
 The shaded band is the 10th to 90th percentile across those 40 stands. It runs 0.4 to 1.2 bits wide within a single date, against a 2.2 bit swing between dates. Variation between acquisitions is larger than every stand-to-stand difference in the module put together.
 
@@ -679,7 +679,7 @@ Two consequences follow for the stage envelopes. LSE occupies 0.0 to 4.0 bits, a
 
 Stand `ELKNE-U12-0-0` is 3.2 acres, a clearcut with reserves taken between the 2016 and 2017 imagery.
 
-The middle row is the metric. It splits the canopy height model at 2 m, runs the same `interior_edge_mask` the metric calls, and paints the pixels that mask returns. Those really are the counted pixels. The row is drawn at the native 0.6 m resolution rather than decimated, because the length of a boundary traced across a raster scales with the pixel size. Count the painted pixels, multiply by 0.6 m, divide by the 12,869 m² of stand, and the plotted value comes back exactly: 65 boundary pixels in 2016, 3,223 in 2018 and 4,865 in 2022.
+The middle row is the metric. It splits the canopy height model at 2 m, runs the same `interior_edge_mask` the metric calls, and paints the pixels that mask returns. The row is drawn at the native 0.6 m resolution rather than decimated, because the length of a boundary traced across a raster scales with the pixel size. Count the painted pixels, multiply by 0.6 m, divide by the 12,869 m² of stand, and the plotted value comes back exactly: 65 boundary pixels in 2016, 3,223 in 2018 and 4,865 in 2022.
 
 The value peaks in 2022, four years after the harvest, not at it. Edge density reads 0.003 in 2016, 0.150 in 2018 and 0.227 in 2022. Gap fraction over the same three dates reads 0.001, 0.659 and 0.262. The 2018 panel shows why. A fresh clearcut is one large opening with a short internal boundary, and two thirds of the stand is inside it. By 2022 regrowth has broken that opening into scattered patches, so a quarter of the stand is gap and the boundary is half as long again.
 
@@ -725,17 +725,17 @@ The dotted line is the FC2 threshold. Every date on this stand sits above it, in
 
 ![Five inputs with known answers, their power spectra and angular profiles, over every reported value in the module against the FC2 threshold](images/metrics/row_directionality_scale.png)
 
-The metric is uncalibrated, so a value means nothing until something anchors it. The four left-hand columns are synthetic patterns built in the script, and the fifth is the real stand from the figure above. Every value is computed by `fft_directionality` itself at draw time, so none of them is asserted.
+The metric is uncalibrated, so a value means nothing until something anchors it. The four left-hand columns are synthetic patterns built in the script, and the fifth is the real stand from the figure above. All values are calculated with `fft_directionality` when the figure is generated.
 
 Read the columns in pairs. Regular rows return 0.967, just under the 0.972 ceiling, and their spectrum is two bright points. Turning those rows 30 degrees returns 0.954 and moves the points around the centre, which confirms the metric has no preferred orientation. White noise returns 0.111 with a spectrum that fills the disc evenly and a profile that hugs its own mean.
 
 The pair that matters is the third column against the fourth. They are the same random field. Nothing directional was added between them. The only change is a Gaussian blur, and the value goes from 0.111 to 0.724. Blur it further and it keeps climbing, reaching 0.850 at a 16 pixel radius. The metric responds to how smooth a surface is, and a canopy height model is a smooth surface.
 
-The fifth column is the consequence. Stand `U13` in 2016 returns 0.862, and its spectrum is the same compact blob as the blurred noise beside it. A closed hardwood canopy with no rows in it scores higher than most of what the metric was built to find.
+Stand `U13` in 2016 returns 0.862, and its spectrum is the same compact blob as the blurred noise beside it. A closed hardwood canopy with no rows in it scores higher than most of what the metric was built to find.
 
 The bottom row places every reported value in the module on the same axis. All 114 of them fall between 0.42 and 0.89, and 110 clear the FC2 threshold of 0.50. A rule written to identify row-structured plantations therefore selects almost every ordinary hardwood stand-date in the calibration set. Nothing in Elkinsville NE is a plantation.
 
-Two limits on reading this figure. The synthetic patches are square and noise-free, while a real stand is an irregular polygon carrying nodata, so treat their values as endpoints rather than as a calibration curve. And the metric is not broken in the sense of being wrong about its own arithmetic. It computes what it says it computes. It is the interpretation of that arithmetic as row structure that does not hold. See [Known gaps](#known-gaps).
+Two limits on reading this figure. The synthetic patches are square and noise-free, while a real stand is an irregular polygon carrying nodata, so treat their values as endpoints rather than as a calibration curve. The calculation works as intended, but these examples show that high values do not reliably indicate rows. See [Known gaps](#known-gaps).
 
 [Back to the row_directionality entry](#row_directionality)
 
@@ -749,7 +749,7 @@ The lower panel is the whole Landsat record, one value a year from 1985. Each fa
 
 The signal is large and it runs in both directions. The stand holds between 0.84 and 0.89 through the 1990s and early 2000s. It falls after the harvest to 0.58 by 2010 and bottoms at 0.53 in 2016. It recovers to 0.78 by 2025. Seven years report no value, and the six dashed segments are where the line crosses them. Three more years rest on the three-observation floor and are drawn hollow.
 
-The shaded bands are the seven stage envelopes, and they are named in the legend rather than beside the bands as they are on every other figure here. Six of the seven sit between 0.70 and 0.93 with their midpoints within 0.02 of each other, so no font size fits a stage code against each one. That crowding is the honest picture of a metric which saturates over closed canopy. The one band that separates is ESI, at 0.45 to 0.80, and this stand sits inside it for fifteen years after the cut. The legend swatches are drawn more opaque than the bands, because six overlapping bands composite to something near white on the axis itself.
+The shaded bands are the seven stage envelopes, and they are named in the legend rather than beside the bands as they are on every other figure here. Six of the seven sit between 0.70 and 0.93 with their midpoints within 0.02 of each other, so no font size fits a stage code against each one. The overlapping stage bands reflect NDVI saturation over closed canopy. The one band that separates is ESI, at 0.45 to 0.80, and this stand sits inside it for fifteen years after the cut. The legend swatches are drawn more opaque than the bands, because six overlapping bands composite to something near white on the axis itself.
 
 That length of signal is unusual, and it comes from a stand that never regrew. Stand `ELKNE-U13-0-0` lost 85 percent of its canopy between the 2016 and 2018 imagery. Its growing-season NDVI moved from 0.854 in 2016 to 0.729 in 2017, then back to 0.845 in 2018 and 0.892 in 2019, while the canopy height model still read a gap fraction of 0.845 in 2018 and 0.894 in 2020. One year of dip, 0.125 deep, for a stand-replacing harvest. Herbaceous and shrub regrowth is green, and NDVI cannot tell it from a canopy.
 
@@ -781,11 +781,11 @@ Same stand again. The top row is three trailing five-year windows of the growing
 
 The dots are the yearly levels. The solid line is the Theil-Sen slope through them, the median of all pairwise slopes, so one cloudy year cannot set the sign the way it can with least squares. The two dashed lines are the low and high ends of the confidence interval `scipy.stats.theilslopes` returns, drawn through the same median point so that only their slope differs.
 
-Those dashed lines are the figure. The 2010 window returns -0.073 per year with an interval of -0.120 to -0.029. Both ends fall below zero, so the decline is a statement. The 2016 window returns 0.0002 with an interval of -0.106 to 0.083. Its two dashed lines cross inside the panel, because the four points it rests on carry no direction at all. The 2020 window returns 0.063 with an interval of -0.036 to 0.125, a recovery the data support without ruling out a flat series. Read as slopes alone those three are a decline, nothing, and a recovery. Read with their intervals, the first is solid and the third is suggestive.
+The 2010 window returns -0.073 per year with an interval of -0.120 to -0.029. Both ends fall below zero, indicating a decline. The 2016 window returns 0.0002 with an interval of -0.106 to 0.083. Its two dashed lines cross inside the panel, because the four points it rests on carry no direction at all. The 2020 window returns 0.063 with an interval of -0.036 to 0.125, a recovery the data support without ruling out a flat series. The confidence intervals indicate a decline in 2010 but do not distinguish the 2016 or 2020 slopes from zero.
 
 The 2016 panel also carries a year the level metric withheld. 2014 rested on two observations against a floor of three, so the window used four points rather than five. The metric accepts that down to `min_years = 4` and reports the slope anyway.
 
-The lower panel carries the interval as a band across the whole record. The narrow strip at zero holds both trajectory thresholds, DS2 at -0.004 and DS3a and EF3 at 0.002. They sit within 0.006 of each other and of zero, which is far narrower than the interval on any window in this record. Testing either threshold without also reading the interval turns a coin flip into a classification.
+The lower panel carries the interval as a band across the whole record. The narrow strip at zero holds both trajectory thresholds, DS2 at -0.004 and DS3a and EF3 at 0.002. They sit within 0.006 of each other and of zero, which is far narrower than the interval on any window in this record. Classifications based on the slope alone can be unreliable when its confidence interval spans the threshold.
 
 No stage envelope constrains this metric, on purpose. A rate has no meaning in a single-date envelope.
 
