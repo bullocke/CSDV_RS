@@ -52,6 +52,9 @@ dependencies:
   # parquet, which pandas cannot do without an engine.
   - pyarrow
 
+  # Off-screen 3D renders of height surfaces (csdv_core.viz.scene3d)
+  - pyvista
+
   # Nice extras for this kind of project
   - requests
   - tqdm
