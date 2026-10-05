@@ -40,7 +40,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 from matplotlib.collections import PathCollection  # noqa: E402
-from matplotlib.colors import Normalize  # noqa: E402
+from matplotlib.colors import (  # noqa: E402
+    LinearSegmentedColormap,
+    ListedColormap,
+    Normalize,
+)
 from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Patch  # noqa: E402
 from PIL import Image  # noqa: E402
@@ -81,6 +85,22 @@ OUT_ROOT = REPO / "Presentations" / "Lab_Meeting_2026-10" / "figures"
 FIG_W, FIG_H = 13.333, 7.5
 HEIGHT_VMAX = 25.0
 HEIGHT_CMAP = "viridis"
+#: Crowns sit on green imagery, so their ramp avoids green entirely. Set from
+#: the command line with --crown-cmap and --crown-edge.
+CROWN_STYLE = {"cmap": "plasma", "edge": "#1b1030", "lw_scale": 1.0}
+CROWN_RAMPS = {
+    "plasma": lambda: plt.get_cmap("plasma"),
+    "magma": lambda: ListedColormap(plt.get_cmap("magma")(np.linspace(0.25, 1.0, 256))),
+    "pinkpurple": lambda: LinearSegmentedColormap.from_list(
+        "pinkpurple", ["#49006a", "#ae017e", "#f768a1", "#fde0dd"]
+    ),
+}
+
+
+def crown_cmap():
+    return CROWN_RAMPS[CROWN_STYLE["cmap"]]()
+
+
 HEIGHT_YLIM = (0.0, 27.0)
 HEIGHT_TICKS = (0.0, 1.5, 3.0, 10.0, 20.0)
 BAND_ALPHA = 0.45
@@ -152,11 +172,11 @@ def draw_crowns(ax, series: StandSeries, year: int, *, lw: float = 0.45):
     collection = PathCollection(
         crown_paths(series, crowns),
         array=crowns["max_h_m"].to_numpy(dtype=float),
-        cmap=HEIGHT_CMAP,
+        cmap=crown_cmap(),
         norm=Normalize(0.0, HEIGHT_VMAX),
         alpha=0.85,
-        edgecolors="white",
-        linewidths=lw,
+        edgecolors=CROWN_STYLE["edge"],
+        linewidths=lw * CROWN_STYLE["lw_scale"],
         zorder=4,
     )
     ax.add_collection(collection)
@@ -736,7 +756,7 @@ def render(
         fig = draw(series, rgb, year, reveal)
         written.append(save(fig, folder / f"frame_{i:02d}_{year}.png", dpi))
     contact_sheet(written, folder / "contact_sheet.png")
-    logger.info("Wrote %d frames to %s", len(written), folder.relative_to(REPO))
+    logger.info("Wrote %d frames to %s", len(written), folder)
 
 
 def main() -> int:
@@ -762,9 +782,15 @@ def main() -> int:
     parser.add_argument("--dpi", type=int, default=150)
     parser.add_argument("--out-root", type=Path, default=OUT_ROOT)
     parser.add_argument("--no-cache", action="store_true")
+    parser.add_argument("--crown-cmap", choices=list(CROWN_RAMPS), default="plasma")
+    parser.add_argument("--crown-edge", default="#1b1030", help="Crown border colour")
+    parser.add_argument("--crown-lw-scale", type=float, default=1.0)
     args = parser.parse_args()
 
     setup_style()
+    CROWN_STYLE.update(
+        cmap=args.crown_cmap, edge=args.crown_edge, lw_scale=args.crown_lw_scale
+    )
     years = tuple(int(y) for y in args.years.split(","))
     series = load_stand_series(
         args.stand,
