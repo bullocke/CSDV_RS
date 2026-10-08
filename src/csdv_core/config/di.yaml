@@ -1,0 +1,42 @@
+# Disturbance Index (DI) parameters for csdv_core.change.di and di_decide.
+#
+# standardize (scene vs local and the window size are chosen per call):
+#   min_frac        Least share of valid forest in a window before falling back
+#                   to scene statistics.
+#   trim_z          Population pixels beyond +/- this robust scene z are left out
+#                   of window statistics (keeps large disturbances from
+#                   inflating their own window SD). Not a detection threshold.
+#   sd_floor        Least window SD as a share of the scene scale (guards
+#                   windows of saturated values such as full canopy cover).
+#   min_hist        Earlier forest dates needed for pixmean (pixz needs >= 2).
+#   prior_df        Pseudo degrees of freedom shrinking the pixz SD toward the
+#                   pooled forest variance.
+# decide:
+#   pct0            Quantile range for Efron's central-matching null (0.25 =
+#                   fit between the quartiles, the locfdr default).
+#   bin_w           Histogram bin width in z units.
+#   smooth_bins     Gaussian smoothing of the mixture histogram, in bins.
+#   p_decision      Bayes decision boundary for pixels, clusters and runs.
+#   ndvi_decay      Carry-over of accumulated NDVI evidence per NAIP date.
+#   baseline_z      Fixed z threshold of the NISAR-style baseline rule (D1).
+#   bh_q            Benjamini-Hochberg level for the FDR comparison rule.
+#   min_prior       Floor on the per-date prior probability of disturbance (about
+#                   the eastern US rate per two-year NAIP interval); only used to
+#                   turn lfdr into likelihood ratios when the null takes p0 = 1.
+#   spatial_sigma_m Smoothing scales (Gaussian SD, m) for the spatial-support rules.
+standardize:
+  min_frac: 0.2
+  trim_z: 3.0
+  sd_floor: 0.25
+  min_hist: 1
+  prior_df: 2.0
+decide:
+  pct0: 0.25
+  bin_w: 0.05
+  smooth_bins: 2.0
+  p_decision: 0.5
+  ndvi_decay: 0.5
+  baseline_z: 3.0
+  bh_q: 0.05
+  min_prior: 0.01
+  spatial_sigma_m: [10.0, 25.0]

@@ -320,3 +320,33 @@ class ForestMaskProfile(_Base):
 
 class ForestMaskConfig(_Base):
     profiles: dict[str, ForestMaskProfile]
+
+
+# ---------------------------------------------------------------------------
+# di.yaml
+# ---------------------------------------------------------------------------
+
+
+class DIStandardize(_Base):
+    min_frac: float = Field(default=0.2, gt=0, le=1)
+    trim_z: float | None = Field(default=3.0, gt=0)
+    sd_floor: float = Field(default=0.25, ge=0)
+    min_hist: int = Field(default=1, ge=1)
+    prior_df: float = Field(default=2.0, ge=0)
+
+
+class DIDecide(_Base):
+    pct0: float = Field(default=0.25, gt=0, lt=0.5)
+    bin_w: float = Field(default=0.05, gt=0)
+    smooth_bins: float = Field(default=2.0, ge=0)
+    p_decision: float = Field(default=0.5, gt=0, lt=1)
+    ndvi_decay: float = Field(default=0.5, ge=0, le=1)
+    baseline_z: float = Field(default=3.0, gt=0)
+    bh_q: float = Field(default=0.05, gt=0, lt=1)
+    min_prior: float = Field(default=0.01, ge=0, lt=1)
+    spatial_sigma_m: list[float] = Field(default_factory=lambda: [10.0, 25.0])
+
+
+class DIConfig(_Base):
+    standardize: DIStandardize = Field(default_factory=DIStandardize)
+    decide: DIDecide = Field(default_factory=DIDecide)
