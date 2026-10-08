@@ -1,72 +1,70 @@
 #!/bin/bash
-#SBATCH --job-name=naipchm
+#SBATCH --job-name=csdv_chm
 #SBATCH --partition=notchpeak-gpu
-#SBATCH --account=CHANGE_ME
+#SBATCH --qos=notchpeak-gpu
+#SBATCH --account=notchpeak-gpu
 #SBATCH --gres=gpu:1
+#SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=16G
-#SBATCH --time=00:45:00
-#SBATCH --output=logs/naipchm_%A_%a.out
-#SBATCH --error=logs/naipchm_%A_%a.err
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=48G
+#SBATCH --time=02:00:00
+#SBATCH --output=%x-%A_%a.out
 #
-# CSDV NAIP-CHM inference SLURM array runner.
+# NAIP-CHM inference, one array task per NAIP GeoTIFF, on node-local scratch.
+# Normally submitted by scripts/slurm/submit_chm_crowns.sh, which builds the
+# manifest and sets --array and --output.
 #
-# Usage:
-#   sbatch --array=1-$(($(wc -l < jobs.csv) - 1)) \
-#          scripts/slurm/run_chm_inference.sbatch jobs.csv
+# Manual use (after `source scripts/chpc/env.sh`):
+#   sbatch --array=1-N --output="$CSDV_LOG_DIR/%x-%A_%a.out" \
+#       scripts/slurm/run_chm_inference.sbatch MANIFEST.csv
 #
-# jobs.csv columns (header on line 1):
-#   site,year,date,half_size_km,naip_path,chm_out_dir
+# Manifest columns (header on line 1): site,year,naip_path,crowns_name
 #
-# Required env vars (set in submission shell or here):
-#   NAIPCHM_REPO_DIR   Path to cloned smorf-ntsg/naip-chm
-#   NAIPCHM_COND_DIR   Path to conditioning rasters directory (optional;
-#                      defaults resolved via csdv_core.io.paths if unset)
-#   CSDV_ENV_NAME      Micromamba env name (default: csdv)
+# Freecycle fallback when notchpeak-gpu is busy (preemptable, so requeue):
+#   --partition=granite-gpu --qos=granite-gpu-freecycle --account=wangj --requeue
+# Do not use granite-gpu-guest: its Blackwell cards need a newer CUDA build.
+#
+# Per task: skip if the CHM already exists, stage the NAIP tif and the
+# conditioning rasters to /scratch/local, run inference, copy the CHM to
+# $CSDV_DATA_ROOT/naip_chm/<site>/<year>/.
 
 set -euo pipefail
 
-JOBS_CSV="${1:-jobs.csv}"
-ENV_NAME="${CSDV_ENV_NAME:-csdv}"
+MANIFEST="${1:?usage: sbatch --array=1-N $0 MANIFEST.csv}"
 
-mkdir -p logs
+source "${CSDV_REPO:?source scripts/chpc/env.sh before sbatch}/scripts/chpc/env.sh"
+source "$CSDV_REPO/scripts/chpc/scratch.sh"
 
-if [[ -z "${NAIPCHM_REPO_DIR:-}" ]]; then
-  echo "ERROR: NAIPCHM_REPO_DIR must be set." >&2
-  exit 1
+# Line 1 is the header, so task i reads line i+1.
+ROW=$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "$MANIFEST")
+IFS=',' read -r SITE YEAR NAIP_PATH _CROWNS_NAME <<<"$ROW"
+: "${NAIP_PATH:?empty manifest row $SLURM_ARRAY_TASK_ID in $MANIFEST}"
+STEM="$(basename "$NAIP_PATH" .tif)"
+CHM_DEST="$CSDV_DATA_ROOT/naip_chm/$SITE/$YEAR"
+
+echo "host=$(hostname) job=${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID} started=$(date -Is)"
+echo "site=$SITE year=$YEAR naip=$NAIP_PATH"
+
+if compgen -G "$CHM_DEST/${STEM}*chm*.tif" >/dev/null; then
+    echo "CHM already in $CHM_DEST, skipping."
+    exit 0
 fi
 
-# SLURM_ARRAY_TASK_ID is 1-based. Skip header line.
-LINE_NUM=$((SLURM_ARRAY_TASK_ID + 1))
-ROW=$(sed -n "${LINE_NUM}p" "$JOBS_CSV")
-if [[ -z "$ROW" ]]; then
-  echo "ERROR: empty row at line $LINE_NUM of $JOBS_CSV" >&2
-  exit 1
-fi
+activate_csdv
+nvidia-smi -L
+python -c "import torch; assert torch.cuda.is_available(), 'no CUDA device'; \
+print('torch', torch.__version__, 'on', torch.cuda.get_device_name(0))"
 
-IFS=',' read -r SITE YEAR DATE HALFKM NAIP_PATH CHM_OUT <<< "$ROW"
+scratch_init
+stage_in "$NAIP_PATH" "$NODE_SCRATCH/naip"
+stage_in "$CSDV_CONDITIONING_DIR" "$NODE_SCRATCH/conditioning"
+mkdir -p "$NODE_SCRATCH/chm"
+register_stage_out "$NODE_SCRATCH/chm" "$CHM_DEST"
 
-echo "[$(date -Is)] task=$SLURM_ARRAY_TASK_ID site=$SITE year=$YEAR date=$DATE"
-echo "  naip : $NAIP_PATH"
-echo "  out  : $CHM_OUT"
+csdv chm-inference \
+    --naip-quad "$NODE_SCRATCH/naip/$(basename "$NAIP_PATH")" \
+    --output-dir "$NODE_SCRATCH/chm" \
+    --conditioning-dir "$NODE_SCRATCH/conditioning"
 
-if [[ ! -f "$NAIP_PATH" ]]; then
-  echo "ERROR: NAIP input not found: $NAIP_PATH" >&2
-  exit 1
-fi
-
-mkdir -p "$CHM_OUT"
-
-COND_FLAG=()
-if [[ -n "${NAIPCHM_COND_DIR:-}" ]]; then
-  COND_FLAG+=(--conditioning-dir "$NAIPCHM_COND_DIR")
-fi
-
-micromamba run -n "$ENV_NAME" csdv chm-inference \
-  --naip-quad "$NAIP_PATH" \
-  --output-dir "$CHM_OUT" \
-  --repo-dir "$NAIPCHM_REPO_DIR" \
-  "${COND_FLAG[@]}"
-
-echo "[$(date -Is)] done."
+ls -l "$NODE_SCRATCH/chm"

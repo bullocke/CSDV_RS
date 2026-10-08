@@ -22,12 +22,15 @@ archive; see :mod:`csdv_core.download.naip_gee`.
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+import click
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +41,11 @@ NAIP_BANDS = ("red", "green", "blue", "nir")
 
 __all__ = [
     "NAIP_BANDS",
+    "SNAP_M",
+    "aoi_bbox_from_center",
+    "download_naip_year",
+    "naip_output_path",
+    "resolution_tag",
     "NAIP_COLLECTION",
     "PC_STAC_URL",
     "GridSpecOut",
@@ -181,6 +189,7 @@ def naip_mosaic(
     dst_height: int,
     resampling: str = "bilinear",
     compress: str = "DEFLATE",
+    strip_rows: int = 1024,
 ) -> tuple[Path, dict[str, Any]]:
     """Mosaic NAIP quads onto a target grid and write a four-band GeoTIFF.
 
@@ -196,6 +205,9 @@ def naip_mosaic(
         dst_height: Target height in pixels.
         resampling: Resampling method for the warp.
         compress: GeoTIFF compression.
+        strip_rows: Rows read from each warped quad at a time. A whole 0.6 m
+            quad warped in one read is about half a gigabyte, enough to be
+            killed on a small machine, so the paste proceeds in strips.
 
     Returns:
         ``(path, provenance)``. The provenance dictionary records the item
@@ -242,24 +254,26 @@ def naip_mosaic(
                 if window.width < 1 or window.height < 1:
                     continue
                 sub_transform = rasterio.windows.transform(window, dst_transform)
+                width, height = int(window.width), int(window.height)
+                row_off, col_off = int(window.row_off), int(window.col_off)
+                cols = slice(col_off, col_off + width)
                 with WarpedVRT(
                     src,
                     crs=dst_crs,
                     transform=sub_transform,
-                    width=int(window.width),
-                    height=int(window.height),
+                    width=width,
+                    height=height,
                     resampling=method,
                 ) as vrt:
-                    block = vrt.read()
-
-            rows = slice(int(window.row_off), int(window.row_off + window.height))
-            cols = slice(int(window.col_off), int(window.col_off + window.width))
-            covered = block.any(axis=0)
-            fill = covered & ~written[rows, cols]
-            target = mosaic[:, rows, cols]
-            target[:, fill] = block[:, fill]
-            mosaic[:, rows, cols] = target
-            written[rows, cols] |= covered
+                    for start in range(0, height, strip_rows):
+                        n_rows = min(strip_rows, height - start)
+                        block = vrt.read(window=Window(0, start, width, n_rows))
+                        rows = slice(row_off + start, row_off + start + n_rows)
+                        covered = block.any(axis=0)
+                        fill = covered & ~written[rows, cols]
+                        target = mosaic[:, rows, cols]
+                        target[:, fill] = block[:, fill]
+                        written[rows, cols] |= covered
 
     coverage = float(written.mean())
     profile = {
@@ -301,3 +315,240 @@ def naip_mosaic(
         )
     logger.info("Wrote %s from %d quads", out_path.name, len(items))
     return out_path, provenance
+
+
+# ---------------------------------------------------------------------------
+# Site-year download
+# ---------------------------------------------------------------------------
+
+# 3 m is a whole number of pixels at both 0.6 m and 1.0 m, so grids built for
+# different NAIP dates over one AOI share pixel corners.
+SNAP_M = 3.0
+_KM_PER_DEG_LAT = 111.32
+
+
+def aoi_bbox_from_center(
+    center_lonlat: tuple[float, float], half_km: float
+) -> tuple[float, float, float, float]:
+    """Return an EPSG:4326 box of half-width ``half_km`` around a point.
+
+    The box is approximate (a spherical degree length), which is fine for a
+    search box. The output grid is built in the quads' UTM CRS afterwards.
+    """
+    if half_km <= 0:
+        raise ValueError(f"half_km must be positive, got {half_km}")
+    lon, lat = center_lonlat
+    dlat = half_km / _KM_PER_DEG_LAT
+    dlon = half_km / (_KM_PER_DEG_LAT * math.cos(math.radians(lat)))
+    return (lon - dlon, lat - dlat, lon + dlon, lat + dlat)
+
+
+def resolution_tag(gsd: float) -> str:
+    """Format a ground sample distance for a filename, e.g. ``0p6m``."""
+    return f"{gsd:g}".replace(".", "p") + "m"
+
+
+def naip_output_path(
+    out_root: Path | str, site: str, year: int, date_tag: str, gsd: float
+) -> Path:
+    """Return ``<out_root>/<site>/<year>/NAIP_<site>_<YYYYMMDD>_<res>.tif``.
+
+    The eight-digit date token is required: the canopy height model reads day
+    of year from the filename.
+    """
+    return (
+        Path(out_root)
+        / site
+        / str(year)
+        / f"NAIP_{site}_{date_tag}_{resolution_tag(gsd)}.tif"
+    )
+
+
+def _dominant(values: Sequence[Any], what: str, year: int) -> Any:
+    """Return the most common value, warning when the set is mixed."""
+    counts: dict[Any, int] = {}
+    for value in values:
+        counts[value] = counts.get(value, 0) + 1
+    if not counts:
+        raise ValueError(f"{year}: no {what} recorded on the NAIP items")
+    if len(counts) > 1:
+        logger.warning("%d: quads carry mixed %s %s", year, what, sorted(counts))
+    return max(counts, key=lambda value: counts[value])
+
+
+def _item_epsg(item: Any) -> int:
+    epsg = item.properties.get("proj:epsg")
+    if epsg is None:
+        code = item.properties.get("proj:code", "")
+        if code.upper().startswith("EPSG:"):
+            epsg = int(code.split(":", 1)[1])
+    if epsg is None:
+        raise ValueError(f"NAIP item {item.id} carries no projection code")
+    return int(epsg)
+
+
+def download_naip_year(
+    bbox_4326: tuple[float, float, float, float],
+    *,
+    site: str,
+    year: int,
+    out_root: Path | str,
+    pad_m: float = 150.0,
+    overwrite: bool = False,
+    attempts: int = 3,
+) -> Path:
+    """Mosaic one year of Planetary Computer NAIP over a box at native GSD.
+
+    The grid uses the quads' own UTM CRS and resolution, so the canopy height
+    model sees imagery with the statistics it was trained on. The box is
+    widened by ``pad_m`` before snapping because the model's outermost ~50 m
+    is unreliable. A ``<stem>.provenance.json`` sidecar records the quads and
+    every acquisition date.
+
+    Returns:
+        Path of the written (or already present) GeoTIFF.
+    """
+    from rasterio.warp import transform_bounds
+
+    year_dir = Path(out_root) / site / str(year)
+    existing = sorted(year_dir.glob("*.tif"))
+    if existing and not overwrite:
+        logger.info("%d: %s exists, skipping", year, existing[0].name)
+        return existing[0]
+
+    items = search_naip_items(bbox_4326, year=year)
+    epsg = _dominant([_item_epsg(item) for item in items], "CRS", year)
+    gsd = float(_dominant([item.properties.get("gsd") for item in items], "GSD", year))
+    dst_crs = f"EPSG:{epsg}"
+    utm_bounds = transform_bounds("EPSG:4326", dst_crs, *bbox_4326, densify_pts=21)
+    grid = grid_from_bounds(
+        snap_bounds(utm_bounds, snap_m=SNAP_M, pad_m=pad_m), resolution=gsd
+    )
+    dates = [str(item.properties["datetime"]) for item in items]
+    out_path = naip_output_path(out_root, site, year, median_date_tag(dates), gsd)
+
+    # Remote tile reads fail now and then. Retry with a fresh search, which
+    # also refreshes the signed links, before giving up on the year.
+    for attempt in range(1, attempts + 1):
+        try:
+            path, provenance = naip_mosaic(
+                items,
+                out_path,
+                dst_crs=dst_crs,
+                dst_transform=grid.transform,
+                dst_width=grid.width,
+                dst_height=grid.height,
+            )
+            break
+        except Exception as exc:  # noqa: BLE001 - rasterio raises several types
+            if attempt == attempts:
+                raise
+            logger.warning("%d: attempt %d failed (%s), retrying", year, attempt, exc)
+            items = search_naip_items(bbox_4326, year=year)
+
+    provenance.update(
+        {"source": "planetary_computer", "site": site, "bbox_4326": list(bbox_4326)}
+    )
+    out_path.with_suffix(".provenance.json").write_text(
+        json.dumps(provenance, indent=2), encoding="utf-8"
+    )
+    return path
+
+
+def _resolve_aoi(
+    site: str, bbox: tuple[float, ...] | None, half_km: float
+) -> tuple[float, float, float, float]:
+    if bbox:
+        return tuple(bbox)  # type: ignore[return-value]
+    from csdv_core.config import load_sites
+
+    try:
+        entry = load_sites().get(site)
+    except KeyError as exc:
+        raise click.UsageError(
+            f"Site {site!r} is not in sites.yaml; pass --bbox W S E N."
+        ) from exc
+    if entry.center_lonlat is None:
+        raise click.UsageError(f"Site {site!r} has no center_lonlat; pass --bbox.")
+    return aoi_bbox_from_center(entry.center_lonlat, half_km)
+
+
+def _resolve_years(site: str, years: str | None) -> list[int]:
+    if years:
+        return [int(token) for token in years.split(",") if token.strip()]
+    from csdv_core.config import load_sites
+
+    try:
+        listed = load_sites().get(site).naip.years
+    except KeyError:
+        listed = []
+    if not listed:
+        raise click.UsageError(f"No NAIP years listed for {site!r}; pass --years.")
+    return list(listed)
+
+
+@click.command("naip-pc")
+@click.option("--site", required=True, help="Site label; output goes to naip/<site>/.")
+@click.option(
+    "--bbox",
+    nargs=4,
+    type=float,
+    default=None,
+    help="W S E N in EPSG:4326. Default: sites.yaml center +/- --half-km.",
+)
+@click.option("--years", default=None, help="Comma-separated. Default: sites.yaml.")
+@click.option("--half-km", default=2.5, show_default=True, type=float)
+@click.option(
+    "--pad-m",
+    default=150.0,
+    show_default=True,
+    type=float,
+    help="Buffer added before snapping; covers the CHM edge artefact.",
+)
+@click.option(
+    "--out-root",
+    default=None,
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Default: $CSDV_DATA_ROOT/naip.",
+)
+@click.option("--overwrite", is_flag=True, default=False)
+def cli(
+    site: str,
+    bbox: tuple[float, float, float, float] | None,
+    years: str | None,
+    half_km: float,
+    pad_m: float,
+    out_root: Path | None,
+    overwrite: bool,
+) -> None:
+    """Download NAIP from the Planetary Computer, one mosaic per year.
+
+    Needs outbound internet. On CHPC run it on a data transfer node.
+    """
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s  %(levelname)-7s  %(message)s"
+    )
+    bbox_4326 = _resolve_aoi(site, bbox, half_km)
+    year_list = _resolve_years(site, years)
+    if out_root is None:
+        from csdv_core.io.paths import project_paths
+
+        out_root = project_paths().data_root / "naip"
+
+    failed = []
+    for year in year_list:
+        try:
+            path = download_naip_year(
+                bbox_4326,
+                site=site,
+                year=year,
+                out_root=out_root,
+                pad_m=pad_m,
+                overwrite=overwrite,
+            )
+            click.echo(str(path))
+        except ValueError as exc:
+            logger.error("%d: %s", year, exc)
+            failed.append(year)
+    if failed:
+        raise click.ClickException(f"No mosaic written for {failed}")

@@ -6,82 +6,62 @@ For the design rationale of each pipeline stage, see [docs/architecture.md](arch
 
 ## 1. One-time setup (CHPC)
 
-Login node, about 10 minutes:
+CHPC jobs read and write on node-local scratch (`/scratch/local`) and copy data in and out of persistent storage. The project keeps three locations apart. The repository and the upstream `naip-chm` clone live in your user space. Inputs and outputs persist in the group store, `$CSDV_STORE` (for this project `/uufs/chpc.utah.edu/common/home/dycelab/data/CSDV`). Each job works in `/scratch/local/$USER/$SLURM_JOB_ID`, which CHPC deletes when the job ends.
+
+Login node, about 20 minutes:
 
 ```bash
-# Repo
-cd /uufs/chpc.utah.edu/common/home/dycelab/users/$USER/code
+cd /uufs/chpc.utah.edu/common/home/dycelab/users/<you>/code
 git clone <repo-url> CSDV/CSDV_RS
+git clone https://github.com/smorf-ntsg/naip-chm CSDV/naip-chm   # code and model weights
 cd CSDV/CSDV_RS
 
-# Env (micromamba is the project standard)
-micromamba env create -f environment.yml -p ./.micromamba/csdv
-micromamba activate ./.micromamba/csdv
-pip install -e ".[dev,lidr]"
+# Per-user settings. Edit CSDV_STORE (and NAIPCHM_REPO_DIR if the clone is elsewhere).
+cp scripts/chpc/env.example.sh scripts/chpc/env.sh
 
-# Verify
-python -m pytest -q -m "not slow"
-csdv --help
-
-# External: upstream NAIP-CHM repo for the inference subcommand
-git clone https://github.com/smorf-ntsg/naip-chm ../naip-chm
+# Environment with CUDA PyTorch 2.8 (cu126 wheels), named csdv-gpu.
+scripts/chpc/create_env.sh
 ```
 
-Add to your `~/.bashrc` (or a project-local `env.sh` you `source` per session):
+`create_env.sh` builds the conda environment from `environment.yml`, installs `torch==2.8.0` and `torchvision==0.23.0` from the official CUDA 12.6 wheels, and installs this package in editable mode. Do not install PyTorch from conda or add `cpuonly`. The cu126 wheels bundle the CUDA runtime and run on every GPU in the general and freecycle partitions (titanx through h100). They do not support the Blackwell cards on `granite-gpu-guest`. The script prints the torch version and refuses a CPU-only build.
+
+Start every login session with:
 
 ```bash
-export CSDV_DATA_ROOT=/scratch/general/vast/$USER/csdv/data
-export CSDV_RESULTS_ROOT=/scratch/general/vast/$USER/csdv/results
-export CSDV_CACHE_ROOT=/scratch/general/vast/$USER/csdv/cache
-export NAIPCHM_REPO_DIR=/uufs/chpc.utah.edu/common/home/dycelab/users/$USER/code/CSDV/naip-chm
-# Optional: point at a shared, read-only copy of the conditioning rasters.
-# export CSDV_CONDITIONING_DIR=/uufs/chpc.utah.edu/common/home/dycelab/shared/naip-chm/conditioning
-mkdir -p "$CSDV_DATA_ROOT" "$CSDV_RESULTS_ROOT" "$CSDV_CACHE_ROOT"
+source scripts/chpc/env.sh
+activate_csdv
 ```
 
-Verify the environment in one call:
+`env.sh` exports `CSDV_DATA_ROOT=$CSDV_STORE/data`, `CSDV_RESULTS_ROOT=$CSDV_STORE/results`, the conditioning directory, the log directory and `NAIPCHM_REPO_DIR`. Slurm passes these into each job, and every sbatch script re-sources `env.sh` through `$CSDV_REPO`, so always submit from a shell where `env.sh` is loaded.
+
+### 1a. Downloads run on the data transfer partition
+
+Compute and GPU nodes have no outbound internet, so a download inside a compute job times out with `Errno 110`. Every download goes through `scripts/slurm/run_download_dtn.sbatch`, which runs `csdv download <subcommand>` on the `notchpeak-dtn` partition and writes straight to `$CSDV_STORE`.
+
+The five conditioning rasters (about 1.65 GB, static and CONUS-wide) are fetched once:
 
 ```bash
-csdv check
+sbatch --output="$CSDV_LOG_DIR/%x-%j.out" scripts/slurm/run_download_dtn.sbatch conditioning
 ```
 
-A clean report has zero `[FAIL]` rows. `[INFO]` rows for optional imports (`torch`, `rpy2`, `ee`) are fine if you do not need that capability.
-
-### 1a. Conditioning rasters (one-time, on a data transfer node)
-
-NAIP-CHM inference needs five static, CONUS-wide conditioning rasters (~1.65 GB total). Fetch them once. Do not do this on a login node (the CHPC arbiter kills sustained processes) or inside a compute/GPU job (compute nodes have no outbound internet, so the download times out with `Errno 110`). Use a CHPC **data transfer node**, which has external internet and no process limits. Confirm the current hostname in the CHPC data services docs (the `dtn*.chpc.utah.edu` nodes).
+NAIP comes from the Planetary Computer as one mosaic per site and year, at native resolution in the quads' UTM zone, with a 150 m buffer for the canopy height model's unreliable edge. Sites in `config/sites.yaml` need only `--site`. Others take a `--bbox` in longitude and latitude:
 
 ```bash
-ssh $USER@dtn07.chpc.utah.edu        # or whichever DTN CHPC lists
-cd /uufs/chpc.utah.edu/common/home/dycelab/users/$USER/code/CSDV/CSDV_RS
-source env.sh                        # the CSDV_* env vars from step 1
-micromamba activate ./.micromamba/csdv
-csdv download conditioning
-# writes to $CSDV_DATA_ROOT/chm_model/conditioning/ (override with CSDV_CONDITIONING_DIR)
+sbatch --output="$CSDV_LOG_DIR/%x-%j.out" scripts/slurm/run_download_dtn.sbatch \
+    naip-pc --site SantaClara --bbox -86.3125 39.0625 -86.25 39.125 \
+    --years 2016,2018,2020,2022
 ```
 
-If you prefer not to load the env on the DTN, pull the files directly with a resumable transfer:
-
-```bash
-DEST=$CSDV_DATA_ROOT/chm_model/conditioning
-BASE=http://rangeland.ntsg.umt.edu/data/naip-chm/inference-resources/conditioning-data
-mkdir -p "$DEST"
-for f in elevation.tif climate_pca.tif soil_pca.tif nlcd.tif ecoregion.tif; do
-    wget -c -O "$DEST/$f" "$BASE/$f"
-done
-```
-
-These are static and shared across every site and year, so this is a one-time step. Once the five files are present, the e2e script and SLURM jobs skip the download automatically (the `ecoregion.tif` sentinel).
+Output goes to `$CSDV_DATA_ROOT/naip/<SITE>/<YEAR>/NAIP_<SITE>_<YYYYMMDD>_<res>.tif` with a `.provenance.json` sidecar. The model reads day of year from the eight-digit date, so imagery from any other source (a USDA download, a collaborator's DOQQs) can be dropped into the same folders as long as each filename carries a `YYYYMMDD` token.
 
 ### 1b. Landsat observations (per site, on a data transfer node)
 
-`csdv satellite fetch` reduces forty years of Landsat inside each stand polygon on Earth Engine's servers and writes the result to `$CSDV_DATA_ROOT/satellite/<site>/`. It talks to Google over the network for the whole run, so it has the same constraint as step 1a: it cannot run inside a SLURM job, because compute nodes have no outbound internet. Run it on a data transfer node.
+`csdv satellite fetch` reduces forty years of Landsat inside each stand polygon on Earth Engine's servers and writes the result to `$CSDV_DATA_ROOT/satellite/<site>/`. It talks to Google over the network for the whole run, so it has the same constraint as step 1a and cannot run inside a compute job. Run it interactively on a data transfer node, because `earthengine authenticate` needs a browser flow.
 
 ```bash
 ssh $USER@dtn07.chpc.utah.edu
-cd /uufs/chpc.utah.edu/common/home/dycelab/users/$USER/code/CSDV/CSDV_RS
-source env.sh
-micromamba activate ./.micromamba/csdv
+cd /uufs/chpc.utah.edu/common/home/dycelab/users/<you>/code/CSDV/CSDV_RS
+source scripts/chpc/env.sh && activate_csdv
 earthengine authenticate           # once per machine, opens a browser flow
 csdv satellite fetch --site ElkinsvilleNE
 csdv satellite annual --site ElkinsvilleNE
@@ -91,21 +71,21 @@ The fetch takes roughly twenty minutes for forty stands over 1985 to 2025 and wr
 
 Both outputs are caches. Delete them and refetch if the quality gates or the index definitions change; nothing downstream needs the Earth Engine session again.
 
-## 2. Per-session warm-up
+## 2. Check the GPU environment
 
-For interactive runs, ask for a small GPU node:
+Before the first batch, confirm that PyTorch sees a GPU on a compute node (about ten minutes):
 
 ```bash
-salloc --account=dycelab --partition=dycelab-shared-gpu \
-       --gres=gpu:1 --cpus-per-task=4 --mem=24G --time=02:00:00
-# After it lands:
-cd /uufs/.../CSDV/CSDV_RS
-source env.sh                 # the file you wrote in step 1
-micromamba activate ./.micromamba/csdv
-csdv check --site SCBI --years 2014,2018 --window-m 50
+salloc --partition=notchpeak-gpu --qos=notchpeak-gpu --account=notchpeak-gpu \
+       --gres=gpu:1 --cpus-per-task=4 --mem=16G --time=00:30:00
+source scripts/chpc/env.sh && activate_csdv
+nvidia-smi -L
+python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0)); \
+print((torch.rand(2048, 2048, device='cuda') @ torch.rand(2048, 2048, device='cuda')).sum().item())"
+csdv check
 ```
 
-The `csdv check` output is the canonical "what is missing" report. Pipeline-state `[WARN]` rows are expected on a fresh data root. They tell you which steps the e2e script will need to run.
+`csdv check` lists what is missing. Pipeline-state `[WARN]` rows are expected on a fresh data root.
 
 ## 3. First end-to-end run on a tiny AOI
 
@@ -153,26 +133,35 @@ cp /path/to/m_3807753_*.tif $CSDV_DATA_ROOT/naip/SCBI/2018/
 
 `--only` accepts a stage prefix. `--only metrics` matches `metrics-2014` and `metrics-2018`. `--only stages` matches `stages-2014` and `stages-2018`. Use the literal name (`stratify`, `trajectories`, `check`) for site-level stages.
 
-## 5. Batch submission
+## 5. Batch submission: CHM inference and crown segmentation
 
-Once a config is stable, promote the same call to SLURM with no changes:
+Once NAIP is in the store, one command processes every image:
 
 ```bash
-sbatch scripts/slurm/run_site_e2e.sbatch SCBI 2014,2018,2022 50
+source scripts/chpc/env.sh
+scripts/slurm/submit_chm_crowns.sh SantaClara                 # all years found
+scripts/slurm/submit_chm_crowns.sh SantaClara,SCBI 2018,2022  # a subset
+scripts/slurm/submit_chm_crowns.sh SantaClara --dry-run       # manifest only
 ```
 
-The sbatch wrapper activates the project env, prints the `csdv --version`, then execs `run_site_e2e.sh` with the forwarded arguments. SLURM stdout/stderr live in `results/logs/slurm/csdv_e2e-<jobid>.out`. Per-step e2e logs still go to `$CSDV_RESULTS_ROOT/logs/<SITE>/<RUN_ID>/`.
+The wrapper checks the conditioning rasters and the `naip-chm` clone, writes a manifest of every NAIP GeoTIFF to `$CSDV_STORE/manifests/`, and submits two array jobs with one task per image:
 
-Make sure the conditioning rasters are already in place before submitting (see step 1a). The batch job will attempt to fetch them if absent, but compute nodes have no outbound internet, so an in-job download times out. Pre-fetch on a data transfer node.
+1. `run_chm_inference.sbatch` on `notchpeak-gpu` (1 GPU, 8 CPUs, 48 GB, 2 h). Each task copies its NAIP tif and the conditioning rasters to node scratch, runs `csdv chm-inference`, and copies the CHM to `$CSDV_DATA_ROOT/naip_chm/<SITE>/<YEAR>/`. Pass `--granite` to use the preemptable `granite-gpu` freecycle partition (L40S) with `--requeue` when notchpeak is busy.
+2. `run_segment_crowns.sbatch` on `wangj-np` (8 CPUs, 64 GB, 4 h). It waits on its own CHM task (`--dependency=aftercorr`), copies the CHM to node scratch, runs `csdv segment-crowns`, and copies the result to `$CSDV_RESULTS_ROOT/crowns/<SITE>/<YEAR>/`. The file is `crowns.gpkg` when a site-year has one image, which is what `compute-metrics` reads, and `<naip stem>_crowns.gpkg` otherwise.
 
-Resource defaults: 1 GPU, 8 CPU, 48 GB, 6 h. Tune `--gres`, `--mem`, and `--time` in `scripts/slurm/run_site_e2e.sbatch` for larger AOIs.
+Staging is handled by `scripts/chpc/scratch.sh`. Outputs reach the store only when a task succeeds, because later runs treat an existing CHM or crown file as finished. A failed task's partial output goes to `$CSDV_STORE/failed/<job id>/` and its crown task is cancelled. Resubmitting the same command redoes only the images that are missing. Logs are in `$CSDV_LOG_DIR`, and `sacct -j <job ids> -X --format=JobID,State,Elapsed,MaxRSS` shows run time and peak memory for tuning.
+
+The downstream steps (metrics, stratification, stage and trajectory classification) still run through `scripts/run_site_e2e.sh` with `--skip-download`. `scripts/slurm/run_site_e2e_scratch.sbatch` has not yet been moved onto the staging helpers.
 
 ## 6. Troubleshooting
 
 | Symptom | Where to look | Likely cause |
 |---|---|---|
 | `csdv check` shows `[FAIL] data_root MISSING` | env vars | `CSDV_DATA_ROOT` unset or pointing at a path you cannot write to. |
-| `csdv check` shows `[INFO] import torch (optional) not installed` | env | Only matters if step 3 (`chm-inference`) is in scope. Install with `pip install -e ".[chm_inference]"` or use Colab. |
+| `csdv check` shows `[INFO] import torch (optional) not installed` | env | The env was not built with `scripts/chpc/create_env.sh`, or `activate_csdv` was not run. |
+| CHM task fails with `no CUDA device` | `nvidia-smi -L` in the log | The job landed without a GPU (missing `--gres`), or torch is a CPU build. Rebuild with `create_env.sh`. |
+| CHM task fails with `no kernel image is available` | the GPU named in the log | The card is newer than the cu126 build supports (Blackwell). Avoid `granite-gpu-guest`. |
+| sbatch fails with `CSDV_REPO: source scripts/chpc/env.sh before sbatch` | the submitting shell | `env.sh` was not sourced before `sbatch`. |
 | `chm-X` step fails with "Upstream naip-chm repo not found" | `$NAIPCHM_REPO_DIR` | Either set the env var or pass `--repo-dir` via the underlying CLI. |
 | `chm-X` step fails with "Conditioning rasters missing in ..." | `$CSDV_DATA_ROOT/chm_model/conditioning/` (or `$CSDV_CONDITIONING_DIR`) | Rasters not downloaded, or the conditioning step was skipped under `--skip-download`. Pre-fetch them on a data transfer node (step 1a). |
 | `conditioning` step fails with `URLError ... Errno 110 Connection timed out` | the SLURM/compute node | Compute nodes have no outbound internet, so the in-job download cannot reach the server. Pre-fetch the rasters on a data transfer node (step 1a); the job will then skip the download. |

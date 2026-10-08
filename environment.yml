@@ -55,6 +55,12 @@ dependencies:
   # Off-screen 3D renders of height surfaces (csdv_core.viz.scene3d)
   - pyvista
 
+  # NAIP-CHM inference dependencies (smorf-ntsg/naip-chm requirements.txt).
+  # PyTorch itself is installed from the CUDA pip wheels by
+  # scripts/chpc/create_env.sh, not from conda.
+  - rio-cogeo
+  - tensorboard
+
   # Nice extras for this kind of project
   - requests
   - tqdm
