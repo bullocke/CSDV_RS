@@ -16,6 +16,8 @@ from typing import Any
 import yaml
 
 from csdv_core.config._models import (
+    ForestMaskConfig,
+    ForestMaskProfile,
     MetricsConfig,
     SatelliteConfig,
     SitesConfig,
@@ -33,6 +35,7 @@ __all__ = [
     "load_satellite",
     "load_stages",
     "load_trajectories",
+    "load_forest_mask",
     "reload_config",
     "SitesConfig",
     "SiteTypesConfig",
@@ -40,6 +43,8 @@ __all__ = [
     "SatelliteConfig",
     "StagesConfig",
     "TrajectoriesConfig",
+    "ForestMaskConfig",
+    "ForestMaskProfile",
 ]
 
 
@@ -96,6 +101,12 @@ def load_trajectories() -> TrajectoriesConfig:
     return TrajectoriesConfig.model_validate(load_yaml("trajectories"))
 
 
+@lru_cache(maxsize=1)
+def load_forest_mask() -> ForestMaskConfig:
+    """Load and validate ``forest_mask.yaml``."""
+    return ForestMaskConfig.model_validate(load_yaml("forest_mask"))
+
+
 def reload_config() -> None:
     """Clear cached config loaders. Intended for tests."""
     for fn in (
@@ -105,5 +116,6 @@ def reload_config() -> None:
         load_satellite,
         load_stages,
         load_trajectories,
+        load_forest_mask,
     ):
         fn.cache_clear()

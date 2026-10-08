@@ -1,0 +1,41 @@
+# Forest mask profiles for csdv_core.masks.forest and csdv_core.io.forest_masks.
+#
+# Each profile is a complete parameter set. Command-line options override
+# individual fields, and every export is named by a hash of its final
+# parameters, so re-tuning never overwrites an earlier export.
+#
+# Schema (per profile):
+#   source          chm | ndvi | and | or (how the written "combined" mask is built;
+#                   CHM masks are always written because they define the NDVI
+#                   reference sample).
+#   block_px        Source 0.6 m pixels per output cell side (1 = 0.6 m, 16 = 9.6 m).
+#   height_m        CHM height that counts as tree canopy.
+#   min_cover       Minimum share of canopy pixels per cell (ignored when block_px = 1).
+#   ndvi_mode       raw | z | otsu. z rescales block-mean NDVI with the median and
+#                   1.4826 * MAD of stable CHM forest; otsu fits one threshold per year.
+#   ndvi_threshold  Threshold on raw NDVI (raw) or z-score (z). Ignored for otsu.
+#   min_patch_m2    Remove forest patches smaller than this area (0 = keep all).
+#   fill_holes_m2   Fill non-forest holes smaller than this area (0 = no filling).
+#
+# The cell defaults reproduce the 9.6 m forest flag of the ElkinsvilleNE
+# exploration (cov5 >= 0.5) and the fixed NDVI z rule of 02_forest_mask.py
+# (median of the per-year Otsu thresholds, z > -7.054).
+profiles:
+  cell:
+    source: chm
+    block_px: 16
+    height_m: 5.0
+    min_cover: 0.5
+    ndvi_mode: z
+    ndvi_threshold: -7.054
+    min_patch_m2: 0
+    fill_holes_m2: 0
+  pixel:
+    source: chm
+    block_px: 1
+    height_m: 5.0
+    min_cover: 0.5
+    ndvi_mode: otsu
+    ndvi_threshold: null
+    min_patch_m2: 0
+    fill_holes_m2: 0

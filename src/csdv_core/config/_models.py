@@ -294,3 +294,29 @@ class SatelliteConfig(_Base):
     qa: QaConfig
     annual_defaults: AnnualDefaults = Field(default_factory=AnnualDefaults)
     annual_metrics: dict[str, AnnualMetricEntry] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# forest_mask.yaml
+# ---------------------------------------------------------------------------
+
+
+class ForestMaskProfile(_Base):
+    source: Literal["chm", "ndvi", "and", "or"] = "chm"
+    block_px: int = Field(default=16, ge=1)
+    height_m: float = Field(default=5.0, gt=0)
+    min_cover: float = Field(default=0.5, ge=0, le=1)
+    ndvi_mode: Literal["raw", "z", "otsu"] = "z"
+    ndvi_threshold: float | None = None
+    min_patch_m2: float = Field(default=0.0, ge=0)
+    fill_holes_m2: float = Field(default=0.0, ge=0)
+
+    @model_validator(mode="after")
+    def _threshold_present(self) -> ForestMaskProfile:
+        if self.ndvi_mode != "otsu" and self.ndvi_threshold is None:
+            raise ValueError(f"ndvi_mode={self.ndvi_mode!r} needs ndvi_threshold")
+        return self
+
+
+class ForestMaskConfig(_Base):
+    profiles: dict[str, ForestMaskProfile]
