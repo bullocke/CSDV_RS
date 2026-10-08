@@ -1,6 +1,8 @@
 """Build the ``ndvi_seasonal_amplitude`` example figure for ``docs/metrics.md``.
 
-The top row is the metric before it is reduced. Each panel is one year of clear
+The top row is NAIP context, the same three dates shown for ``ndvi_mean``, and
+no number on the figure is computed from it. The middle row is the metric
+before it is reduced. Each panel is one year of clear
 Landsat observations plotted against day of year, with the single harmonic
 fitted through them. The two dotted lines are the modelled peak and trough, so
 the distance between them is the value reported below.
@@ -44,7 +46,6 @@ from _lib import (  # noqa: E402
     load_satellite_observations,
     resolve_preset,
     row_label,
-    stage_envelope_bands,
     stand_metric_series,
     stand_row,
 )
@@ -53,6 +54,7 @@ from csdv_core.satellite.annual import (  # noqa: E402
     fit_single_harmonic,
     ndvi_seasonal_amplitude,
 )
+from csdv_core.viz.maps import padded_bounds, rgb_panel  # noqa: E402
 from csdv_core.viz.panels import satellite_panel  # noqa: E402
 from csdv_core.viz.style import ACCENT, GRID, INK, MUTED, setup_style  # noqa: E402
 
@@ -70,6 +72,11 @@ PRESETS = {
         slug="ndvi_seasonal_amplitude",
     ),
 }
+
+#: The NAIP dates in the context row, matching the ``ndvi_mean`` figure. They
+#: differ from the harmonic years because the NAIP record kept for this site
+#: runs only from 2012 to 2022.
+CONTEXT_YEARS = (2012, 2016, 2022)
 
 PANEL_IN = 2.3
 SERIES_IN = 2.8
@@ -112,16 +119,35 @@ def main() -> int:
         first_post,
     )
     _verify(observations, annual)
+    bounds = padded_bounds(
+        stand.geometry,
+        pad_fraction=args.pad_fraction,
+        min_pad_m=args.min_pad_m,
+        square=True,
+    )
 
     n = len(years)
     fig = plt.figure(
-        figsize=(PANEL_IN * n + 0.4, PANEL_IN + SERIES_IN),
+        figsize=(PANEL_IN * n + 0.4, 2 * PANEL_IN + SERIES_IN),
         constrained_layout=True,
     )
     fig.get_layout_engine().set(h_pad=0.04, w_pad=0.04)
-    grid = fig.add_gridspec(2, n, height_ratios=[1.0, SERIES_IN / PANEL_IN])
+    grid = fig.add_gridspec(3, n, height_ratios=[1.0, 1.0, SERIES_IN / PANEL_IN])
 
-    fit_axes = [fig.add_subplot(grid[0, c]) for c in range(n)]
+    naip_axes = [fig.add_subplot(grid[0, c]) for c in range(n)]
+    for column, year in enumerate(CONTEXT_YEARS):
+        rgb_panel(
+            naip_axes[column],
+            site.naip(year),
+            bounds,
+            geometry=stand.geometry,
+            gamma=1.2,
+            max_px=args.max_px,
+        )
+    column_year_labels(naip_axes, CONTEXT_YEARS)
+    row_label(naip_axes[0], "NAIP, context only")
+
+    fit_axes = [fig.add_subplot(grid[1, c]) for c in range(n)]
     for column, year in enumerate(years):
         _fit_panel(fit_axes[column], observations, year, first=column == 0)
 
@@ -129,7 +155,7 @@ def main() -> int:
     row_label(fit_axes[0], "NDVI by day of year")
 
     _series_panel(
-        fig.add_subplot(grid[1, 0:n]),
+        fig.add_subplot(grid[2, 0:n]),
         annual,
         naip_years=naip_years,
         years=years,
@@ -194,13 +220,8 @@ def _verify(observations: pd.DataFrame, annual: pd.DataFrame) -> None:
 
 
 def _series_panel(ax, annual, *, naip_years, years, last_pre, first_post) -> None:
-    """Draw the amplitude series with the stage envelopes behind it."""
+    """Draw the amplitude series."""
     ax.set_ylim(*AMPLITUDE_YLIM)
-    # Four of the seven envelopes here are identical and merge into one band, so
-    # unlike ndvi_mean the four that remain are far enough apart to take a stage
-    # code each. The narrowest gap between two midpoints is 0.05, which is about
-    # twice the label height on this axis.
-    stage_envelope_bands(ax, METRIC, alpha=0.20)
 
     record_years = annual["year"].to_numpy(dtype=float)
     satellite_panel(

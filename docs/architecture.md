@@ -91,6 +91,10 @@ See [metrics.md](metrics.md) for every metric both paths produce.
 | `check.py` | `csdv check` preflight: environment, paths, configs, per-site pipeline state |
 | `cli.py` | `csdv` console script. Heavy imports stay inside command bodies |
 
+## Analysis folders
+
+`analysis/` holds self-contained research analyses that sit outside the pipeline. Each analysis is a numbered folder (for example `analysis/NAIP_disturbance_detection/1_Data_Exploration/`) with a README, a private `_lib.py`, and numbered scripts that import `csdv_core`. Derived data (`data/`), figures, maps and tables stay in the folder and are not committed. Logic that proves reusable moves into `src/csdv_core`.
+
 ## Implementation status
 
 | Area | State |

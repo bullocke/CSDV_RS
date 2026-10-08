@@ -46,8 +46,6 @@ from _lib import (  # noqa: E402
     load_satellite_observations,
     resolve_preset,
     row_label,
-    stage_envelope_bands,
-    stage_envelope_legend_handles,
     stand_metric_series,
     stand_row,
 )
@@ -179,17 +177,8 @@ def _verify(observations: pd.DataFrame, annual: pd.DataFrame) -> None:
 def _series_panel(
     ax, annual, observations, *, naip_years, last_pre, first_post
 ) -> None:
-    """Draw the whole Landsat record with the stage envelopes behind it."""
+    """Draw the whole Landsat record."""
     ax.set_ylim(*NDVI_YLIM)
-    # Seven stages carry an ndvi_mean envelope, and six of them sit between 0.70
-    # and 0.93. Their midpoints fall within 0.02 of each other, so no font size
-    # fits a stage code beside each band the way the other figures do. The bands
-    # are named in the legend instead, with their ranges, which is the only
-    # placement that survives the overlap. The pile-up is the point rather than
-    # a drawing problem: NDVI saturates over closed canopy and cannot separate
-    # the stages it is asked to separate.
-    stage_envelope_bands(ax, METRIC, alpha=0.20, label=False)
-
     window = _growing_season(observations)
     logger.info(
         "%d of %d quality-controlled observations fall in DOY %d to %d",
@@ -222,18 +211,7 @@ def _series_panel(
     # Lower left. Every value before the harvest sits above 0.80 and the axis
     # runs down to 0.30, so the early record below the series is the one large
     # clear area on the panel.
-    series_handles, series_labels = ax.get_legend_handles_labels()
-    bands = stage_envelope_legend_handles(METRIC, low=NDVI_YLIM[0], high=NDVI_YLIM[1])
-    ax.legend(
-        handles=bands + series_handles,
-        labels=[patch.get_label() for patch in bands] + series_labels,
-        fontsize=5.8,
-        loc="lower left",
-        ncols=2,
-        handlelength=1.4,
-        columnspacing=1.2,
-        labelspacing=0.35,
-    )
+    ax.legend(fontsize=5.8, loc="lower left", handlelength=1.4)
 
 
 if __name__ == "__main__":
