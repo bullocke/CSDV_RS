@@ -42,4 +42,8 @@ results/
 
 `results/stands/<site_code>/satellite_annual.parquet` is the derived product: one row per stand per year, carrying the annual metrics, the support columns behind each one and a `satellite_unavailable` string naming the gate that voided anything missing. `csdv satellite join` merges its NAIP-year rows into the stand metrics so the stage classifier can read them.
 
+## Viewer cache
+
+The interactive viewer writes Cloud Optimized GeoTIFFs to `<CSDV_CACHE_ROOT>/viewer/<site>/` (default `<repo>/.cache/viewer/<site>/`, gitignored): `naip/` and `chm/` hold the 0.6 m images with overviews (about 4 GB for six dates), `di/<grain>/` the DI onset, outcome, probability, agreement and forest layers, and `step1/` the step 1 cell changes and rule flags. Every file can be deleted and is rebuilt from the analysis outputs when next needed.
+
 Both `data/` and `results/` are gitignored. On CHPC, symlink them to scratch or project storage. On Colab, point the env vars at a mounted Drive folder.

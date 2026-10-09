@@ -95,6 +95,10 @@ See [metrics.md](metrics.md) for every metric both paths produce.
 
 `analysis/` holds self-contained research analyses that sit outside the pipeline. Each analysis is a numbered folder (for example `analysis/NAIP_disturbance_detection/1_Data_Exploration/`) with a README, a private `_lib.py`, and numbered scripts that import `csdv_core`. Derived data (`data/`), figures, maps and tables stay in the folder and are not committed. Logic that proves reusable moves into `src/csdv_core`.
 
+## Interactive viewer (`src/rsviewer/`)
+
+`rsviewer` is a general map viewer for the VS Code Interactive Window, built on leafmap (ipyleaflet), localtileserver and Plotly. It shows rasters and vectors over a satellite basemap, swaps layers from dropdowns and passes map clicks to Python for plotting. It does not import `csdv_core`, so it can move to its own repository (see `src/rsviewer/README.md`). Project viewers live next to the analysis they show. The first is `analysis/NAIP_disturbance_detection/2_Disturbance_Index/viewer.py` (guide in `VIEWER.md` there).
+
 ## Implementation status
 
 | Area | State |
