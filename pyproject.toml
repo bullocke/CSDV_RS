@@ -36,6 +36,19 @@ chm_inference = ["torch"]
 # Per-stand satellite index series from Earth Engine (csdv_core.satellite).
 # pyarrow is what pandas uses to write the observation and annual caches.
 satellite = ["earthengine-api", "pyarrow"]
+# Interactive map viewer (rsviewer). Binary deps (rasterio, geopandas) come from
+# environment.yml.
+viewer = [
+    "leafmap",
+    "localtileserver",
+    "ipyleaflet",
+    "ipywidgets",
+    "plotly",
+    "anywidget",
+    "xyzservices",
+    "rio-cogeo",
+    "geemap",
+]
 dev = [
     "pytest",
     "pytest-cov",

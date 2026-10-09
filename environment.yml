@@ -61,6 +61,16 @@ dependencies:
   - rio-cogeo
   - tensorboard
 
+  # Interactive map viewer (src/rsviewer): leafmap on the ipyleaflet backend,
+  # local COG tiles through localtileserver, Earth Engine layers through
+  # geemap, and Plotly FigureWidget panels (which need anywidget).
+  - leafmap
+  - localtileserver
+  - geemap
+  - plotly
+  - anywidget
+  - xyzservices
+
   # Nice extras for this kind of project
   - requests
   - tqdm
