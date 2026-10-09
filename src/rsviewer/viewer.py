@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import html
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -251,7 +251,7 @@ class Viewer:
         )
         return True
 
-    def add_many(self, specs: list[AnyLayer]) -> None:
+    def add_many(self, specs: Sequence[AnyLayer]) -> None:
         """Add several layers in order."""
         for spec in specs:
             self.add(spec)
