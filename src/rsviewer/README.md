@@ -57,7 +57,7 @@ Layers are dataclasses in `rsviewer.layers` that describe what to show. They hol
 | Class | Use |
 |---|---|
 | `RasterLayer` | A GeoTIFF served by localtileserver. Give `path`, or `source`, a function that returns a path and is called when the layer is first added. A `source` function can build a cached file on demand. |
-| `VectorLayer` | Any file geopandas can read, reprojected to WGS84 and drawn as GeoJSON. Clicking a feature shows its `popup` attributes in the Info tab. |
+| `VectorLayer` | Any file geopandas can read, reprojected to WGS84 and drawn as GeoJSON. Clicking a feature shows its `popup` attributes in the Info tab. Outlines are simplified for display by `simplify_m` (0.6 m by default, in projected CRSs), and a hidden layer sends its features to the map only when it is first switched on. |
 | `TileLayerSpec` | Any XYZ tile URL, for example an Earth Engine map. |
 
 `RasterStyle` sets the bands (one band colour-mapped, three as RGB), the rio-tiler colormap name (lower case, such as `viridis`, `rdbu`, `greens`), the stretch (`vmin`, `vmax` in raw pixel units), a `scale` and `units` used by the legend and the pixel readout, and optionally `categories`. A categorical style maps uint8 pixel values to a `Category(label, color)`. The tile server applies it as an exact lookup table, with no stretching. The tile server cannot make one value transparent, so values that should not be drawn must be the file's nodata value. `VectorStyle` sets outline colour, width and fill, and can colour features by an attribute (`by` plus `categories`). Several values may share one category. The legend then lists the category once.
@@ -151,6 +151,7 @@ A cache script that pre-builds the slow COGs (`11_viewer_cache.py` in CSDV) keep
 | "Connecting to kernel" hangs for a minute or two | VS Code's Jupyter extension checks the interpreter from the VS Code install folder. On WSL that folder is on the Windows drive, and a slow read there delays the check. Wait, or reload the window. This is unrelated to `rsviewer`. |
 | A layer is missing from the panel | Its file did not exist when it was added. The message line under the panel names the path. |
 | A colormap name is rejected | Use rio-tiler names, which are lower case (`rdbu`, not `RdBu`). |
+| The map takes minutes to appear | Large GeoJSON layers or many widgets are being sent to VS Code. Keep big vector layers hidden at start (they load when switched on), raise `simplify_m`, and add layers through `Viewer` rather than `viewer.map.add`, since leafmap's `add` rebuilds a hidden layer manager on every call. |
 | Memory grows in long sessions | Each distinct raster keeps a tile client. Restart the kernel. Set `GDAL_CACHEMAX` (e.g. 512 MB) on machines with little RAM. |
 
 ## Moving to its own repository
