@@ -151,8 +151,12 @@ class VectorLayer:
         popup: Attributes shown when a feature is clicked. ``None`` shows all.
         group: Layer panel group.
         opacity: Initial opacity (scales outline and fill), 0 to 1.
-        visible: Whether the layer starts switched on.
+        visible: Whether the layer starts switched on. A hidden layer sends its
+            features to the map only when it is first switched on.
         description: Optional note for the layer panel.
+        simplify_m: Display simplification tolerance in metres (applied when
+            the file's CRS is projected). Pixel-traced outlines shrink several
+            fold at one pixel. ``None`` or 0 keeps every vertex.
     """
 
     name: str
@@ -164,6 +168,7 @@ class VectorLayer:
     opacity: float = 1.0
     visible: bool = True
     description: str = ""
+    simplify_m: float | None = 0.6
 
     def __post_init__(self) -> None:
         self.path = Path(self.path)

@@ -18,6 +18,7 @@ import geopandas as gpd
 import ipyleaflet
 import numpy as np
 import pandas as pd
+import shapely
 from localtileserver import TileClient, get_leaflet_tile_layer
 from matplotlib.colors import ListedColormap, to_rgba
 from rio_tiler.colormap import cmap as rio_cmaps
@@ -99,8 +100,12 @@ def read_vector(spec: VectorLayer) -> gpd.GeoDataFrame:
         raise FileNotFoundError(f"{spec.name}: vector file not found: {spec.path}")
     gdf = gpd.read_file(spec.path, layer=spec.layer)
     gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty]
+    if spec.simplify_m and gdf.crs is not None and gdf.crs.is_projected:
+        gdf = gdf.set_geometry(gdf.geometry.simplify(spec.simplify_m))
     if gdf.crs is not None and gdf.crs.to_epsg() != 4326:
         gdf = gdf.to_crs(4326)
+    # About 0.1 m at mid latitudes. Halves the GeoJSON sent to the map.
+    gdf = gdf.set_geometry(shapely.set_precision(gdf.geometry.values, 1e-6))
     for col in gdf.columns.drop(gdf.geometry.name):
         dt = gdf[col].dtype
         # Numbers and booleans serialize as they are (NaN becomes null).
@@ -127,9 +132,17 @@ def _feature_style(st: VectorStyle, props: dict[str, Any], opacity: float) -> di
     )
 
 
-def vector_layer(spec: VectorLayer, gdf: gpd.GeoDataFrame) -> ipyleaflet.GeoJSON:
-    """ipyleaflet GeoJSON layer for a WGS84 frame."""
-    data = json.loads(gdf.to_json(drop_id=True))
+#: GeoJSON for a layer whose features have not been sent yet.
+EMPTY_FC: dict = {"type": "FeatureCollection", "features": []}
+
+
+def geojson(gdf: gpd.GeoDataFrame) -> dict:
+    """GeoJSON dict of a WGS84 frame."""
+    return json.loads(gdf.to_json(drop_id=True))
+
+
+def vector_layer(spec: VectorLayer, data: dict) -> ipyleaflet.GeoJSON:
+    """ipyleaflet GeoJSON layer for GeoJSON ``data`` (WGS84)."""
     st, op = spec.style, spec.opacity
     layer = ipyleaflet.GeoJSON(
         data=data,

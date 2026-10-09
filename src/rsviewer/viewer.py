@@ -52,6 +52,11 @@ BASEMAPS: dict[str, str | None] = {
 
 ClickHandler = Callable[[float, float], None]
 
+#: ipyleaflet's own Map methods. leafmap's ``add`` rebuilds a hidden layer
+#: manager widget on every call and never closes the old one, which creates
+#: hundreds of widgets for a few dozen layers and slows the first display.
+_LeafletMap = ipyleaflet.Map
+
 
 @dataclass
 class _Entry:
@@ -59,6 +64,7 @@ class _Entry:
     layer: ipyleaflet.Layer
     path: Path | None = None
     bounds: tuple[float, float, float, float] | None = None  # W, S, E, N
+    pending: dict | None = None  # GeoJSON not yet sent (hidden vector layer)
 
 
 class _PanelLogHandler(logging.Handler):
@@ -163,7 +169,7 @@ class Viewer:
             new.max_native_zoom = 19
         old = self.map.layers[0] if self.map.layers else None
         if old is not None and (old.base or old.name in ("OpenStreetMap", "basemap")):
-            self.map.substitute(old, new)
+            _LeafletMap.substitute(self.map, old, new)
         else:
             self.map.layers = (new, *self.map.layers)
         self._base_name = name
@@ -192,10 +198,15 @@ class Viewer:
             return _Entry(spec, layer, path, (w_, s, e, n))
         if isinstance(spec, VectorLayer):
             gdf = tiles.read_vector(spec)
-            layer = tiles.vector_layer(spec, gdf)
+            data = tiles.geojson(gdf)
+            # Hidden layers start empty, so opening the viewer does not send
+            # every polygon to the browser. The data follows when switched on.
+            layer = tiles.vector_layer(spec, data if spec.visible else tiles.EMPTY_FC)
             layer.on_click(lambda feature, **kw: self._feature_clicked(spec, feature))
             bounds = tuple(float(b) for b in gdf.total_bounds) if len(gdf) else None
-            return _Entry(spec, layer, spec.path, bounds)
+            return _Entry(
+                spec, layer, spec.path, bounds, None if spec.visible else data
+            )
         if isinstance(spec, TileLayerSpec):
             return _Entry(spec, tiles.url_tile_layer(spec))
         raise TypeError(f"unsupported layer spec {type(spec).__name__}")
@@ -240,7 +251,7 @@ class Viewer:
             layers.insert(idx, entry.layer)
             self.map.layers = tuple(layers)
         else:
-            self.map.add(entry.layer)
+            _LeafletMap.add(self.map, entry.layer)
         self.layers.add(
             spec.name,
             spec.group,
@@ -277,7 +288,7 @@ class Viewer:
             self._split.right_layer,
         ):
             self.unsplit()
-        self.map.substitute(old.layer, entry.layer)
+        _LeafletMap.substitute(self.map, old.layer, entry.layer)
         del self._entries[name]
         self._entries[spec.name] = entry
         self.layers.remove(name)
@@ -297,13 +308,16 @@ class Viewer:
         if entry is None:
             return
         if entry.layer in self.map.layers:
-            self.map.remove(entry.layer)
+            _LeafletMap.remove(self.map, entry.layer)
         self.layers.remove(name)
 
     def set_visible(self, name: str, visible: bool) -> None:
         """Switch a layer on or off."""
         entry = self._entries.get(name)
         if entry is not None:
+            if visible and entry.pending is not None:
+                entry.layer.data = entry.pending
+                entry.pending = None
             entry.layer.visible = visible
             entry.spec.visible = visible
             self.layers.set_checked(name, visible)
@@ -348,13 +362,13 @@ class Viewer:
         self.set_visible(left, True)
         self.set_visible(right, True)
         self._split = ipyleaflet.SplitMapControl(left_layer=lft, right_layer=rgt)
-        self.map.add(self._split)
+        _LeafletMap.add(self.map, self._split)
 
     def unsplit(self) -> None:
         """Remove the side-by-side divider."""
         if self._split is not None:
             if self._split in self.map.controls:
-                self.map.remove(self._split)
+                _LeafletMap.remove(self.map, self._split)
             self._split = None
 
     # ------------------------------------------------------------------
@@ -371,7 +385,7 @@ class Viewer:
         lat, lon = kw["coordinates"]
         self.marker.location = [lat, lon]
         if not self._marker_on:
-            self.map.add(self.marker)
+            _LeafletMap.add(self.map, self.marker)
             self._marker_on = True
         self.messages.value = ""
         if self.inspect:

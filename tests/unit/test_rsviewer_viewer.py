@@ -118,3 +118,17 @@ def test_lonlat_helper_matches_grid() -> None:
     x, y = TRANSFORM * (3.5, 2.5)
     lon, lat = Transformer.from_crs(26916, 4326, always_xy=True).transform(x, y)
     assert lonlat_to_rowcol(lon, lat, TRANSFORM, 26916) == (2, 3)
+
+
+def test_hidden_vector_sends_features_only_when_shown(files) -> None:
+    _, gpkg = files
+    v = Viewer()
+    try:
+        v.add(VectorLayer("polys", path=gpkg, layer="polys", visible=False))
+        layer = v._entries["polys"].layer
+        assert layer.data["features"] == []
+        v.set_visible("polys", True)
+        assert len(layer.data["features"]) == 1
+        assert v.layers._checks["polys"].value is True
+    finally:
+        v.close()
