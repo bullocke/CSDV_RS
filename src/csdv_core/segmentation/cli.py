@@ -15,8 +15,10 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
+import numpy as np
 
 from csdv_core.segmentation.params import (
     DEFAULT_PARAMS,
@@ -24,6 +26,9 @@ from csdv_core.segmentation.params import (
     SegmentationParams,
     WindowFunction,
 )
+
+if TYPE_CHECKING:
+    from rasterio.io import DatasetReader
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +39,7 @@ logger = logging.getLogger(__name__)
     "chm_path",
     required=True,
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    help="Input CHM GeoTIFF (metres).",
+    help="Input CHM GeoTIFF, float metres or uint16 NAIP-CHM centimetres.",
 )
 @click.option(
     "--out-crowns",
@@ -105,9 +110,11 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--scale-factor",
     type=float,
-    default=1.0,
-    show_default=True,
-    help="(lidR) CHM scale factor. Use 0.01 for uint16 NAIP-CHM.",
+    default=None,
+    help=(
+        "Multiplier from stored CHM values to metres. Default: 0.01 for an "
+        "integer CHM (uint16 NAIP-CHM), 1.0 for a float CHM."
+    ),
 )
 @click.option(
     "--out-cv-raster",
@@ -131,7 +138,7 @@ def cli(
     max_crown_radius_m: float,
     min_crown_area_m2: float,
     block_px: int,
-    scale_factor: float,
+    scale_factor: float | None,
     out_cv_raster: Path | None,
 ) -> None:
     """Segment tree crowns from a CHM with the chosen engine."""
@@ -159,6 +166,13 @@ def cli(
     )
     logger.info("Segmentation %s: %s", params.key, params.describe())
 
+    import rasterio
+
+    with rasterio.open(chm_path) as src:
+        dtype = src.dtypes[0]
+    scale_factor = resolve_scale_factor(scale_factor, dtype)
+    logger.info("CHM %s, scale factor %g to metres", dtype, scale_factor)
+
     if engine.lower() == "lidr":
         from csdv_core.segmentation.lidr_bridge import run_lidr_segmentation
 
@@ -173,13 +187,11 @@ def cli(
         click.echo(str(out_crowns))
         return
 
-    import rasterio
-
     from csdv_core.segmentation.chm_watershed import segment_crowns
     from csdv_core.zonal.crowns import segment_scene_crowns
 
     with rasterio.open(chm_path) as src:
-        chm = src.read(1, masked=True).filled(float("nan")).astype("float32")
+        chm = read_chm_metres(src, scale_factor)
         transform = src.transform
         crs = src.crs
     if block_px and min(chm.shape) > block_px:
@@ -192,6 +204,28 @@ def cli(
     _write_sidecar(out_crowns, params, chm_path, engine="watershed")
     logger.info("Wrote %d crowns to %s", len(gdf), out_crowns)
     click.echo(str(out_crowns))
+
+
+def resolve_scale_factor(scale_factor: float | None, dtype: str) -> float:
+    """Pick the multiplier from stored CHM values to metres.
+
+    NAIP-CHM inference writes uint16 centimetres, while clipped and lidar CHMs
+    are float metres. An explicit ``scale_factor`` always wins.
+    """
+    if scale_factor is not None:
+        return float(scale_factor)
+    return 0.01 if np.issubdtype(np.dtype(dtype), np.integer) else 1.0
+
+
+def read_chm_metres(src: DatasetReader, scale_factor: float) -> np.ndarray:
+    """Read band 1 as float32 metres with nodata as NaN.
+
+    The cast comes before the fill because an integer array cannot hold NaN.
+    """
+    chm = src.read(1, masked=True).astype("float32").filled(np.nan)
+    if scale_factor != 1.0:
+        chm *= np.float32(scale_factor)
+    return chm
 
 
 def _write_sidecar(

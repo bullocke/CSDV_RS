@@ -70,7 +70,10 @@ _scratch_exit() {
             ((rc == 0)) && rc=1
         fi
     done
-    rm -rf "$NODE_SCRATCH"
+    # On CHPC, Slurm owns /scratch/local/$USER/$SLURM_JOB_ID and removes it at
+    # job end, so empty it and leave the directory itself.
+    find "$NODE_SCRATCH" -mindepth 1 -delete
+    rmdir "$NODE_SCRATCH" 2>/dev/null
     echo "exit code $rc at $(date -Is)"
     exit "$rc"
 }

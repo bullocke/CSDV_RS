@@ -8,8 +8,11 @@ whole raster instead of per pixel. Both are pinned here.
 
 from __future__ import annotations
 
+import geopandas as gpd
 import numpy as np
 import pytest
+import rasterio
+from click.testing import CliRunner
 from rasterio.transform import Affine
 
 from csdv_core.preprocess.chm import mask_below, smooth_chm
@@ -19,6 +22,8 @@ from csdv_core.segmentation.chm_watershed import (
     segment_crowns,
     smooth_kernel_px,
 )
+from csdv_core.segmentation.cli import cli as segment_crowns_cli
+from csdv_core.segmentation.cli import read_chm_metres, resolve_scale_factor
 from csdv_core.segmentation.params import (
     WINDOW_FUNCTIONS,
     SegmentationParams,
@@ -218,3 +223,61 @@ def test_named_windows_are_diameters_in_a_plausible_range() -> None:
         assert np.all(ws >= 2.0), name
         assert np.all(ws <= 15.0), name
         assert np.all(np.diff(ws) >= -1e-9), f"{name} must not shrink with height"
+
+
+@pytest.mark.parametrize(
+    ("scale_factor", "dtype", "expected"),
+    [(None, "uint16", 0.01), (None, "float32", 1.0), (0.1, "uint16", 0.1)],
+)
+def test_scale_factor_follows_chm_dtype(scale_factor, dtype, expected) -> None:
+    assert resolve_scale_factor(scale_factor, dtype) == expected
+
+
+def test_uint16_chm_reads_as_metres_with_nodata_nan(tmp_path) -> None:
+    """NAIP-CHM inference writes uint16 cm. Filling NaN before the cast crashed."""
+    path = tmp_path / "chm.tif"
+    arr = np.array([[1500, 0], [65535, 230]], dtype="uint16")
+    profile = dict(
+        driver="GTiff",
+        width=2,
+        height=2,
+        count=1,
+        dtype="uint16",
+        nodata=65535,
+        crs="EPSG:5070",
+        transform=TRANSFORM_1M,
+    )
+    with rasterio.open(path, "w", **profile) as dst:
+        dst.write(arr, 1)
+    with rasterio.open(path) as src:
+        chm = read_chm_metres(src, resolve_scale_factor(None, src.dtypes[0]))
+    assert chm.dtype == np.float32
+    np.testing.assert_allclose(chm[0], [15.0, 0.0], rtol=1e-6)
+    assert np.isnan(chm[1, 0])
+    assert chm[1, 1] == pytest.approx(2.3)
+
+
+def test_segment_crowns_cli_on_uint16_chm(tmp_path) -> None:
+    """The CLI path the Slurm job runs: uint16 CHM in, crowns in metres out."""
+    path = tmp_path / "chm.tif"
+    arr = np.round(_gaussian_chm() * 100).astype("uint16")
+    profile = dict(
+        driver="GTiff",
+        width=arr.shape[1],
+        height=arr.shape[0],
+        count=1,
+        dtype="uint16",
+        nodata=65535,
+        crs="EPSG:5070",
+        transform=TRANSFORM_1M,
+    )
+    with rasterio.open(path, "w", **profile) as dst:
+        dst.write(arr, 1)
+    out = tmp_path / "crowns.gpkg"
+    result = CliRunner().invoke(
+        segment_crowns_cli, ["--chm", str(path), "--out-crowns", str(out)]
+    )
+    assert result.exit_code == 0, result.output
+    gdf = gpd.read_file(out)
+    assert 3 <= len(gdf) <= 5
+    assert gdf["apex_h_m"].max() == pytest.approx(15.0, abs=0.5)
