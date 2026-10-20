@@ -7,8 +7,13 @@ sampled unit:
   outlined and the chip extent boxed
 - the decision probability of the unit's interval over the same area (the z
   of that interval for rule D1, which has no probability)
-- the DI (z) of the 19.2 m cells inside the unit for every interval, as a
-  median line with 25-75 % and 10-90 % bands
+- the DI tested by the run's rule, for the 19.2 m cells inside the unit and
+  every interval, as a median line with 25-75 % and 10-90 % bands and the
+  date's decision cutoff. For the spatial rules (D5, D6, D7 and their strict
+  variants) this is the z smoothed at the broadest spatial scale, with the
+  smoothed z where the calibrated probability reaches ``p_boundary``. For D2
+  it is the raw z with its own probability cutoff, and for D1 the raw z with
+  the fixed ``-baseline_z`` cut
 - the mean CHM height of the same cells for every year, drawn the same way
 
 The cells are those whose centres fall inside the refined 0.6 m envelope, or
@@ -32,15 +37,23 @@ from matplotlib.patches import Patch, Rectangle
 from rasterio.features import geometry_mask
 from shapely.geometry.base import BaseGeometry
 
+from csdv_core.change import di_decide
+from csdv_core.change.di_decide import LfdrModel
 from csdv_core.disturbance import _figure_helpers as helpers
 from csdv_core.disturbance._figure_maps import (
     Z_CMAP,
     Z_COLOR_LIMIT,
     probability_colormap,
 )
-from csdv_core.disturbance.decide import ONSET_YEAR_NONE, ONSET_YEAR_UNMONITORED
+from csdv_core.disturbance.decide import (
+    ONSET_YEAR_NONE,
+    ONSET_YEAR_UNMONITORED,
+    fit_date_models,
+)
 from csdv_core.disturbance.inputs import CellGrid
+from csdv_core.disturbance.layers import monitored_mask
 from csdv_core.disturbance.outlines import interval_label
+from csdv_core.disturbance.standardize import sigmas_in_cells
 from csdv_core.disturbance.store import SavedRun, read_year_stack
 from csdv_core.viz.style import INK, MUTED
 
@@ -58,10 +71,36 @@ DI_SERIES_COLOR = "#2a6f7f"
 HEIGHT_SERIES_COLOR = "#2f7d4f"
 #: Fill of the onset interval in the time series.
 ONSET_SPAN_COLOR = "#b4553a"
-#: DI level marked on the series (the per-cell rule D1 cut).
-DI_REFERENCE_Z = -3.0
+#: Colour of the per-date decision cutoff on the DI series.
+CUTOFF_COLOR = "#b4553a"
+#: Half width of the cutoff tick at each date, in date positions.
+CUTOFF_HALF_WIDTH = 0.35
+#: Rules whose decision tests the spatially smoothed z.
+SMOOTHED_RULES: frozenset[str] = frozenset({"D5", "D5s", "D6", "D6s", "D7", "D7s"})
+#: Spacing of the z grid searched for the probability cutoff.
+CUTOFF_GRID_STEP = 0.01
+#: Lowest z searched for the probability cutoff.
+CUTOFF_GRID_MIN = -15.0
 #: Outline colour of the unit on the context maps.
 CONTEXT_OUTLINE_COLOR = "black"
+
+
+@dataclass(frozen=True)
+class DecisionSeries:
+    """The DI a rule tests, with the cutoff of every date.
+
+    Attributes:
+        values: float32 ``(T, rows, cols)`` tested DI, NaN where undefined.
+        cutoffs: Per-date DI at or below which the rule flags a cell on its
+            own, NaN for dates without a fit (index 0, skipped dates).
+        title: Chart title fragment naming the DI.
+        cutoff_label: Legend label of the cutoff.
+    """
+
+    values: np.ndarray
+    cutoffs: tuple[float, ...]
+    title: str
+    cutoff_label: str
 
 
 @dataclass(frozen=True)
@@ -78,6 +117,7 @@ class RunRasters:
         probability: float32 ``(T, rows, cols)`` decision probability, or
             None for rule D1.
         p_boundary: Decision boundary of the run.
+        series: DI tested by the run's rule, for the DI time series.
     """
 
     grid: CellGrid
@@ -87,6 +127,115 @@ class RunRasters:
     onset_year: np.ndarray
     probability: np.ndarray | None
     p_boundary: float
+    series: DecisionSeries
+
+
+def probability_cutoff(model: LfdrModel, p_boundary: float) -> float:
+    """Highest z whose calibrated loss probability exceeds the boundary.
+
+    The probability can only rise as z moves below the null centre, so every
+    z at or below the cutoff passes and every z above it does not.
+
+    Args:
+        model: Fitted lfdr model of one date.
+        p_boundary: Decision boundary.
+
+    Returns:
+        The cutoff z, or NaN when no z on the grid passes.
+    """
+    z_grid = np.arange(CUTOFF_GRID_MIN, model.null.mu0, CUTOFF_GRID_STEP)
+    probability = model.prob(z_grid)
+    passing = z_grid[probability > p_boundary]
+    if passing.size == 0:
+        return float("nan")
+    return float(passing.max())
+
+
+def _smoothed_series(
+    saved: SavedRun, monitored: np.ndarray, skipped: Sequence[bool]
+) -> DecisionSeries:
+    """z smoothed at the broadest spatial scale, with its probability cutoffs.
+
+    Each date is smoothed and fitted as in
+    :func:`csdv_core.change.di_decide.spatial_prob`, so the cutoff is the one
+    that scale applies in the run.
+
+    Args:
+        saved: The saved run.
+        monitored: bool ``(T, rows, cols)``.
+        skipped: Per date, True when the run skipped the date.
+
+    Returns:
+        The smoothed series.
+    """
+    params = saved.params
+    sigmas_cells = sigmas_in_cells(params, saved.grid.cell_m)
+    sigma_cells = max(sigmas_cells)
+    sigma_m = max(params.decide.spatial_sigma_m)
+    values = np.full(saved.z.shape, np.nan, dtype="float32")
+    cutoffs = []
+    for date_index, date_skipped in enumerate(skipped):
+        if date_skipped:
+            cutoffs.append(float("nan"))
+            continue
+        date_z = saved.z[date_index]
+        finite = np.isfinite(date_z)
+        where = monitored[date_index] & finite
+        smoothed = di_decide.smooth_z(date_z, where, sigma_cells)
+        model = di_decide.lfdr_model(
+            smoothed,
+            where,
+            bin_w=params.decide.bin_w,
+            smooth_bins=params.decide.smooth_bins,
+        )
+        values[date_index] = smoothed
+        cutoff = probability_cutoff(model, params.decide.p_boundary)
+        cutoffs.append(cutoff)
+    return DecisionSeries(
+        values=values,
+        cutoffs=tuple(cutoffs),
+        title=f"DI smoothed at {sigma_m:g} m (z)",
+        cutoff_label=f"P = {params.decide.p_boundary:g} cutoff",
+    )
+
+
+def decision_series(saved: SavedRun) -> DecisionSeries:
+    """The DI the run's rule tests, with the cutoff of every date.
+
+    Args:
+        saved: The saved run.
+
+    Returns:
+        Smoothed z for the spatial rules, raw z for D1 and D2.
+    """
+    params = saved.params
+    rule = params.decide.rule
+    monitored = monitored_mask(saved.layers.forest)
+    models, _ = fit_date_models(
+        saved.z, monitored, params, saved.years, warn_skipped=False
+    )
+    skipped = [model is None for model in models]
+    if rule in SMOOTHED_RULES:
+        return _smoothed_series(saved, monitored, skipped)
+    if rule == "D1":
+        cut = -params.decide.baseline_z
+        cutoffs = [float("nan") if is_skipped else cut for is_skipped in skipped]
+        cutoff_label = f"z = {cut:g} (rule D1)"
+    else:
+        cutoffs = []
+        for model in models:
+            if model is None:
+                cutoffs.append(float("nan"))
+                continue
+            cutoff = probability_cutoff(model, params.decide.p_boundary)
+            cutoffs.append(cutoff)
+        cutoff_label = f"P = {params.decide.p_boundary:g} cutoff"
+    return DecisionSeries(
+        values=saved.z,
+        cutoffs=tuple(cutoffs),
+        title="DI (z)",
+        cutoff_label=cutoff_label,
+    )
 
 
 def load_run_rasters(saved: SavedRun) -> RunRasters:
@@ -105,6 +254,7 @@ def load_run_rasters(saved: SavedRun) -> RunRasters:
     if run_paths.probability.exists():
         probability_stack = read_year_stack(run_paths.probability)
         probability = probability_stack.values
+    series = decision_series(saved)
     return RunRasters(
         grid=saved.grid,
         years=saved.years,
@@ -113,6 +263,7 @@ def load_run_rasters(saved: SavedRun) -> RunRasters:
         onset_year=onset_year,
         probability=probability,
         p_boundary=saved.params.decide.p_boundary,
+        series=series,
     )
 
 
@@ -361,7 +512,11 @@ def _draw_bands(
 def draw_di_series(
     ax: Axes, rasters: RunRasters, cells: np.ndarray, onset_year: int
 ) -> None:
-    """DI of the unit's cells for every interval, with the onset interval shaded.
+    """Tested DI of the unit's cells for every interval, with the date cutoffs.
+
+    The cutoff of each date is drawn as a short dashed tick. A cell whose DI
+    lies below the tick passes the rule on its own. Cells above it can still
+    be flagged through the plain rules' lean cell test.
 
     Args:
         ax: Chart axis.
@@ -371,19 +526,21 @@ def draw_di_series(
     """
     years = rasters.years
     positions = np.arange(len(years), dtype=float)
-    _draw_bands(ax, positions, rasters.z, cells, DI_SERIES_COLOR)
+    series = rasters.series
+    _draw_bands(ax, positions, series.values, cells, DI_SERIES_COLOR)
+    cutoffs = np.asarray(series.cutoffs, dtype=float)
+    ax.hlines(
+        cutoffs,
+        positions - CUTOFF_HALF_WIDTH,
+        positions + CUTOFF_HALF_WIDTH,
+        colors=CUTOFF_COLOR,
+        linewidth=1.0,
+        linestyles="--",
+        label=series.cutoff_label,
+    )
     onset_index = years.index(onset_year)
     ax.axvspan(onset_index - 0.4, onset_index + 0.4, color=ONSET_SPAN_COLOR, alpha=0.12)
     ax.axhline(0.0, color=MUTED, linewidth=0.6)
-    ax.axhline(DI_REFERENCE_Z, color=MUTED, linewidth=0.6, linestyle="--")
-    ax.text(
-        positions[-1] + 0.45,
-        DI_REFERENCE_Z,
-        f"z = {DI_REFERENCE_Z:g}",
-        fontsize=6,
-        color=MUTED,
-        va="center",
-    )
     labels = [""]
     for date_index in range(1, len(years)):
         label = interval_label(years[date_index - 1], years[date_index])
@@ -393,10 +550,12 @@ def draw_di_series(
     ax.set_xlim(0.5, positions[-1] + 0.5)
     n_cells = int(cells.sum())
     cell_word = "cell" if n_cells == 1 else "cells"
-    ax.set_title(f"DI (z) of the {n_cells} {cell_word} inside the unit", fontsize=8)
+    ax.set_title(
+        f"{series.title} of the {n_cells} {cell_word} inside the unit", fontsize=8
+    )
     ax.set_ylabel("DI (z)", fontsize=7)
     ax.tick_params(labelsize=7)
-    ax.legend(fontsize=6, frameon=False, loc="lower left", ncol=3)
+    ax.legend(fontsize=6, frameon=False, loc="lower left", ncol=4)
 
 
 def draw_height_series(
@@ -426,12 +585,15 @@ def draw_height_series(
 
 
 __all__ = [
+    "DecisionSeries",
     "RunRasters",
     "cells_in_polygon",
     "context_bounds",
+    "decision_series",
     "draw_di_series",
     "draw_height_series",
     "draw_onset_context",
     "draw_probability_context",
     "load_run_rasters",
+    "probability_cutoff",
 ]

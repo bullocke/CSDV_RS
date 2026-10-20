@@ -13,20 +13,21 @@ Array conventions used throughout: a year stack has shape `(T, rows, cols)` with
 | `params` | Merge packaged YAML, user YAML and CLI options, then validate |
 | `inputs` | Find each year's CHM (and NAIP) files, build the common grid |
 | `windows` | Read pixel windows of a year's files on the common grid |
-| `layers` | Per-year cell means (height, cover, valid share, NDVI), forest, monitored and population masks, change layers |
-| `standardize` | Change layer to z stack (scene, scene mean, local, local two-pass), z encoding |
-| `decide` | Empirical null per date, rules D1, D2, D5, D5s, D6, D6s, onset date, minimum mapping unit |
+| `layers` | Per-year cell means (height, cover, valid share, NDVI), forest, monitored and population masks, one-step and two-step (bracket) change layers |
+| `standardize` | Change layer to z stack (scene, scene mean, local, local two-pass), bracket z stacks, z encoding |
+| `decide` | Empirical null per date, rules D1, D2, D5, D5s, D6, D6s, D7, D7s, onset date, minimum mapping unit |
 | `outlines` | Detected cells to objects, 0.6 m refinement, the flat objects table |
 | `store` | Run folder layout, GeoTIFF and GeoPackage writing, reload for `--from-run` |
 | `report` | Run summary, `summary.json`, `report.md` |
 | `report_markdown` | Renders the sections of `report.md` from a `RunSummary` (used by `report.write_report_markdown`) |
+| `report_caveats` | Run-specific caveats: objects without a follow-up image and intervals with a season mismatch |
 | `figures` | PNG figures (Agg backend), public entry points |
 | `_figure_maps`, `_figure_charts`, `_figure_helpers` | Private drawing code re-exported by `figures`: scene maps, charts (null fits, areas, refined examples), and layout, scale bar and shared constants |
 | `pipeline` | Stage order, timing, log file, `run_detection`, `rebuild_figures` |
 | `_pipeline_inputs`, `_pipeline_figures` | Private helpers of `pipeline`: preparing layers and z (fresh or from a saved run), and the figure stage and figure rebuild |
 | `sampling` | Stratified inspection sample of a run: detected objects by interval, near misses below the MMU, never-flagged forest cells |
 | `chips` | NAIP RGB and CHM chips of an inspection sample, contact sheet, `samples.csv` and `index.md` |
-| `_chip_panels` | Private drawing code of `chips`: `RunRasters`/`load_run_rasters`, `cells_in_polygon`, `context_bounds`, the onset and probability context maps, and the percentile time series |
+| `_chip_panels` | Private drawing code of `chips`: `RunRasters`/`load_run_rasters`, `DecisionSeries`/`decision_series` (the DI the rule tests and its per-date cutoff), `probability_cutoff`, `cells_in_polygon`, `context_bounds`, the onset and probability context maps, and the percentile time series |
 | `cli` | Click commands `detect-disturbance`, `disturbance-figures` and `disturbance-chips` |
 
 ## `params`
@@ -114,6 +115,7 @@ Every function mosaics one band of a year's files into a window of the grid's pi
 | `monitored_mask` | `(forest) -> ndarray` | Cells watched for loss: `out[0]` all False, `out[t] = forest[t - 1]` |
 | `population_mask` | `(forest) -> ndarray` | Standardization population. As `monitored_mask` except `out[0] = forest[0]` |
 | `change_layer` | `(layers, input_name) -> ndarray` | `out[0]` NaN, `out[t] = state[t] - state[t - 1]`. Raises `ValueError` for `d_ndvi` without NDVI |
+| `bracket_changes` | `(layers, input_name) -> (back, forward)` | Two-step changes of rules D7 and D7s: `back[t] = state[t] - state[t - 2]` for `t >= 2` and `forward[t] = state[t + 1] - state[t - 1]` for `1 <= t <= T - 2`, NaN elsewhere |
 
 `BlockAggregate` (frozen) has float32 cell arrays `height`, `cover` and `valid_share` (never NaN). `CellLayers` (frozen) has `years`, the float32 stacks `chm_height`, `chm_cover`, `valid_share`, the bool stack `forest` and the optional stack `ndvi`, plus the property `cell_shape`. Unlike the research `01_layers.py`, CHM layers are not masked where NAIP has no data.
 
@@ -129,6 +131,7 @@ Every function mosaics one band of a year's files into a window of the grid's pi
 | `window_cells` | `(window_m, cell_m) -> int` | `round(window_m / cell_m)`, plus one when even. `window_cells(150, 19.2) == 9` (172.8 m) |
 | `standardize_date` | `(values, population, params, cell_m) -> ndarray` | One date. `scene` is median and 1.4826 MAD, `scenemean` mean and SD, `local` a forest-only moving window with `min_frac`, `trim_z` and `sd_floor`. `local_twopass` computes the local z, the spatial loss probability, then the local z again without cells whose probability exceeds `decide.p_boundary` |
 | `standardize_stack` | `(change, population, params, cell_m) -> ndarray` | Every date. Dates without finite values stay NaN |
+| `standardize_brackets` | `(back_change, forward_change, population, params, cell_m) -> (back_z, forward_z)` | Both bracket stacks through `standardize_stack` with the main population (`population[t]`, forest at `t - 1`), then `quantize_z` |
 | `encode_z` | `(z) -> ndarray` | `int16(clip(round(z * 100), -32767, 32767))`, `Z_NODATA` where NaN |
 | `decode_z` | `(encoded) -> ndarray` | `float32(encoded) / 100`, NaN where `Z_NODATA` |
 | `quantize_z` | `(z) -> ndarray` | `decode_z(encode_z(z))`. Decisions run on quantized z, so a `--from-run` rerun sees the same values as the original run |
@@ -142,17 +145,21 @@ Every function mosaics one band of a year's files into a window of the grid's pi
 | `ONSET_YEAR_UNMONITORED` | `-1` | `onset_year` value of a cell never monitored |
 | `SKIPPED_METHOD` | `"skipped"` | `DateFit.method` of a skipped date |
 | `EIGHT_CONNECTED` | 3 by 3 True | Structuring element for objects (also used by `outlines`) |
+| `BRACKET_RULES` | `("D7", "D7s")` | Rules that need the bracket z stacks |
 | `skipped_fit` | `(year, n_cells) -> DateFit` | Fit of a date without a null: NaN parameters, method `"skipped"` |
-| `fit_date_models` | `(z, monitored, params, years) -> (list[LfdrModel \| None], list[DateFit])` | Efron central-matching null and lfdr curve per date, with `seed = t`. Dates with fewer than `decide.min_fit_cells` monitored finite cells are skipped |
+| `fit_date_models` | `(z, monitored, params, years, *, warn_skipped=True) -> (list[LfdrModel \| None], list[DateFit])` | Efron central-matching null and lfdr curve per date, with `seed = t`. Dates with fewer than `decide.min_fit_cells` monitored finite cells are skipped (with a warning unless `warn_skipped` is False) |
 | `rule_d1` | `(z, monitored, params) -> ndarray` | `monitored & (z <= -baseline_z)` |
 | `rule_d2` | `(z, monitored, models, params) -> (flags, probability)` | `monitored & (P > p_boundary)` with `P = 1 - lfdr` |
 | `spatial_loss_probability` | `(z, monitored, models, params, cell_m) -> ndarray` | D5 probability: the largest calibrated probability over the smoothing scales `spatial_sigma_m / cell_m` |
 | `persistence_probability` | `(z, monitored, models, loss_probability, params, cell_m) -> ndarray` | D6 probability: `loss_probability[t] * (1 - P_gain[t + 1])`. The last date, and dates whose next image has fewer than `min_fit_cells` usable cells, keep the D5 value |
 | `cell_lean_mask` | `(z, models, params, *, strict) -> ndarray` | Cells whose own probability exceeds the date's prior (plain rules) or `p_boundary` (strict rules) |
 | `rule_spatial` | `(z, monitored, models, params, cell_m, *, persistence, strict) -> (flags, probability)` | D5, D5s, D6 and D6s |
+| `check_probability` | `(check_z, monitored, params, cell_m, years) -> ndarray` | D5 probability of one bracket z stack with its own null fits. NaN on skipped dates and on unmonitored or NaN cells |
+| `bracketed_probability` | `(z, monitored, models, bracket_z, params, cell_m, years) -> ndarray` | D7 probability: `fmin` of the main, back and forward D5 probabilities, so NaN checks drop out. The last date uses the back check only and the first date the forward check only |
+| `rule_bracketed` | `(z, monitored, models, bracket_z, params, cell_m, years, *, strict) -> (flags, probability)` | D7 and D7s. The cell test uses the main z, as in D5 and D5s |
 | `first_onset` | `(flags) -> ndarray` | int8 index of the first flagged date, `NO_ONSET` where none |
 | `apply_mmu` | `(onset_index, cell_ha, mmu_ha) -> ndarray` | Removes objects (8-connected cells sharing an onset) with fewer than `ceil(mmu_ha / cell_ha)` cells. At 19.2 m the 1-acre MMU is 11 cells (0.406 ha) |
-| `decide` | `(z, monitored, params, cell_m, *, years) -> DecisionResult` | Fits the nulls (for every rule, so the report always lists them), runs `decide.rule`, onset and MMU |
+| `decide` | `(z, monitored, params, cell_m, *, years, bracket_z=None) -> DecisionResult` | Fits the nulls (for every rule, so the report always lists them), runs `decide.rule`, onset and MMU. Raises `ValueError` when D7 or D7s gets no `bracket_z` |
 | `onset_index_to_year` | `(onset_index, years, monitored) -> ndarray` | int16 raster: the onset year, 0 where monitored but not detected, -1 where never monitored |
 
 `DateFit` (frozen) records one date's null.
@@ -174,7 +181,7 @@ Every function mosaics one band of a year's files into a window of the grid's pi
 |---|---|---|
 | `OBJECT_COLUMNS`, `REFINED_COLUMNS`, `OPENING_COLUMNS`, `CENTROID_COLUMNS` | tuples | Column orders (see the output specification below) |
 | `interval_label` | `(year_before, year) -> str` | `"2016-2018"` |
-| `detection_objects` | `(onset_index, probability, z, grid, years) -> GeoDataFrame` | Labels 8-connected cells per onset index, polygonizes them on the cell grid and dissolves per label. `object_id` runs from 1 by onset index, then label. Empty frame with the same columns when nothing is detected |
+| `detection_objects` | `(onset_index, probability, z, grid, years) -> GeoDataFrame` | Labels 8-connected cells per onset index, polygonizes them on the cell grid and dissolves per label. `object_id` runs from 1 by onset index, then label. `follow_up` is True when a later image exists. Empty frame with the same columns when nothing is detected |
 | `refine_object` | `(chm_before, chm_after, transform, geometry, params) -> RefinedOutline \| None` | Redraws one object from the 0.6 m CHM pair (port of `08_refine_best.refine_object`). Returns None when the forest ring is too small, statistics fail, or the envelope is empty |
 | `refine_objects` | `(objects, site_inputs, params) -> RefinementResult` | Reads each object's CHM windows (bounds buffered by `refine.pad_m`) and refines it |
 | `objects_table` | `(objects) -> DataFrame` | Objects without geometry, plus centroids in grid CRS and in EPSG:4326 |
@@ -189,6 +196,7 @@ Every function mosaics one band of a year's files into a window of the grid's pi
 |---|---|---|
 | `GTIFF_PROFILE` | DEFLATE, tiled 256 by 256 | Creation options of every raster |
 | `OBJECTS_LAYER`, `REFINED_OUTLINES_LAYER`, `REFINED_OPENINGS_LAYER` | `"objects"`, `"refined_outlines"`, `"refined_openings"` | GeoPackage layer names |
+| `BACK_Z_SUFFIX`, `FORWARD_Z_SUFFIX` | `"back2"`, `"fwd2"` | File name suffixes of the bracket z stacks |
 | `z_filename` | `(input_name, method, window_m) -> str` | `z_<input>_<method>.tif`, or `z_<input>_<method>_<int(window_m)>m.tif` for local methods |
 | `claim_output_dir` | `(path) -> RunPaths` | Creates the run folder and its four subfolders. Raises `FileExistsError` if `path` exists in any form |
 | `write_year_stack` / `read_year_stack` | `(path, stack, grid, years) -> Path` / `(path) -> YearStack` | Multi-band year rasters on the cell grid |
@@ -196,9 +204,10 @@ Every function mosaics one band of a year's files into a window of the grid's pi
 | `write_layers` / `read_layers` | `(run_paths, layers, grid) -> dict` / `(run_paths) -> CellLayers` | The `layers/` folder (`ndvi.tif` is optional on read) |
 | `write_detection` | `(run_paths, *, onset_year, onset_year_nommu, probability, grid, years, objects, refinement) -> dict` | Detection rasters, GeoPackage and `objects.csv` |
 | `write_run_params` / `read_run_params` | `(run_paths, params, *, site, command_line, config_path, from_run, grid=None) -> Path` / `(run_dir) -> dict` | `run_params.json`, written after claiming the folder and again once the grid exists |
-| `load_run` | `(run_dir) -> SavedRun` | Reloads parameters, grid, layers and z without the source CHMs |
+| `read_bracket_z` | `(run_paths, params, years) -> (back_z, forward_z) \| None` | The bracket z stacks when both files exist |
+| `load_run` | `(run_dir) -> SavedRun` | Reloads parameters, grid, layers, z and (when saved) the bracket z stacks without the source CHMs |
 
-`RunPaths` (frozen) holds every path of a run folder: `root`, `run_params`, `log`, `summary_json`, `report_md`, `layers_dir`, `z_dir`, `detection_dir`, `figures_dir`, `onset_year`, `onset_year_nommu`, `probability`, `disturbances_gpkg` and `objects_csv`. Build it with `RunPaths.for_root(root)`. The methods `layer_path(name)` and `z_path(params)` return file paths. `YearStack` (frozen) holds `values` and `years` (from the band descriptions). `SavedRun` (frozen) holds `run_paths`, `site`, `params`, `grid`, `layers`, `z` (decoded, already quantized) and `years`.
+`RunPaths` (frozen) holds every path of a run folder: `root`, `run_params`, `log`, `summary_json`, `report_md`, `layers_dir`, `z_dir`, `detection_dir`, `figures_dir`, `onset_year`, `onset_year_nommu`, `probability`, `disturbances_gpkg` and `objects_csv`. Build it with `RunPaths.for_root(root)`. The methods `layer_path(name)`, `z_path(params)` and `bracket_z_paths(params)` (the `_back2` and `_fwd2` variants of `z_path`) return file paths. `YearStack` (frozen) holds `values` and `years` (from the band descriptions). `SavedRun` (frozen) holds `run_paths`, `site`, `params`, `grid`, `layers`, `z` (decoded, already quantized), `years` and `bracket_z` (None unless the run saved the bracket stacks).
 
 ## `report`
 
@@ -210,7 +219,7 @@ Every function mosaics one band of a year's files into a window of the grid's pi
 | `software_info` | `(repo_root=None) -> dict[str, str]` | `csdv_core` version, `git_commit`, `git_dirty`, `python` and package versions. Git failures give `"unknown"` |
 | `input_inventory` | `(site_inputs) -> list[InputFileInfo]` | Every CHM and NAIP file by year |
 | `grid_summary` | `(grid, params) -> GridSummary` | The grid and the window and sigma sizes in cells |
-| `build_summary` | `(*, site, params, inputs, grid, layers, monitored, decision, objects, refinement, stage_seconds, run_paths, command_line, config_path, from_run) -> RunSummary` | Assembles the summary. Areas are cell counts times `cell_ha` |
+| `build_summary` | `(*, site, params, inputs, grid, layers, monitored, decision, objects, refinement, stage_seconds, run_paths, command_line, config_path, from_run) -> RunSummary` | Assembles the summary. Areas are cell counts times `cell_ha`. The caveats are `DEFAULT_CAVEATS`, the follow-up count and the season lines of `report_caveats` |
 | `summary_to_dict` / `summary_from_dict` | | JSON form. Year keys become strings, NaN becomes null |
 | `refresh_summary` | `(summary, run_paths, stage_seconds=None) -> RunSummary` | Copy with `outputs` listed again from the run folder and, when given, new stage times. The pipeline calls it after the figures |
 | `write_summary_json` / `read_summary_json` | `(summary, path) -> Path` / `(path) -> RunSummary` | `summary.json`, indent 2, keys in field order (stage times in stage order) |
@@ -239,6 +248,16 @@ All functions use the Agg backend, take explicit arrays and return the written p
 
 `NaipBackdrop` (frozen) holds `rgb` (uint8, decimated) and `extent`. `FigureInputs` collects what `make_figures` draws: `grid`, `years`, `forest`, `monitored`, `z`, `probability`, `onset_year`, `fits`, `intervals`, `objects`, `refined`, `p_boundary`, `bin_w`, and the optional `site_inputs`, `backdrop` and `chm_height` (the cell CHM height stack, which supplies the default grey onset-map backdrop).
 
+## `report_caveats`
+
+| Name | Value or signature | Purpose |
+|---|---|---|
+| `SEASON_GAP_DAYS` | `42` | Largest day-of-year gap between the two images of an interval before the report warns about phenology |
+| `FOLLOW_UP_COLUMN` | `"follow_up"` | Objects column read by `follow_up_caveat` |
+| `earliest_acquisition_dates` | `(inputs) -> dict[int, date]` | Earliest acquisition date per year of the inventory |
+| `season_caveats` | `(inputs, years) -> list[str]` | One sentence per interval whose earliest dates differ by more than `SEASON_GAP_DAYS` days of year, for example "2021-2023: images from 2021-09-20 and 2023-06-23 differ by 89 days of season, so CHM differences between them may reflect phenology." |
+| `follow_up_caveat` | `(objects, years) -> str` | Count and area of objects without a follow-up image. Falls back to `onset_year == years[-1]` when the column is absent |
+
 ## `pipeline`
 
 | Name | Signature | Purpose |
@@ -248,7 +267,7 @@ All functions use the Agg backend, take explicit arrays and return the written p
 | `run_detection` | `(params, site, output_dir, from_run=None, command_line=None, config_path=None, log_level=INFO) -> RunSummary` | One run end to end into a new folder. Raises `FileExistsError`, `FileNotFoundError` or `ValueError` |
 | `rebuild_figures` | `(run_dir, *, naip_backdrop=None) -> dict[str, Path]` | Rewrites `figures/` and `report.md` of an existing run in place. `naip_backdrop=None` follows the saved `figures.naip_backdrop`. `summary.json` is not changed |
 
-`run_detection` runs the stages in this order. Setup claims the folder, attaches the log and writes `run_params.json`. Inputs discovers years and builds the grid. Layers writes `layers/`. Standardize builds the change layer and the z stack and writes `z/`. Decide applies the rule, onset and MMU. Outlines builds the objects and refined outlines and writes the detection rasters, the GeoPackage and the CSV. Report writes `summary.json` and `report.md`. Figures writes the PNGs, and then `summary.json` and `report.md` are written again with the full stage times and the figure links. With `from_run`, the inputs stage reloads the saved layers and z (checked with `params.check_reuse_compatible`, and the site must match) and copies them into the new folder, and the layers and standardize stages do not run. When refinement or the NAIP backdrop is on, the site's files are discovered again (metadata only) and the saved grid is attached, so the source CHMs, and NAIP for a backdrop, must still be available. The input inventory comes from the saved `summary.json`. A failed run keeps its folder, and the exception and traceback go to its log.
+`run_detection` runs the stages in this order. Setup claims the folder, attaches the log and writes `run_params.json`. Inputs discovers years and builds the grid. Layers writes `layers/`. Standardize builds the change layer and the z stack and writes `z/` (for D7 and D7s also the two bracket z stacks). Decide applies the rule, onset and MMU. Outlines builds the objects and refined outlines and writes the detection rasters, the GeoPackage and the CSV. Report writes `summary.json` and `report.md`. Figures writes the PNGs, and then `summary.json` and `report.md` are written again with the full stage times and the figure links. With `from_run`, the inputs stage reloads the saved layers and z (checked with `params.check_reuse_compatible`, and the site must match) and copies them into the new folder, and the layers and standardize stages do not run. When refinement or the NAIP backdrop is on, the site's files are discovered again (metadata only) and the saved grid is attached, so the source CHMs, and NAIP for a backdrop, must still be available. Rules D7 and D7s reuse the saved bracket z stacks, or compute them from the saved layers when the source run has none, so a D6 run can be re-decided as D7 with `--no-refine` and no source rasters. The input inventory comes from the saved `summary.json`. A failed run keeps its folder, and the exception and traceback go to its log.
 
 ## `sampling`
 
@@ -262,7 +281,7 @@ All functions use the Agg backend, take explicit arrays and return the written p
 | `sample_objects(objects, n_samples, min_per_interval, rng) -> GeoDataFrame` | Objects drawn at random within intervals |
 | `below_mmu_objects(saved) -> GeoDataFrame` | Objects flagged by the rule but removed by the MMU |
 | `no_detection_cells(saved, n_samples, rng) -> GeoDataFrame` | Monitored forest cells never flagged, each with a random monitored interval |
-| `draw_samples(saved, design) -> GeoDataFrame` | The full sample with `SAMPLE_COLUMNS` and polygons, ids `S01`, `S02`, ... |
+| `draw_samples(saved, design) -> GeoDataFrame` | The full sample with `SAMPLE_COLUMNS` and polygons, ids `S01`, `S02`, ... `follow_up` is computed from the onset year, so older runs get it too |
 
 ## `chips`
 
@@ -316,7 +335,7 @@ Defaults reproduce the best tested case from `2_Disturbance_Index`. Every key ma
 | `standardize.min_frac` | 0.2 | none | Least forest share in a window before falling back to scene statistics |
 | `standardize.trim_z` | 3.0 | none | Population cells beyond this robust scene z are left out of window statistics (null disables) |
 | `standardize.sd_floor` | 0.25 | none | Least window SD as a share of the scene scale |
-| `decide.rule` | `D6` | `--rule` | `D1`, `D2`, `D5`, `D5s`, `D6` or `D6s` |
+| `decide.rule` | `D6` | `--rule` | `D1`, `D2`, `D5`, `D5s`, `D6`, `D6s`, `D7` or `D7s` |
 | `decide.p_boundary` | 0.5 | `--p-boundary` | Bayes boundary on posterior probabilities (also the second-pass exclusion level) |
 | `decide.baseline_z` | 3.0 | none | Fixed threshold of rule D1 (`z <= -3`) |
 | `decide.spatial_sigma_m` | [10.0, 25.0] | none | Gaussian smoothing SDs (m) for spatial support |
@@ -364,7 +383,9 @@ The least refined envelope area is `mmu.mmu_ha`. With `--from-run`, the `inputs`
 │   ├── ndvi.tif               only for --input d_ndvi
 │   └── forest.tif
 ├── z/
-│   └── z_<input>_<method>[_<window>m].tif
+│   ├── z_<input>_<method>[_<window>m].tif
+│   ├── z_<input>_<method>[_<window>m]_back2.tif   only for rules D7 and D7s
+│   └── z_<input>_<method>[_<window>m]_fwd2.tif    only for rules D7 and D7s
 ├── detection/
 │   ├── onset_year.tif
 │   ├── onset_year_nommu.tif
@@ -396,10 +417,10 @@ All rasters share the cell grid (`CellGrid.cell_transform` and CRS), DEFLATE com
 | `layers/valid_share.tif` | one per year | float32 | NaN (never present) | Share of the cell's pixels with valid CHM, 0 to 1 |
 | `layers/ndvi.tif` | one per year | float32 | NaN | Cell-mean NAIP NDVI |
 | `layers/forest.tif` | one per year | uint8 | none | 1 forest, 0 not forest |
-| `z/z_*.tif` | one per year | int16 | -32768 | `round(z * 100)`, clipped to plus or minus 32767. Divide by 100 for z. Band 1 is all nodata for change inputs |
+| `z/z_*.tif` | one per year | int16 | -32768 | `round(z * 100)`, clipped to plus or minus 32767. Divide by 100 for z. Band 1 is all nodata for change inputs. In `_back2` bands 1 and 2 are nodata, in `_fwd2` the first and last bands |
 | `detection/onset_year.tif` | 1 | int16 | none | Onset year after the MMU, 0 monitored without detection, -1 never monitored |
 | `detection/onset_year_nommu.tif` | 1 | int16 | none | The same before the MMU |
-| `detection/probability.tif` | one per year | float32 | NaN | Decision probability of the rule (D2 lfdr posterior, D5 and D5s spatial loss probability, D6 and D6s with persistence). NaN on skipped dates and on cells not monitored at that date, so band 1 is all NaN |
+| `detection/probability.tif` | one per year | float32 | NaN | Decision probability of the rule (D2 lfdr posterior, D5 and D5s spatial loss probability, D6 and D6s with persistence, D7 and D7s the bracketed minimum). NaN on skipped dates and on cells not monitored at that date, so band 1 is all NaN |
 
 An onset year is the later image of its interval. A value of 2018 in a 2012 to 2022 biennial series means the loss happened between the 2016 and 2018 images. A cell is monitored at date `t` when it was forest at `t - 1`, so -1 marks cells that were never forest at any image before the last.
 
@@ -420,6 +441,7 @@ Layer `objects`, one row per detected object after the MMU:
 | `area_ha` | float | `n_cells * cell_ha` |
 | `mean_prob`, `max_prob` | float | Mean and maximum decision probability at the onset date (NaN for D1) |
 | `mean_z` | float | Mean z at the onset date |
+| `follow_up` | bool | True when a later image exists after the onset image, False for objects in the last interval |
 | `geometry` | (Multi)Polygon | Dissolved cell outline |
 
 Layer `refined_outlines`, one row per object that refinement could redraw (absent with `--no-refine`):

@@ -49,7 +49,16 @@ INPUT_CHOICES: tuple[str, ...] = ("d_chm_h", "d_chm_cov", "d_ndvi")
 #: Accepted ``--method`` values.
 METHOD_CHOICES: tuple[str, ...] = ("scene", "scenemean", "local", "local_twopass")
 #: Accepted ``--rule`` values.
-RULE_CHOICES: tuple[str, ...] = ("D1", "D2", "D5", "D5s", "D6", "D6s")
+RULE_CHOICES: tuple[str, ...] = (
+    "D1",
+    "D2",
+    "D5",
+    "D5s",
+    "D6",
+    "D6s",
+    "D7",
+    "D7s",
+)
 #: Accepted ``--log-level`` values.
 LOG_LEVELS: tuple[str, ...] = ("DEBUG", "INFO", "WARNING", "ERROR")
 #: Format of log records on the console.

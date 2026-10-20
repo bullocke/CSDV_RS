@@ -41,7 +41,10 @@
 # decide:
 #   rule             D1 (z <= -baseline_z), D2 (lfdr P > p_boundary), D5
 #                    (spatial support), D5s (D5, strict cell), D6 (D5 plus no
-#                    rebound at the next date), D6s (D6, strict cell).
+#                    rebound at the next date), D6s (D6, strict cell), D7
+#                    (bracketed: D5 must also hold for the two-step changes
+#                    h[t] - h[t-2] and h[t+1] - h[t-1]) and D7s (D7, strict
+#                    cell).
 #   p_boundary       Bayes decision boundary on posterior probabilities.
 #   baseline_z       Fixed z threshold of rule D1.
 #   spatial_sigma_m  Gaussian smoothing scales (SD, m) for spatial support.

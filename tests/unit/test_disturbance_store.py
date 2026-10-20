@@ -272,6 +272,7 @@ def _objects_frame(grid: CellGrid) -> gpd.GeoDataFrame:
         "mean_prob": [0.8],
         "max_prob": [0.9],
         "mean_z": [-4.0],
+        "follow_up": [True],
     }
     frame = pd.DataFrame(record)
     objects = gpd.GeoDataFrame(frame, geometry=[polygon], crs=grid.crs)
@@ -345,8 +346,11 @@ def test_write_detection(tmp_path: Path, grid: CellGrid) -> None:
     for layer_name in (OBJECTS_LAYER, REFINED_OUTLINES_LAYER, REFINED_OPENINGS_LAYER):
         layer = gpd.read_file(run_paths.disturbances_gpkg, layer=layer_name)
         assert len(layer) == 1
+    stored_objects = gpd.read_file(run_paths.disturbances_gpkg, layer=OBJECTS_LAYER)
+    assert stored_objects["follow_up"].tolist() == [True]
     table = pd.read_csv(run_paths.objects_csv)
     assert "centroid_lon" in table.columns
+    assert "follow_up" in table.columns
     assert "geometry" not in table.columns
 
 

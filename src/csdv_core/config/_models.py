@@ -361,7 +361,7 @@ DisturbanceInput = Literal["d_chm_h", "d_chm_cov", "d_ndvi"]
 #: Standardization methods of the disturbance pipeline.
 StandardizeMethod = Literal["scene", "scenemean", "local", "local_twopass"]
 #: Decision rules of the disturbance pipeline.
-DecisionRule = Literal["D1", "D2", "D5", "D5s", "D6", "D6s"]
+DecisionRule = Literal["D1", "D2", "D5", "D5s", "D6", "D6s", "D7", "D7s"]
 
 
 class DisturbanceInputs(_Base):

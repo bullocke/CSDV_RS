@@ -5,7 +5,8 @@ aggregated to cells of ``block_px x block_px`` pixels: mean height, canopy
 cover (share of valid pixels above ``forest.height_m``) and the share of
 valid pixels. Cells with too few valid pixels are NaN. NDVI is aggregated
 the same way from NAIP red and NIR when the ``d_ndvi`` input is used. The
-change layer is the difference between consecutive years.
+change layer is the difference between consecutive years, and rules D7 and
+D7s also use the two-step changes of :func:`bracket_changes`.
 
 Unlike ``01_layers.py``, CHM layers are not masked where NAIP has no data,
 because the core pipeline reads NAIP only for NDVI.
@@ -411,6 +412,25 @@ def change_layer(layers: CellLayers, input_name: DisturbanceInput) -> np.ndarray
         ValueError: If ``input_name`` is ``d_ndvi`` and ``layers.ndvi`` is None,
             or the name is unknown.
     """
+    state = _state_layer(layers, input_name)
+    change = np.full(state.shape, np.nan, dtype="float32")
+    change[1:] = state[1:] - state[:-1]
+    return change
+
+
+def _state_layer(layers: CellLayers, input_name: DisturbanceInput) -> np.ndarray:
+    """State layer that a change input differences.
+
+    Args:
+        layers: Cell layers.
+        input_name: ``d_chm_h``, ``d_chm_cov`` or ``d_ndvi``.
+
+    Returns:
+        float32 ``(T, rows, cols)`` state stack.
+
+    Raises:
+        ValueError: If the name is unknown or the layer is missing.
+    """
     if input_name not in INPUT_STATE_LAYER:
         raise ValueError(
             f"Unknown input {input_name!r}, expected one of {list(INPUT_STATE_LAYER)}"
@@ -419,9 +439,39 @@ def change_layer(layers: CellLayers, input_name: DisturbanceInput) -> np.ndarray
     state = getattr(layers, layer_name)
     if state is None:
         raise ValueError(f"Input {input_name} needs the {layer_name} layer")
-    change = np.full(state.shape, np.nan, dtype="float32")
-    change[1:] = state[1:] - state[:-1]
-    return change
+    return state
+
+
+def bracket_changes(
+    layers: CellLayers, input_name: DisturbanceInput
+) -> tuple[np.ndarray, np.ndarray]:
+    """Two-step change layers that bracket each interval (rules D7 and D7s).
+
+    For the interval ending at date ``t``, the back change compares the
+    later image with the image before the interval's earlier image, and the
+    forward change compares the image after the interval with its earlier
+    image. A spike in the earlier image or a dip in the later image shows up
+    in the one-step change but not in these two.
+
+    Args:
+        layers: Cell layers.
+        input_name: ``d_chm_h``, ``d_chm_cov`` or ``d_ndvi``.
+
+    Returns:
+        ``(back, forward)``, float32 ``(T, rows, cols)`` each.
+        ``back[t] = state[t] - state[t - 2]`` for ``t >= 2`` and
+        ``forward[t] = state[t + 1] - state[t - 1]`` for ``1 <= t <= T - 2``.
+        Every other date, and cells where either state is NaN, are NaN.
+
+    Raises:
+        ValueError: If the name is unknown or the layer is missing.
+    """
+    state = _state_layer(layers, input_name)
+    back = np.full(state.shape, np.nan, dtype="float32")
+    forward = np.full(state.shape, np.nan, dtype="float32")
+    back[2:] = state[2:] - state[:-2]
+    forward[1:-1] = state[2:] - state[:-2]
+    return back, forward
 
 
 __all__ = [
@@ -432,6 +482,7 @@ __all__ = [
     "CellLayers",
     "aggregate_block",
     "aggregate_ndvi",
+    "bracket_changes",
     "build_cell_layers",
     "change_layer",
     "forest_mask",

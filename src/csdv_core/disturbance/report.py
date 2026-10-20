@@ -39,6 +39,7 @@ from csdv_core.disturbance.inputs import CellGrid, SiteInputs, parse_acquisition
 from csdv_core.disturbance.layers import CellLayers
 from csdv_core.disturbance.outlines import RefinementResult, interval_label
 from csdv_core.disturbance.params import params_to_dict
+from csdv_core.disturbance.report_caveats import follow_up_caveat, season_caveats
 from csdv_core.disturbance.report_markdown import render_report_lines
 from csdv_core.disturbance.standardize import (
     LOCAL_METHODS,
@@ -64,7 +65,8 @@ REPORTED_PACKAGES: tuple[str, ...] = (
 #: Caveats printed in every report.
 DEFAULT_CAVEATS: tuple[str, ...] = (
     "The last interval has no later image, so rules D6 and D6s cannot check "
-    "it for a rebound and it keeps the D5 probability.",
+    "it for a rebound and it keeps the D5 probability. Rules D7 and D7s check "
+    "it against the image two dates back only.",
     "Outline refinement always uses the 0.6 m CHM, whatever the detection input.",
     "Detections are not scored against reference data in this run.",
 )
@@ -405,7 +407,10 @@ def build_summary(
     Areas are cell counts times ``grid.cell_ha``. Monitored and detected
     areas per interval use ``monitored[t]`` and ``decision.onset_index`` /
     ``onset_index_mmu == t``. ``outputs`` lists the files that exist in the
-    run folder at call time, relative to ``run_paths.root``.
+    run folder at call time, relative to ``run_paths.root``. The caveats are
+    :data:`DEFAULT_CAVEATS`, the count of objects without a follow-up image
+    and one line per interval with a season mismatch (see
+    :mod:`csdv_core.disturbance.report_caveats`).
 
     Args:
         site: Site name.
@@ -492,6 +497,9 @@ def build_summary(
     grid_info = grid_summary(grid, params)
     software = software_info()
     outputs = _existing_outputs(run_paths)
+    follow_up_text = follow_up_caveat(objects, years)
+    season_texts = season_caveats(inputs, years)
+    caveats = [*DEFAULT_CAVEATS, follow_up_text, *season_texts]
     return RunSummary(
         schema_version=SUMMARY_SCHEMA_VERSION,
         site=site,
@@ -517,6 +525,7 @@ def build_summary(
         refined_ha=total_refined_ha,
         stage_seconds=seconds_by_stage,
         software=software,
+        caveats=caveats,
         outputs=outputs,
     )
 

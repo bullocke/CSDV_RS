@@ -77,6 +77,8 @@ def test_detection_objects_two_years() -> None:
     assert second["interval"] == "2015-2017"
     assert second["n_cells"] == 6
     assert second["mean_z"] == pytest.approx(-3.0)
+    assert bool(first["follow_up"]) is True
+    assert bool(second["follow_up"]) is False
     assert objects.crs == TEST_CRS
 
 

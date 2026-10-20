@@ -72,6 +72,7 @@ SAMPLE_COLUMNS: tuple[str, ...] = (
     "mean_prob",
     "max_prob",
     "mean_z",
+    "follow_up",
     "centroid_x",
     "centroid_y",
     "centroid_lon",
@@ -295,7 +296,9 @@ def draw_samples(saved: SavedRun, design: SampleDesign) -> gpd.GeoDataFrame:
 
     Returns:
         GeoDataFrame with :data:`SAMPLE_COLUMNS` and ``geometry`` (grid CRS).
-        ``sample_id`` is ``S01``, ``S02``, ... in table order: detected
+        ``follow_up`` is True when the unit's onset year is not the run's
+        last year (computed here, so older runs without the objects column
+        get it too). ``sample_id`` is ``S01``, ``S02``, ... in table order: detected
         objects, then below-MMU objects, then no-detection cells, each
         ordered by onset year.
     """
@@ -325,6 +328,8 @@ def draw_samples(saved: SavedRun, design: SampleDesign) -> gpd.GeoDataFrame:
         tables.append(table)
     combined = pd.concat(tables, ignore_index=True)
     combined["object_id"] = combined["object_id"].astype("Int64")
+    last_year = saved.years[-1]
+    combined["follow_up"] = combined["onset_year"] < last_year
     n_samples = len(combined)
     combined["sample_id"] = [f"S{number:02d}" for number in range(1, n_samples + 1)]
     ordered_columns = [*SAMPLE_COLUMNS, "geometry"]

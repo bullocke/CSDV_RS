@@ -2,7 +2,7 @@
 
 A port of the research ``_lib.fit_models``, ``run_variant`` (rules D1 and
 D2), ``_spatial`` (D5, D5s, D6, D6s) and ``apply_mmu`` onto
-:mod:`csdv_core.change.di_decide`:
+:mod:`csdv_core.change.di_decide`, plus the bracketed rules D7 and D7s:
 
 - **D1**: ``z <= -baseline_z`` on a monitored cell.
 - **D2**: lfdr posterior ``P > p_boundary``.
@@ -11,6 +11,12 @@ D2), ``_spatial`` (D5, D5s, D6, D6s) and ``apply_mmu`` onto
 - **D6**: D5 times ``1 - P_gain`` of the next date, so a loss that rebounds
   (a CHM failure that recovers) is suppressed. The last date has no next
   date and keeps its D5 probability.
+- **D7**: bracketed. The minimum of the D5 probability of the one-step
+  change ``h[t] - h[t-1]``, the back change ``h[t] - h[t-2]`` and the
+  forward change ``h[t+1] - h[t-1]``. A spike in the earlier image or a dip
+  in the later image does not hold up in both two-step changes. A check that
+  is undefined (``t < 2`` for back, the last date for forward, a skipped
+  date, a NaN cell) is left out of the minimum.
 - The ``s`` variants require the cell's own lfdr probability to pass
   ``p_boundary``. The plain variants only require it to exceed the date's
   prior (``1 - p0``, floored at ``min_prior``), so smoothing cannot grow
@@ -19,7 +25,8 @@ D2), ``_spatial`` (D5, D5s, D6, D6s) and ``apply_mmu`` onto
 Every date ``t`` gets its own empirical null with ``seed = t``. Dates with
 fewer than ``min_fit_cells`` monitored valid cells are skipped.
 
-Inputs: quantized z and the monitored mask, ``(T, rows, cols)``.
+Inputs: quantized z and the monitored mask, ``(T, rows, cols)``, plus the
+two-step z stacks for D7 and D7s.
 Outputs: :class:`DecisionResult` with onset indices before and after the MMU.
 """
 
@@ -50,6 +57,8 @@ ONSET_YEAR_UNMONITORED = -1
 SKIPPED_METHOD = "skipped"
 #: 8-connected structuring element for objects.
 EIGHT_CONNECTED = np.ones((3, 3), dtype=bool)
+#: Rules that need the two-step (bracket) z stacks.
+BRACKET_RULES: tuple[str, ...] = ("D7", "D7s")
 
 
 @dataclass(frozen=True)
@@ -83,15 +92,17 @@ class DecisionResult:
     """Outcome of one decision rule on a z stack.
 
     Attributes:
-        rule: Rule name (``D1``, ``D2``, ``D5``, ``D5s``, ``D6``, ``D6s``).
+        rule: Rule name (``D1``, ``D2``, ``D5``, ``D5s``, ``D6``, ``D6s``,
+            ``D7``, ``D7s``).
         onset_index: int8 ``(rows, cols)``, index ``t`` of the first date with
             a detection, :data:`NO_ONSET` (-1) where none. Before the MMU.
         onset_index_mmu: int8 ``(rows, cols)``, ``onset_index`` with objects
             smaller than ``mmu.mmu_ha`` set to -1.
         probability: float32 ``(T, rows, cols)`` decision probability (D2:
             lfdr posterior, D5/D5s: spatial loss probability, D6/D6s: with
-            persistence). NaN where a date was skipped or the cell is not
-            monitored on that date (index 0 is all NaN). None for D1.
+            persistence, D7/D7s: minimum over the bracket checks). NaN
+            where a date was skipped or the cell is not monitored on that
+            date (index 0 is all NaN). None for D1.
         fits: One :class:`DateFit` per date, length ``T``.
     """
 
@@ -128,6 +139,8 @@ def fit_date_models(
     monitored: np.ndarray,
     params: DisturbanceConfig,
     years: Sequence[int],
+    *,
+    warn_skipped: bool = True,
 ) -> tuple[list[LfdrModel | None], list[DateFit]]:
     """Fit the empirical null and lfdr curve of every date.
 
@@ -140,6 +153,9 @@ def fit_date_models(
         monitored: bool ``(T, rows, cols)``.
         params: Run parameters.
         years: NAIP years, length ``T``.
+        warn_skipped: Log a warning for each skipped date after index 0.
+            The bracket stacks turn it off, since their undefined dates are
+            expected.
 
     Returns:
         ``(models, fits)``: one model per date (None when skipped) and one
@@ -164,7 +180,7 @@ def fit_date_models(
             models.append(None)
             date_fit = skipped_fit(int(year), n_cells)
             fits.append(date_fit)
-            if date_index > 0:
+            if warn_skipped and date_index > 0:
                 logger.warning(
                     "Skipping %s: %d monitored cells < %d",
                     year,
@@ -417,6 +433,127 @@ def rule_spatial(
     return flags, probability
 
 
+def check_probability(
+    check_z: np.ndarray,
+    monitored: np.ndarray,
+    params: DisturbanceConfig,
+    cell_m: float,
+    years: Sequence[int],
+) -> np.ndarray:
+    """D5 probability of one bracket z stack, NaN where the check is undefined.
+
+    The stack gets its own per-date null and lfdr fits
+    (:func:`fit_date_models`, same seeds and ``min_fit_cells``) and its own
+    :func:`spatial_loss_probability`. Skipped dates, unmonitored cells and
+    cells with NaN z become NaN, so they drop out of the minimum in
+    :func:`bracketed_probability`.
+
+    Args:
+        check_z: float32 ``(T, rows, cols)`` quantized back or forward z.
+        monitored: bool ``(T, rows, cols)``.
+        params: Run parameters.
+        cell_m: Cell side (m).
+        years: NAIP years, length ``T``.
+
+    Returns:
+        float32 ``(T, rows, cols)`` in [0, 1] or NaN.
+    """
+    models, _ = fit_date_models(check_z, monitored, params, years, warn_skipped=False)
+    probability = spatial_loss_probability(check_z, monitored, models, params, cell_m)
+    finite = np.isfinite(check_z)
+    available = monitored & finite
+    for date_index, model in enumerate(models):
+        if model is None:
+            available[date_index] = False
+    probability[~available] = np.nan
+    return probability
+
+
+def bracketed_probability(
+    z: np.ndarray,
+    monitored: np.ndarray,
+    models: Sequence[LfdrModel | None],
+    bracket_z: tuple[np.ndarray, np.ndarray],
+    params: DisturbanceConfig,
+    cell_m: float,
+    years: Sequence[int],
+) -> np.ndarray:
+    """D7 probability: the smallest D5 probability over the bracket checks.
+
+    ``out[t] = min(P_main[t], P_back[t], P_forward[t])`` where each term is
+    the D5 spatial loss probability of its own z stack. Back and forward
+    terms that are NaN (see :func:`check_probability`) are left out, so the
+    last date uses the back check only and the first date the forward check
+    only.
+
+    Args:
+        z: float32 ``(T, rows, cols)`` one-step z.
+        monitored: bool ``(T, rows, cols)``.
+        models: From :func:`fit_date_models` on ``z``.
+        bracket_z: ``(back_z, forward_z)`` from
+            :func:`csdv_core.disturbance.standardize.standardize_brackets`.
+        params: Run parameters.
+        cell_m: Cell side (m).
+        years: NAIP years, length ``T``.
+
+    Returns:
+        float32 ``(T, rows, cols)`` in [0, 1].
+
+    Raises:
+        ValueError: If a bracket stack differs in shape from ``z``.
+    """
+    back_z, forward_z = bracket_z
+    if back_z.shape != z.shape or forward_z.shape != z.shape:
+        raise ValueError(
+            f"bracket z {back_z.shape}, {forward_z.shape} differ from z {z.shape}"
+        )
+    main_probability = spatial_loss_probability(z, monitored, models, params, cell_m)
+    back_probability = check_probability(back_z, monitored, params, cell_m, years)
+    forward_probability = check_probability(forward_z, monitored, params, cell_m, years)
+    with_back = np.fmin(main_probability, back_probability)
+    probability = np.fmin(with_back, forward_probability)
+    return probability.astype("float32")
+
+
+def rule_bracketed(
+    z: np.ndarray,
+    monitored: np.ndarray,
+    models: Sequence[LfdrModel | None],
+    bracket_z: tuple[np.ndarray, np.ndarray],
+    params: DisturbanceConfig,
+    cell_m: float,
+    years: Sequence[int],
+    *,
+    strict: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    """D7 and D7s flags.
+
+    ``flags = monitored & cell_lean_mask(strict) & (probability >
+    decide.p_boundary)`` with probability from :func:`bracketed_probability`.
+    The cell test uses the one-step z, as in D5 and D5s.
+
+    Args:
+        z: float32 ``(T, rows, cols)`` one-step z.
+        monitored: bool ``(T, rows, cols)``.
+        models: From :func:`fit_date_models` on ``z``.
+        bracket_z: ``(back_z, forward_z)``.
+        params: Run parameters.
+        cell_m: Cell side (m).
+        years: NAIP years, length ``T``.
+        strict: The ``s`` variant.
+
+    Returns:
+        ``(flags, probability)``: bool and float32 ``(T, rows, cols)``.
+    """
+    probability = bracketed_probability(
+        z, monitored, models, bracket_z, params, cell_m, years
+    )
+    lean = cell_lean_mask(z, models, params, strict=strict)
+    supported = probability > params.decide.p_boundary
+    flags = monitored & lean & supported
+    return flags, probability
+
+
 def first_onset(flags: np.ndarray) -> np.ndarray:
     """Index of the first flagged date per cell.
 
@@ -496,6 +633,7 @@ def decide(
     cell_m: float,
     *,
     years: Sequence[int],
+    bracket_z: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> DecisionResult:
     """Run the configured rule (``decide.rule``), onset and MMU.
 
@@ -510,14 +648,20 @@ def decide(
         params: Run parameters (``decide`` and ``mmu`` sections).
         cell_m: Cell side (m).
         years: NAIP years, length ``T`` (labels the fits).
+        bracket_z: ``(back_z, forward_z)`` two-step z stacks from
+            :func:`csdv_core.disturbance.standardize.standardize_brackets`.
+            Required for D7 and D7s, ignored by the other rules.
 
     Returns:
         The decision result.
 
     Raises:
-        ValueError: If shapes or lengths disagree, or the rule is unknown.
+        ValueError: If shapes or lengths disagree, the rule is unknown, or a
+            rule in :data:`BRACKET_RULES` gets no ``bracket_z``.
     """
     rule = params.decide.rule
+    if rule in BRACKET_RULES and bracket_z is None:
+        raise ValueError(f"Rule {rule} needs bracket_z (the two-step z stacks)")
     models, fits = fit_date_models(z, monitored, params, years)
     probability: np.ndarray | None = None
     if rule == "D1":
@@ -532,6 +676,17 @@ def decide(
             params,
             cell_m,
             persistence=rule.startswith("D6"),
+            strict=rule.endswith("s"),
+        )
+    elif rule in BRACKET_RULES:
+        flags, probability = rule_bracketed(
+            z,
+            monitored,
+            models,
+            bracket_z,
+            params,
+            cell_m,
+            years,
             strict=rule.endswith("s"),
         )
     else:
@@ -585,13 +740,16 @@ def onset_index_to_year(
 
 
 __all__ = [
+    "BRACKET_RULES",
     "NO_ONSET",
     "ONSET_YEAR_NONE",
     "ONSET_YEAR_UNMONITORED",
     "DateFit",
     "DecisionResult",
     "apply_mmu",
+    "bracketed_probability",
     "cell_lean_mask",
+    "check_probability",
     "decide",
     "first_onset",
     "fit_date_models",
@@ -599,6 +757,7 @@ __all__ = [
     "onset_index_to_year",
     "persistence_probability",
     "rule_d1",
+    "rule_bracketed",
     "rule_d2",
     "rule_spatial",
     "skipped_fit",

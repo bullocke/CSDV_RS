@@ -374,6 +374,48 @@ def test_from_run_rejects_changed_window(project: dict[str, Path]) -> None:
     assert not second_dir.exists()
 
 
+def test_from_run_rule_d7(project: dict[str, Path]) -> None:
+    """A D6 run re-decided as D7 without refinement keeps the persistent clearcut."""
+    config_path = project["config"]
+    first_dir = project["results"] / "d6"
+    first = _detect(config_path, "--no-figures", "--output-dir", str(first_dir))
+    assert first.exit_code == 0, first.output
+    d7_dir = project["results"] / "d7"
+    arguments = [
+        "detect-disturbance",
+        "--site",
+        SITE,
+        "--config",
+        str(config_path),
+        "--from-run",
+        str(first_dir),
+        "--rule",
+        "D7",
+        "--no-refine",
+        "--no-figures",
+        "--output-dir",
+        str(d7_dir),
+    ]
+    runner = CliRunner()
+    result = runner.invoke(main, arguments, catch_exceptions=False)
+    assert result.exit_code == 0, result.output
+    for suffix in ("back2", "fwd2"):
+        bracket_path = d7_dir / "z" / f"z_d_chm_h_local_twopass_30m_{suffix}.tif"
+        assert bracket_path.is_file(), suffix
+    onset_year, transform = _read_band(d7_dir / "detection" / "onset_year.tif")
+    clearcut_onsets = _clearcut_cells(onset_year, transform)
+    clearcut_share = float(np.mean(clearcut_onsets == CLEARCUT_YEAR))
+    assert clearcut_share > 0.8
+    gpkg_path = d7_dir / "detection" / "disturbances.gpkg"
+    objects = gpd.read_file(gpkg_path, layer="objects")
+    assert "follow_up" in objects.columns
+    clearcut_objects = objects[objects["onset_year"] == CLEARCUT_YEAR]
+    assert clearcut_objects["follow_up"].all()
+    summary_text = (d7_dir / "summary.json").read_text(encoding="utf-8")
+    summary = json.loads(summary_text)
+    assert summary["rule"] == "D7"
+
+
 def _write_naip(data_root: Path) -> None:
     """Write a 4-band uint8 NAIP image per year, shaded by the canopy height.
 

@@ -5,6 +5,7 @@ A run folder holds::
     run_params.json  detect_disturbance.log  summary.json  report.md
     layers/      chm_height.tif chm_cover.tif valid_share.tif [ndvi.tif] forest.tif
     z/           z_<input>_<method>[_<window>m].tif
+                 [z_..._back2.tif z_..._fwd2.tif]  (rules D7 and D7s)
     detection/   onset_year.tif onset_year_nommu.tif probability.tif
                  disturbances.gpkg objects.csv
     figures/     *.png
@@ -68,6 +69,10 @@ FLOAT_PREDICTOR = 3
 INTEGER_PREDICTOR = 2
 #: Optional layer file, present only for runs that computed NDVI.
 OPTIONAL_LAYER_NAME = "ndvi"
+#: File name suffix of the back two-step z stack (rules D7 and D7s).
+BACK_Z_SUFFIX = "back2"
+#: File name suffix of the forward two-step z stack (rules D7 and D7s).
+FORWARD_Z_SUFFIX = "fwd2"
 
 
 @dataclass(frozen=True)
@@ -142,6 +147,21 @@ class RunPaths:
         )
         return self.z_dir / filename
 
+    def bracket_z_paths(self, params: DisturbanceConfig) -> tuple[Path, Path]:
+        """Back and forward two-step z files of rules D7 and D7s.
+
+        Args:
+            params: Run parameters (input and method name the files).
+
+        Returns:
+            ``(back, forward)``: :meth:`z_path` with ``_back2`` and ``_fwd2``
+            added before the suffix.
+        """
+        main_path = self.z_path(params)
+        back_path = self.z_dir / f"{main_path.stem}_{BACK_Z_SUFFIX}.tif"
+        forward_path = self.z_dir / f"{main_path.stem}_{FORWARD_Z_SUFFIX}.tif"
+        return back_path, forward_path
+
 
 @dataclass(frozen=True)
 class YearStack:
@@ -169,6 +189,8 @@ class SavedRun:
         layers: Cell layers from ``layers/``.
         z: float32 ``(T, rows, cols)`` decoded z (already quantized).
         years: NAIP years, length ``T``.
+        bracket_z: Decoded ``(back, forward)`` two-step z stacks when both
+            files exist (runs with rule D7 or D7s), else None.
     """
 
     run_paths: RunPaths
@@ -178,6 +200,7 @@ class SavedRun:
     layers: CellLayers
     z: np.ndarray
     years: tuple[int, ...]
+    bracket_z: tuple[np.ndarray, np.ndarray] | None = None
 
 
 def z_filename(input_name: str, method: str, window_m: float) -> str:
@@ -619,6 +642,36 @@ def read_run_params(run_dir: Path) -> dict[str, Any]:
     return json.loads(text)
 
 
+def read_bracket_z(
+    run_paths: RunPaths, params: DisturbanceConfig, years: Sequence[int]
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Read the two-step z stacks of a run when both files exist.
+
+    Args:
+        run_paths: Paths of the run.
+        params: Parameters of the run.
+        years: Layer years the stacks must match.
+
+    Returns:
+        Decoded ``(back, forward)`` z stacks, or None when a file is missing.
+
+    Raises:
+        ValueError: If a stack's years differ from ``years``.
+    """
+    back_path, forward_path = run_paths.bracket_z_paths(params)
+    if not (back_path.is_file() and forward_path.is_file()):
+        return None
+    back_stack = read_z(back_path)
+    forward_stack = read_z(forward_path)
+    expected_years = tuple(years)
+    for stack, path in ((back_stack, back_path), (forward_stack, forward_path)):
+        if stack.years != expected_years:
+            raise ValueError(
+                f"{path} years {stack.years} differ from layer years {expected_years}"
+            )
+    return back_stack.values, forward_stack.values
+
+
 def load_run(run_dir: Path) -> SavedRun:
     """Reload a run folder's parameters, grid, layers and z.
 
@@ -626,7 +679,9 @@ def load_run(run_dir: Path) -> SavedRun:
         run_dir: Run folder.
 
     Returns:
-        The saved run, with z located by :meth:`RunPaths.z_path`.
+        The saved run, with z located by :meth:`RunPaths.z_path` and the
+        two-step z stacks by :meth:`RunPaths.bracket_z_paths` (None when
+        absent).
 
     Raises:
         FileNotFoundError: If ``run_dir``, ``run_params.json``, a layer file or
@@ -651,6 +706,7 @@ def load_run(run_dir: Path) -> SavedRun:
         raise ValueError(
             f"z years {z_stack.years} differ from layer years {layers.years}"
         )
+    bracket_z = read_bracket_z(run_paths, params, layers.years)
     logger.info("Loaded saved run %s (%d years)", run_dir, len(layers.years))
     return SavedRun(
         run_paths=run_paths,
@@ -660,10 +716,13 @@ def load_run(run_dir: Path) -> SavedRun:
         layers=layers,
         z=z_stack.values,
         years=layers.years,
+        bracket_z=bracket_z,
     )
 
 
 __all__ = [
+    "BACK_Z_SUFFIX",
+    "FORWARD_Z_SUFFIX",
     "OBJECTS_LAYER",
     "REFINED_OPENINGS_LAYER",
     "REFINED_OUTLINES_LAYER",
@@ -672,6 +731,7 @@ __all__ = [
     "YearStack",
     "claim_output_dir",
     "load_run",
+    "read_bracket_z",
     "read_layers",
     "read_run_params",
     "read_year_stack",

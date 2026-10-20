@@ -48,6 +48,9 @@ RULE_LABELS: dict[str, str] = {
     "D5s": "spatial support with a strict cell test",
     "D6": "spatial support and persistence",
     "D6s": "spatial support and persistence with a strict cell test",
+    "D7": "spatial support bracketed by the images before and after",
+    "D7s": "spatial support bracketed by the images before and after with a "
+    "strict cell test",
 }
 
 

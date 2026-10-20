@@ -187,6 +187,43 @@ def standardize_stack(
     return z
 
 
+def standardize_brackets(
+    back_change: np.ndarray,
+    forward_change: np.ndarray,
+    population: np.ndarray,
+    params: DisturbanceConfig,
+    cell_m: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Standardize and quantize the two-step change stacks of rules D7 and D7s.
+
+    Each stack goes through :func:`standardize_stack` with the same method,
+    window and population as the one-step change (``population[t]``, forest
+    at ``t - 1``), then :func:`quantize_z`, so it is treated exactly like the
+    main z.
+
+    Args:
+        back_change: float32 ``(T, rows, cols)`` back change from
+            :func:`csdv_core.disturbance.layers.bracket_changes`.
+        forward_change: float32 ``(T, rows, cols)`` forward change.
+        population: bool ``(T, rows, cols)`` from
+            :func:`csdv_core.disturbance.layers.population_mask`.
+        params: Run parameters.
+        cell_m: Cell side (m).
+
+    Returns:
+        ``(back_z, forward_z)``, quantized float32 ``(T, rows, cols)``, NaN on
+        dates where the two-step change is undefined.
+
+    Raises:
+        ValueError: If a stack and the population differ in shape.
+    """
+    back_unrounded = standardize_stack(back_change, population, params, cell_m)
+    forward_unrounded = standardize_stack(forward_change, population, params, cell_m)
+    back_z = quantize_z(back_unrounded)
+    forward_z = quantize_z(forward_unrounded)
+    return back_z, forward_z
+
+
 def encode_z(z: np.ndarray) -> np.ndarray:
     """Encode z as stored: ``int16(clip(round(z * 100), -32767, 32767))``.
 
@@ -243,6 +280,7 @@ __all__ = [
     "encode_z",
     "quantize_z",
     "sigmas_in_cells",
+    "standardize_brackets",
     "standardize_date",
     "standardize_stack",
     "window_cells",

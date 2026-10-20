@@ -7,7 +7,7 @@
 2. ``inputs``: discover years and build the common grid.
 3. ``layers``: cell layers, written to ``layers/``.
 4. ``standardize``: change layer, population, z stack (quantized), written to
-   ``z/``.
+   ``z/``. Rules D7 and D7s also write the two-step z stacks.
 5. ``decide``: rule, onset and MMU.
 6. ``outlines``: objects (and refinement), then the detection rasters, the
    GeoPackage and the CSV.
@@ -185,7 +185,14 @@ def _run_stages(
     )
     monitored = monitored_mask(prepared.layers.forest)
     with timer.stage("decide"):
-        decision = decide(prepared.z, monitored, params, grid.cell_m, years=years)
+        decision = decide(
+            prepared.z,
+            monitored,
+            params,
+            grid.cell_m,
+            years=years,
+            bracket_z=prepared.bracket_z,
+        )
         onset_year = onset_index_to_year(decision.onset_index_mmu, years, monitored)
         onset_year_nommu = onset_index_to_year(decision.onset_index, years, monitored)
     with timer.stage("outlines"):

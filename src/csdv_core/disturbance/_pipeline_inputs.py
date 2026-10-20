@@ -4,7 +4,9 @@ Private helpers of :mod:`csdv_core.disturbance.pipeline`. A fresh run
 discovers the site files, builds the cell layers and standardizes the change
 layer. A ``--from-run`` rerun reloads the saved layers and z instead, copies
 them into the new folder, and discovers the source files (metadata only) when
-refinement or a NAIP backdrop needs them.
+refinement or a NAIP backdrop needs them. Rules D7 and D7s also get the
+two-step z stacks, standardized from the layers (or reloaded when the source
+run saved them).
 
 Inputs: run parameters and folders. Outputs: :class:`PreparedStacks`, with
 layers and z written to the new run folder.
@@ -21,9 +23,11 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from csdv_core.config._models import DisturbanceConfig
+from csdv_core.disturbance.decide import BRACKET_RULES
 from csdv_core.disturbance.inputs import CellGrid, SiteInputs, discover_site_inputs
 from csdv_core.disturbance.layers import (
     CellLayers,
+    bracket_changes,
     build_cell_layers,
     change_layer,
     population_mask,
@@ -34,7 +38,11 @@ from csdv_core.disturbance.report import (
     input_inventory,
     read_summary_json,
 )
-from csdv_core.disturbance.standardize import quantize_z, standardize_stack
+from csdv_core.disturbance.standardize import (
+    quantize_z,
+    standardize_brackets,
+    standardize_stack,
+)
 from csdv_core.disturbance.store import RunPaths, load_run, write_layers, write_z
 
 if TYPE_CHECKING:
@@ -57,6 +65,8 @@ class PreparedStacks:
         site_inputs: Discovered inputs, or None when a ``--from-run`` rerun
             needs no source file.
         inventory: Input inventory for the report.
+        bracket_z: Quantized ``(back, forward)`` two-step z stacks for rules
+            D7 and D7s, else None.
     """
 
     grid: CellGrid
@@ -64,6 +74,47 @@ class PreparedStacks:
     z: np.ndarray
     site_inputs: SiteInputs | None
     inventory: list[InputFileInfo]
+    bracket_z: tuple[np.ndarray, np.ndarray] | None = None
+
+
+def bracket_z_stacks(
+    layers: CellLayers, params: DisturbanceConfig, cell_m: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Two-step z stacks of rules D7 and D7s, computed from the cell layers.
+
+    Args:
+        layers: Cell layers.
+        params: Run parameters.
+        cell_m: Cell side (m).
+
+    Returns:
+        Quantized ``(back_z, forward_z)``, float32 ``(T, rows, cols)``.
+    """
+    back_change, forward_change = bracket_changes(layers, params.inputs.input)
+    population = population_mask(layers.forest)
+    return standardize_brackets(back_change, forward_change, population, params, cell_m)
+
+
+def write_bracket_z(
+    run_paths: RunPaths,
+    params: DisturbanceConfig,
+    bracket_z: tuple[np.ndarray, np.ndarray],
+    grid: CellGrid,
+    years: tuple[int, ...],
+) -> None:
+    """Write the two-step z stacks to ``z/`` (same encoding as the main z).
+
+    Args:
+        run_paths: Paths of the run.
+        params: Run parameters (name the files).
+        bracket_z: ``(back_z, forward_z)``.
+        grid: Common grid.
+        years: NAIP years.
+    """
+    back_z, forward_z = bracket_z
+    back_path, forward_path = run_paths.bracket_z_paths(params)
+    write_z(back_path, back_z, grid, years)
+    write_z(forward_path, forward_z, grid, years)
 
 
 def discover_with_saved_grid(
@@ -147,8 +198,17 @@ def prepare_fresh(
         z = quantize_z(z_unrounded)
         z_path = run_paths.z_path(params)
         write_z(z_path, z, grid, layers.years)
+        bracket_z = None
+        if params.decide.rule in BRACKET_RULES:
+            bracket_z = bracket_z_stacks(layers, params, grid.cell_m)
+            write_bracket_z(run_paths, params, bracket_z, grid, layers.years)
     return PreparedStacks(
-        grid=grid, layers=layers, z=z, site_inputs=site_inputs, inventory=inventory
+        grid=grid,
+        layers=layers,
+        z=z,
+        site_inputs=site_inputs,
+        inventory=inventory,
+        bracket_z=bracket_z,
     )
 
 
@@ -163,7 +223,9 @@ def prepare_from_run(
 
     The saved layers and z are copied into the new folder so it is complete
     on its own. The source files are discovered only when refinement or a
-    NAIP backdrop needs them.
+    NAIP backdrop needs them. Rules D7 and D7s reuse the saved two-step z
+    stacks, or compute them from the saved layers when the source run has
+    none (for example a D6 run).
 
     Args:
         site: Site name (must equal the saved run's site).
@@ -196,19 +258,29 @@ def prepare_from_run(
         z_path = run_paths.z_path(params)
         write_z(z_path, saved.z, saved.grid, saved.years)
         logger.info("Reused layers and z of %s", from_run)
+        bracket_z = None
+        if params.decide.rule in BRACKET_RULES:
+            bracket_z = saved.bracket_z
+            if bracket_z is None:
+                logger.info("Computing the two-step z stacks from the saved layers")
+                bracket_z = bracket_z_stacks(saved.layers, params, saved.grid.cell_m)
+            write_bracket_z(run_paths, params, bracket_z, saved.grid, saved.years)
     return PreparedStacks(
         grid=saved.grid,
         layers=saved.layers,
         z=saved.z,
         site_inputs=site_inputs,
         inventory=inventory,
+        bracket_z=bracket_z,
     )
 
 
 __all__ = [
     "NAIP_INPUT",
     "PreparedStacks",
+    "bracket_z_stacks",
     "discover_with_saved_grid",
     "prepare_fresh",
     "prepare_from_run",
+    "write_bracket_z",
 ]

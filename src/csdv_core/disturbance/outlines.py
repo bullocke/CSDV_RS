@@ -52,6 +52,7 @@ OBJECT_COLUMNS: tuple[str, ...] = (
     "mean_prob",
     "max_prob",
     "mean_z",
+    "follow_up",
     "geometry",
 )
 #: Columns of the refined outlines GeoDataFrame, in order (geometry last).
@@ -229,8 +230,9 @@ def detection_objects(
     from 1 in order of onset index, then label. For an object at onset index
     ``t``: ``onset_year = years[t]``, ``year_before = years[t - 1]``,
     ``area_ha = n_cells * grid.cell_ha``, ``mean_prob`` / ``max_prob`` over
-    ``probability[t]`` (NaN when ``probability`` is None) and ``mean_z`` over
-    ``z[t]`` (NaN cells ignored).
+    ``probability[t]`` (NaN when ``probability`` is None), ``mean_z`` over
+    ``z[t]`` (NaN cells ignored) and ``follow_up = t < T - 1`` (a later image
+    exists to confirm that the loss persists).
 
     Args:
         onset_index: int8 ``(rows, cols)``, -1 = none (after the MMU).
@@ -258,6 +260,7 @@ def detection_objects(
         z_date = z[date_index]
         onset_year = int(years[date_index])
         year_before = int(years[date_index - 1])
+        has_follow_up = date_index < len(years) - 1
         for label in range(1, n_labels + 1):
             object_mask = labels == label
             n_cells = int(cell_counts[label])
@@ -274,6 +277,7 @@ def detection_objects(
                     "mean_prob": _masked_stat(probability_date, object_mask, np.mean),
                     "max_prob": _masked_stat(probability_date, object_mask, np.max),
                     "mean_z": _masked_stat(z_date, object_mask, np.mean),
+                    "follow_up": has_follow_up,
                     "geometry": geometry_by_label[label],
                 }
             )

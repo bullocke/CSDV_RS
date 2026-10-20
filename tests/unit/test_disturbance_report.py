@@ -106,7 +106,15 @@ def _summary(tmp_path: Path, grid: CellGrid) -> tuple[RunSummary, RunPaths]:
     left, _, _, top = grid.bounds
     polygon = box(left + 19.2, top - 76.8, left + 57.6, top - 38.4)
     objects = gpd.GeoDataFrame(
-        pd.DataFrame({"object_id": [1], "onset_index": [1], "onset_year": [2013]}),
+        pd.DataFrame(
+            {
+                "object_id": [1],
+                "onset_index": [1],
+                "onset_year": [2013],
+                "area_ha": [0.147456],
+                "follow_up": [True],
+            }
+        ),
         geometry=[polygon],
         crs=grid.crs,
     )
@@ -189,6 +197,10 @@ def test_build_summary_areas(tmp_path: Path, grid: CellGrid) -> None:
     assert summary.skipped_years == [2015]
     assert summary.detected_ha == pytest.approx(4 * cell_ha)
     assert summary.outputs["run_params"] == "run_params.json"
+    follow_up_lines = [text for text in summary.caveats if "follow-up" in text]
+    assert follow_up_lines[0].startswith("0 of 1 objects")
+    season_lines = [text for text in summary.caveats if "days of season" in text]
+    assert season_lines == []
 
 
 def test_summary_json_round_trip(tmp_path: Path, grid: CellGrid) -> None:

@@ -231,7 +231,8 @@ def _unit_title(sample: pd.Series) -> str:
         sample: One row of the sample table.
 
     Returns:
-        Sample id, stratum, interval, area, probability and location.
+        Sample id, stratum, interval, area, probability, location and, when
+        the sample has a False ``follow_up`` value, "no follow-up image".
     """
     parts = [
         str(sample["sample_id"]),
@@ -244,6 +245,9 @@ def _unit_title(sample: pd.Series) -> str:
     if pd.notna(sample["object_id"]):
         parts.append(f"object {int(sample['object_id'])}")
     parts.append(f"{sample['centroid_lat']:.5f}, {sample['centroid_lon']:.5f}")
+    follow_up = sample.get("follow_up")
+    if follow_up is not None and pd.notna(follow_up) and not follow_up:
+        parts.append("no follow-up image")
     return "  |  ".join(parts)
 
 
@@ -300,8 +304,9 @@ def plot_sample_chips(
     unless ``show_chm`` is off) centred on the unit. The right column holds
     the run's onset map (top) and the decision probability of the unit's
     interval (middle) over a wider area, with the chip extent boxed. The
-    bottom row holds the DI and the cell mean CHM height of the unit's cells
-    as median lines with percentile bands.
+    bottom row holds the DI tested by the run's rule (with each date's
+    decision cutoff) and the cell mean CHM height of the unit's cells as
+    median lines with percentile bands.
 
     Args:
         sample: One row of the sample table, with ``geometry``.
