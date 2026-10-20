@@ -26,6 +26,7 @@ Array conventions used throughout: a year stack has shape `(T, rows, cols)` with
 | `_pipeline_inputs`, `_pipeline_figures` | Private helpers of `pipeline`: preparing layers and z (fresh or from a saved run), and the figure stage and figure rebuild |
 | `sampling` | Stratified inspection sample of a run: detected objects by interval, near misses below the MMU, never-flagged forest cells |
 | `chips` | NAIP RGB and CHM chips of an inspection sample, contact sheet, `samples.csv` and `index.md` |
+| `_chip_panels` | Private drawing code of `chips`: `RunRasters`/`load_run_rasters`, `cells_in_polygon`, `context_bounds`, the onset and probability context maps, and the percentile time series |
 | `cli` | Click commands `detect-disturbance`, `disturbance-figures` and `disturbance-chips` |
 
 ## `params`
@@ -267,12 +268,12 @@ All functions use the Agg backend, take explicit arrays and return the written p
 
 | Name | Purpose |
 |---|---|
-| `ChipSettings(pad_m=40.0, min_chip_m=150.0, show_chm=True, dpi=150)` | Chip size and look |
+| `ChipSettings(pad_m=40.0, min_chip_m=150.0, show_chm=True, context_factor=4.0, min_context_m=600.0, dpi=150)` | Chip size, context map size and look |
 | `InspectionResult` | Paths written: `output_dir`, `samples`, `table_path`, `vector_path`, `chip_paths`, `contact_sheet`, `index_path` |
 | `DEFAULT_FOLDER_NAME` | `"inspection"`, inside the run folder |
 | `chip_bounds(geometry, settings) -> tuple` | Square bounds around a unit, at least `min_chip_m` wide |
 | `read_rgb_chip(site_inputs, year, bounds) -> (rgb, extent)` | NAIP bands 1 to 3 on the run grid, stretched for display |
-| `plot_sample_chips(sample, site_inputs, envelope, out_path, settings) -> Path` | RGB and CHM of every year for one unit |
+| `plot_sample_chips(sample, site_inputs, rasters, envelope, out_path, settings) -> Path` | RGB and CHM of every year for one unit, the onset and probability context maps, and the DI and CHM height series of the unit's cells |
 | `plot_contact_sheet(samples, site_inputs, out_path, settings) -> Path` | Before and after RGB of every unit |
 | `chip_filename(sample) -> str` | `<sample_id>_<stratum>_<interval>.png` |
 | `write_index_markdown(samples, run_dir, design, out_path) -> Path` | `index.md` with the contact sheet and chip links |

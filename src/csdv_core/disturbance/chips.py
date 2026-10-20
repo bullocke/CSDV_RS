@@ -40,8 +40,10 @@ import numpy as np
 import pandas as pd
 from shapely.geometry.base import BaseGeometry
 
+from csdv_core.disturbance import _chip_panels as chip_panels
 from csdv_core.disturbance import _figure_helpers as helpers
 from csdv_core.disturbance import windows
+from csdv_core.disturbance._chip_panels import RunRasters, load_run_rasters
 from csdv_core.disturbance._pipeline_inputs import discover_with_saved_grid
 from csdv_core.disturbance.inputs import SiteInputs
 from csdv_core.disturbance.sampling import (
@@ -73,6 +75,15 @@ BEFORE_FRAME_COLOR = ACCENT
 AFTER_FRAME_COLOR = HIGHLIGHT
 #: Width of each chip panel in inches.
 CHIP_PANEL_IN = 2.2
+#: Width of the gap column before the context maps, relative to a chip panel.
+SPACER_RATIO = 0.22
+#: Height of the time-series row, relative to a chip panel.
+SERIES_ROW_RATIO = 0.95
+#: Share of the year columns taken by the DI series (the height series
+#: takes the rest of the row).
+DI_SERIES_SHARE = 0.6
+#: Colour bar placement next to a panel, in axes fractions (x, y, w, h).
+COLORBAR_INSET: tuple[float, float, float, float] = (1.04, 0.0, 0.05, 1.0)
 #: Sample units per row of the contact sheet (two panels each).
 CONTACT_UNITS_PER_ROW = 4
 #: Percentile stretch applied to each RGB chip.
@@ -88,13 +99,17 @@ class ChipSettings:
     Attributes:
         pad_m: Margin around the unit on every side, in metres.
         min_chip_m: Smallest chip side, in metres.
-        show_chm: Draw the CHM row under the RGB row.
+        show_chm: Draw the CHM row (and the probability map) under the RGB row.
+        context_factor: Side of the context maps as a multiple of the chip side.
+        min_context_m: Smallest side of the context maps, in metres.
         dpi: Resolution of the PNG files.
     """
 
     pad_m: float = 40.0
     min_chip_m: float = 150.0
     show_chm: bool = True
+    context_factor: float = 4.0
+    min_context_m: float = 600.0
     dpi: int = 150
 
 
@@ -274,15 +289,24 @@ def _frame_color(year: int, sample: pd.Series) -> str | None:
 def plot_sample_chips(
     sample: pd.Series,
     site_inputs: SiteInputs,
+    rasters: RunRasters,
     envelope: BaseGeometry | None,
     out_path: Path,
     settings: ChipSettings,
 ) -> Path:
-    """Draw the RGB (and CHM) chips of every year for one sample unit.
+    """Draw the chips, context maps and time series of one sample unit.
+
+    Layout: the NAIP RGB of every year (top row) and the CHM (middle row,
+    unless ``show_chm`` is off) centred on the unit. The right column holds
+    the run's onset map (top) and the decision probability of the unit's
+    interval (middle) over a wider area, with the chip extent boxed. The
+    bottom row holds the DI and the cell mean CHM height of the unit's cells
+    as median lines with percentile bands.
 
     Args:
         sample: One row of the sample table, with ``geometry``.
         site_inputs: Inputs of the run, with NAIP paths.
+        rasters: Cell rasters of the run.
         envelope: Refined envelope of the object, or None.
         out_path: PNG path.
         settings: Chip settings.
@@ -292,17 +316,29 @@ def plot_sample_chips(
     """
     setup_style()
     years = site_inputs.year_list
-    n_rows = 2 if settings.show_chm else 1
-    n_cols = len(years)
-    figure_size = (CHIP_PANEL_IN * n_cols, CHIP_PANEL_IN * n_rows + 0.6)
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=figure_size, squeeze=False)
-    fig.subplots_adjust(hspace=0.12, wspace=0.06)
+    n_years = len(years)
+    n_image_rows = 2 if settings.show_chm else 1
+    width_ratios = [1.0] * n_years + [SPACER_RATIO, 1.0]
+    height_ratios = [1.0] * n_image_rows + [SERIES_ROW_RATIO]
+    n_grid_cols = len(width_ratios)
+    figure_width = CHIP_PANEL_IN * sum(width_ratios) + 0.8
+    figure_height = CHIP_PANEL_IN * sum(height_ratios) + 0.9
+    fig = plt.figure(figsize=(figure_width, figure_height))
+    grid_spec = fig.add_gridspec(
+        len(height_ratios),
+        n_grid_cols,
+        width_ratios=width_ratios,
+        height_ratios=height_ratios,
+        hspace=0.18,
+        wspace=0.06,
+    )
     geometry = sample["geometry"]
     bounds = chip_bounds(geometry, settings)
     chm_image = None
+    last_chm_ax = None
     for col, year in enumerate(years):
         frame_color = _frame_color(year, sample)
-        rgb_ax = axes[0, col]
+        rgb_ax = fig.add_subplot(grid_spec[0, col])
         rgb, rgb_extent = read_rgb_chip(site_inputs, year, bounds)
         rgb_ax.imshow(rgb, extent=rgb_extent, interpolation="nearest")
         _draw_outlines(rgb_ax, geometry, None)
@@ -312,9 +348,11 @@ def plot_sample_chips(
         title_weight = "normal" if frame_color is None else "bold"
         rgb_ax.set_title(title, fontsize=8, color=INK, fontweight=title_weight)
         _frame_panel(rgb_ax, frame_color)
+        if col == 0:
+            helpers.scale_bar(rgb_ax, bounds)
         if not settings.show_chm:
             continue
-        chm_ax = axes[1, col]
+        chm_ax = fig.add_subplot(grid_spec[1, col])
         chm, chm_transform = windows.read_chm_bounds(site_inputs, year, bounds)
         chm_extent = helpers.transform_extent(chm_transform, chm.shape)
         chm_image = chm_ax.imshow(
@@ -329,24 +367,46 @@ def plot_sample_chips(
         chm_ax.set_xlim(bounds[0], bounds[2])
         chm_ax.set_ylim(bounds[1], bounds[3])
         _frame_panel(chm_ax, frame_color)
-    helpers.scale_bar(axes[0, 0], bounds)
+        last_chm_ax = chm_ax
     if chm_image is not None:
-        last_chm_box = axes[1, -1].get_position()
-        colorbar_box = [
-            last_chm_box.x1 + 0.006,
-            last_chm_box.y0,
-            0.008,
-            last_chm_box.height,
-        ]
-        colorbar_ax = fig.add_axes(colorbar_box)
-        colorbar = fig.colorbar(chm_image, cax=colorbar_ax)
-        colorbar.set_label("CHM height (m)", fontsize=7)
-        colorbar.ax.tick_params(labelsize=7)
+        chm_colorbar_ax = last_chm_ax.inset_axes(COLORBAR_INSET)
+        chm_colorbar = fig.colorbar(chm_image, cax=chm_colorbar_ax)
+        chm_colorbar.set_label("CHM height (m)", fontsize=7)
+        chm_colorbar.ax.tick_params(labelsize=6)
+    context_col = n_grid_cols - 1
+    view = chip_panels.context_bounds(
+        bounds, settings.context_factor, settings.min_context_m
+    )
+    onset_ax = fig.add_subplot(grid_spec[0, context_col])
+    chip_panels.draw_onset_context(onset_ax, rasters, geometry, bounds, view)
+    onset_year = int(sample["onset_year"])
+    if settings.show_chm:
+        probability_ax = fig.add_subplot(grid_spec[1, context_col])
+        probability_image = chip_panels.draw_probability_context(
+            probability_ax, rasters, onset_year, geometry, bounds, view
+        )
+        probability_colorbar_ax = probability_ax.inset_axes(COLORBAR_INSET)
+        probability_colorbar = fig.colorbar(
+            probability_image, cax=probability_colorbar_ax
+        )
+        probability_colorbar.ax.tick_params(labelsize=6)
+    series_polygon = geometry if envelope is None else envelope
+    series_cells = chip_panels.cells_in_polygon(series_polygon, rasters.grid)
+    di_cols = int(np.ceil(n_years * DI_SERIES_SHARE))
+    di_ax = fig.add_subplot(grid_spec[-1, :di_cols])
+    chip_panels.draw_di_series(di_ax, rasters, series_cells, onset_year)
+    height_ax = fig.add_subplot(grid_spec[-1, di_cols + 1 :])
+    sample_years = (int(sample["year_before"]), onset_year)
+    chip_panels.draw_height_series(height_ax, rasters, series_cells, sample_years)
     unit_title = _unit_title(sample)
     fig.suptitle(unit_title, fontsize=9, color=INK)
+    series_source = "refined envelope" if envelope is not None else "detected cells"
     caption = (
         "Yellow: detected 19.2 m cells. Orange (CHM row): refined 0.6 m envelope. "
-        "Blue frame: image before the onset interval. Red frame: image after."
+        "Blue and red frames: images before and after the onset interval. "
+        "Right column: run maps over a wider area, dashed box = chip extent.\n"
+        f"Bottom: 19.2 m cells inside the {series_source}, median with 25-75 % "
+        "and 10-90 % bands, onset interval shaded."
     )
     fig.text(0.5, 0.005, caption, ha="center", fontsize=7, color=MUTED)
     return save_fig(fig, out_path, dpi=settings.dpi)
@@ -548,6 +608,7 @@ def make_inspection_chips(
         saved.site, saved.params, saved.grid, need_naip=True
     )
     envelopes = _envelopes_by_object(run_dir)
+    rasters = load_run_rasters(saved)
     chips_dir = output_dir / "chips"
     chip_paths = []
     for _, sample in samples.iterrows():
@@ -557,7 +618,7 @@ def make_inspection_chips(
             object_id = int(sample["object_id"])
             envelope = envelopes.get(object_id)
         chip_path = chips_dir / chip_filename(sample)
-        plot_sample_chips(sample, site_inputs, envelope, chip_path, settings)
+        plot_sample_chips(sample, site_inputs, rasters, envelope, chip_path, settings)
         chip_paths.append(chip_path)
     contact_sheet_path = output_dir / "contact_sheet.png"
     contact_sheet = plot_contact_sheet(

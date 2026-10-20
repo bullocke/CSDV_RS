@@ -58,3 +58,27 @@ def test_sample_objects_is_reproducible() -> None:
     assert list(first["object_id"]) == list(second["object_id"])
     interval_counts = first["interval"].value_counts().to_dict()
     assert interval_counts == {"2012-2014": 2, "2014-2016": 2}
+
+
+def test_cells_in_polygon_falls_back_to_touched_cells() -> None:
+    """Cell centres select cells, and a tiny polygon falls back to touched cells."""
+    from affine import Affine
+    from rasterio.crs import CRS
+
+    from csdv_core.disturbance._chip_panels import cells_in_polygon, context_bounds
+    from csdv_core.disturbance.inputs import CellGrid
+
+    grid = CellGrid(
+        crs=CRS.from_epsg(32617),
+        pixel_transform=Affine(0.6, 0.0, 0.0, 0.0, -0.6, 96.0),
+        pixel_m=0.6,
+        block_px=32,
+        cell_rows=5,
+        cell_cols=5,
+    )
+    two_cells = box(0.0, 76.8, 38.4, 96.0)
+    assert cells_in_polygon(two_cells, grid).sum() == 2
+    tiny = box(1.0, 90.0, 2.0, 91.0)
+    assert cells_in_polygon(tiny, grid).sum() == 1
+    view = context_bounds((0.0, 0.0, 100.0, 100.0), 4.0, 600.0)
+    assert view == (-250.0, -250.0, 350.0, 350.0)
