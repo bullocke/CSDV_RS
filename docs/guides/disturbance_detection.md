@@ -140,6 +140,41 @@ The figures follow the same order as the stages. `forest_initial.png` and `fores
 
 Remember that the last interval has no persistence check, so its detections are less certain than the others. The report lists this among its caveats.
 
+## Inspecting a run with image chips
+
+Before a formal accuracy assessment, a quick look at a sample of detections shows whether a run maps real canopy loss. `csdv disturbance-chips` draws a stratified sample from a run folder and renders one figure per sampled unit. Each figure has the NAIP RGB image (top row) and the CHM (bottom row) of every year, centred on the unit, with the detected 19.2 m cells outlined in yellow and, on the CHM row, the refined 0.6 m envelope in orange. The images before and after the onset interval carry blue and red frames. A contact sheet shows the before and after RGB pair of every unit on one page, which is usually enough for a first pass.
+
+The default sample has 24 detected objects and 4 near misses. Detected objects are stratified by NAIP interval: every interval gets at least two objects (or all of them when it has fewer), and the rest are shared out in proportion to the number of objects per interval. On LincolnNH (56 objects) the 24 objects split 2, 3, 7, 2 and 10 over the five intervals. Near misses are objects that the rule flagged but the minimum mapping unit removed, limited to objects of at least half the MMU, so they show what the MMU throws away. `--n-no-detection` adds single cells of monitored forest that were never flagged, which show what undisturbed forest looks like at the same scale. The sample is drawn with a fixed seed (`--seed`), so the same command gives the same sample.
+
+```bash
+# Locally, when the NAIP and CHM years are under CSDV_DATA_ROOT
+csdv disturbance-chips --run-dir results/disturbance/ElkinsvilleNE
+
+# On CHPC, where the NAIP mosaics live
+sbatch --output="$CSDV_LOG_DIR/%x-%j.out" \
+    scripts/slurm/run_disturbance_chips.sbatch "$CSDV_RESULTS_ROOT/disturbance/LincolnNH"
+
+# A larger sample with undisturbed cells and another seed, into a new folder
+csdv disturbance-chips --run-dir results/disturbance/LincolnNH \
+    --n-detected 40 --n-no-detection 6 --seed 1 \
+    --output-dir results/disturbance/LincolnNH/inspection_seed1
+
+# The sample table only, without reading any imagery
+csdv disturbance-chips --run-dir results/disturbance/LincolnNH --sample-only
+```
+
+The chips read the site's NAIP and CHM years under the current `CSDV_DATA_ROOT`, on the run's saved grid, so the run folder can be inspected on any machine that holds the source rasters. Only small windows around the sampled units are read, and the Slurm script therefore reads straight from the project store instead of staging the NAIP mosaics. On ElkinsvilleNE, 30 units took 53 s and under 1 GB of memory. The outputs go to `<run>/inspection/` by default, and as with detection runs an existing folder is never overwritten.
+
+| File | Contents |
+|---|---|
+| `samples.csv` | One row per unit: sample id, stratum, object id (blank for near misses and cells), interval, area, probability, mean z, centroid in map and geographic coordinates, chip path, and empty `interp_label` and `interp_notes` columns for your notes |
+| `samples.gpkg` | The same units with their polygons, for QGIS |
+| `chips/<id>_<stratum>_<interval>.png` | One figure per unit |
+| `contact_sheet.png` | Before and after RGB of every unit |
+| `index.md` | The contact sheet and a table linking every chip |
+
+NAIP is not atmospherically corrected and each chip is stretched on its own, so colour differences between years (a blue cast on hazy flights, for example) say nothing about the forest. Judge change by crown texture, gaps, bare soil and the CHM row.
+
 ## Drawing an interpretation sample
 
 The run does not score itself against reference data. The next step is an interpretation sample on NAIP and the CHM, and the outputs are laid out for that. `detection/objects.csv` lists every object with its onset interval, area, mean and maximum probability, mean z and centroid in both map and geographic coordinates, so detected objects can be stratified and sampled without GIS software. Omission needs samples where nothing was detected, and the probability raster gives those: monitored cells with no detection but a probability near the boundary are the most likely misses.

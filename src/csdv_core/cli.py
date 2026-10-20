@@ -98,15 +98,20 @@ def _attach_check() -> None:
 
 
 def _attach_disturbance() -> None:
-    """Attach ``detect-disturbance`` and ``disturbance-figures``.
+    """Attach the ``detect-disturbance``, ``disturbance-figures`` and ``disturbance-chips`` commands.
 
     The pipeline modules (rasterio, geopandas, matplotlib) are imported inside
     the command bodies, so attaching costs only the Click definitions.
     """
-    from csdv_core.disturbance.cli import detect_disturbance, disturbance_figures
+    from csdv_core.disturbance.cli import (
+        detect_disturbance,
+        disturbance_chips,
+        disturbance_figures,
+    )
 
     main.add_command(detect_disturbance, name="detect-disturbance")
     main.add_command(disturbance_figures, name="disturbance-figures")
+    main.add_command(disturbance_chips, name="disturbance-chips")
 
 
 # Attach now: imports are cheap (click + module-level imports only); heavy

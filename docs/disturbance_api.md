@@ -24,7 +24,9 @@ Array conventions used throughout: a year stack has shape `(T, rows, cols)` with
 | `_figure_maps`, `_figure_charts`, `_figure_helpers` | Private drawing code re-exported by `figures`: scene maps, charts (null fits, areas, refined examples), and layout, scale bar and shared constants |
 | `pipeline` | Stage order, timing, log file, `run_detection`, `rebuild_figures` |
 | `_pipeline_inputs`, `_pipeline_figures` | Private helpers of `pipeline`: preparing layers and z (fresh or from a saved run), and the figure stage and figure rebuild |
-| `cli` | Click commands `detect-disturbance` and `disturbance-figures` |
+| `sampling` | Stratified inspection sample of a run: detected objects by interval, near misses below the MMU, never-flagged forest cells |
+| `chips` | NAIP RGB and CHM chips of an inspection sample, contact sheet, `samples.csv` and `index.md` |
+| `cli` | Click commands `detect-disturbance`, `disturbance-figures` and `disturbance-chips` |
 
 ## `params`
 
@@ -247,6 +249,35 @@ All functions use the Agg backend, take explicit arrays and return the written p
 
 `run_detection` runs the stages in this order. Setup claims the folder, attaches the log and writes `run_params.json`. Inputs discovers years and builds the grid. Layers writes `layers/`. Standardize builds the change layer and the z stack and writes `z/`. Decide applies the rule, onset and MMU. Outlines builds the objects and refined outlines and writes the detection rasters, the GeoPackage and the CSV. Report writes `summary.json` and `report.md`. Figures writes the PNGs, and then `summary.json` and `report.md` are written again with the full stage times and the figure links. With `from_run`, the inputs stage reloads the saved layers and z (checked with `params.check_reuse_compatible`, and the site must match) and copies them into the new folder, and the layers and standardize stages do not run. When refinement or the NAIP backdrop is on, the site's files are discovered again (metadata only) and the saved grid is attached, so the source CHMs, and NAIP for a backdrop, must still be available. The input inventory comes from the saved `summary.json`. A failed run keeps its folder, and the exception and traceback go to its log.
 
+## `sampling`
+
+| Name | Purpose |
+|---|---|
+| `SampleDesign(n_detected=24, n_below_mmu=4, n_no_detection=0, min_per_interval=2, seed=0)` | Sample sizes and seed |
+| `STRATUM_DETECTED`, `STRATUM_BELOW_MMU`, `STRATUM_NO_DETECTION`, `STRATA` | Stratum names |
+| `NEAR_MISS_MMU_SHARE` | Smallest near miss drawn, as a share of the MMU (0.5) |
+| `SAMPLE_COLUMNS` | Columns of the sample table |
+| `allocate_by_stratum(counts, n_total, min_per_stratum) -> dict` | Floor per stratum, then the remainder by the D'Hondt rule, never more than a stratum holds |
+| `sample_objects(objects, n_samples, min_per_interval, rng) -> GeoDataFrame` | Objects drawn at random within intervals |
+| `below_mmu_objects(saved) -> GeoDataFrame` | Objects flagged by the rule but removed by the MMU |
+| `no_detection_cells(saved, n_samples, rng) -> GeoDataFrame` | Monitored forest cells never flagged, each with a random monitored interval |
+| `draw_samples(saved, design) -> GeoDataFrame` | The full sample with `SAMPLE_COLUMNS` and polygons, ids `S01`, `S02`, ... |
+
+## `chips`
+
+| Name | Purpose |
+|---|---|
+| `ChipSettings(pad_m=40.0, min_chip_m=150.0, show_chm=True, dpi=150)` | Chip size and look |
+| `InspectionResult` | Paths written: `output_dir`, `samples`, `table_path`, `vector_path`, `chip_paths`, `contact_sheet`, `index_path` |
+| `DEFAULT_FOLDER_NAME` | `"inspection"`, inside the run folder |
+| `chip_bounds(geometry, settings) -> tuple` | Square bounds around a unit, at least `min_chip_m` wide |
+| `read_rgb_chip(site_inputs, year, bounds) -> (rgb, extent)` | NAIP bands 1 to 3 on the run grid, stretched for display |
+| `plot_sample_chips(sample, site_inputs, envelope, out_path, settings) -> Path` | RGB and CHM of every year for one unit |
+| `plot_contact_sheet(samples, site_inputs, out_path, settings) -> Path` | Before and after RGB of every unit |
+| `chip_filename(sample) -> str` | `<sample_id>_<stratum>_<interval>.png` |
+| `write_index_markdown(samples, run_dir, design, out_path) -> Path` | `index.md` with the contact sheet and chip links |
+| `make_inspection_chips(run_dir, output_dir=None, *, design=None, settings=None, sample_only=False) -> InspectionResult` | Loads the run, claims the output folder (raises `FileExistsError` if it exists), draws the sample, writes the table and the chips |
+
 ## `cli`
 
 | Name | Purpose |
@@ -258,6 +289,7 @@ All functions use the Agg backend, take explicit arrays and return the written p
 | `configure_console_logging(level_name) -> int` | `logging.basicConfig` at the chosen level for terminal output |
 | `detect_disturbance` | The `csdv detect-disturbance` command |
 | `disturbance_figures` | The `csdv disturbance-figures` command (`--run-dir`, `--naip-backdrop/--no-naip-backdrop`, default: the saved run's setting, `--log-level`) |
+| `disturbance_chips` | The `csdv disturbance-chips` command (`--run-dir`, `--output-dir`, `--n-detected`, `--n-below-mmu`, `--n-no-detection`, `--min-per-interval`, `--seed`, `--pad-m`, `--min-chip-m`, `--chm/--no-chm`, `--sample-only`, `--log-level`) |
 
 `csdv detect-disturbance` options that are not parameters: `--site` (required), `--output-dir`, `--config`, `--from-run` and `--log-level` (DEBUG, INFO, WARNING, ERROR). With `--from-run`, the command reads the saved `run_params.json` and passes its `params` to `resolve_params(..., saved_params=...)`, so a contradicting option fails before any folder is created. An existing output folder is reported as an error that names `--output-dir`. The command echoes the run folder on stdout.
 

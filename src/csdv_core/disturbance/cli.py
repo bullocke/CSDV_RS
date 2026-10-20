@@ -275,12 +275,110 @@ def disturbance_figures(
     click.echo(str(run_dir))
 
 
+@click.command("disturbance-chips")
+@click.option(
+    "--run-dir",
+    required=True,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Run folder written by detect-disturbance.",
+)
+@click.option(
+    "--output-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="New folder for the chips (default <run-dir>/inspection).",
+)
+@click.option(
+    "--n-detected", type=int, default=24, show_default=True, help="Detected objects."
+)
+@click.option(
+    "--n-below-mmu",
+    type=int,
+    default=4,
+    show_default=True,
+    help="Near misses removed by the minimum mapping unit.",
+)
+@click.option(
+    "--n-no-detection",
+    type=int,
+    default=0,
+    show_default=True,
+    help="Monitored forest cells never flagged.",
+)
+@click.option(
+    "--min-per-interval",
+    type=int,
+    default=2,
+    show_default=True,
+    help="Minimum detected objects per NAIP interval.",
+)
+@click.option("--seed", type=int, default=0, show_default=True, help="Sample seed.")
+@click.option(
+    "--pad-m", type=float, default=40.0, show_default=True, help="Chip margin (m)."
+)
+@click.option(
+    "--min-chip-m",
+    type=float,
+    default=150.0,
+    show_default=True,
+    help="Smallest chip side (m).",
+)
+@click.option("--chm/--no-chm", default=True, help="Draw the CHM row under the RGB.")
+@click.option(
+    "--sample-only",
+    is_flag=True,
+    help="Write samples.csv and samples.gpkg only, without reading imagery.",
+)
+@click.option("--log-level", type=click.Choice(LOG_LEVELS), default="INFO")
+def disturbance_chips(
+    run_dir: Path,
+    output_dir: Path | None,
+    n_detected: int,
+    n_below_mmu: int,
+    n_no_detection: int,
+    min_per_interval: int,
+    seed: int,
+    pad_m: float,
+    min_chip_m: float,
+    chm: bool,
+    sample_only: bool,
+    log_level: str,
+) -> None:
+    """Sample a disturbance run and draw NAIP RGB and CHM chips for inspection."""
+    from csdv_core.disturbance.chips import ChipSettings, make_inspection_chips
+    from csdv_core.disturbance.sampling import SampleDesign
+
+    configure_console_logging(log_level)
+    design = SampleDesign(
+        n_detected=n_detected,
+        n_below_mmu=n_below_mmu,
+        n_no_detection=n_no_detection,
+        min_per_interval=min_per_interval,
+        seed=seed,
+    )
+    settings = ChipSettings(pad_m=pad_m, min_chip_m=min_chip_m, show_chm=chm)
+    try:
+        result = make_inspection_chips(
+            run_dir,
+            output_dir,
+            design=design,
+            settings=settings,
+            sample_only=sample_only,
+        )
+    except (FileExistsError, FileNotFoundError, ValueError) as error:
+        raise click.ClickException(str(error)) from error
+    chip_count = len(result.chip_paths)
+    logger.info("Wrote %d chips to %s", chip_count, result.output_dir)
+    click.echo(str(result.output_dir))
+
+
 __all__ = [
     "OPTION_TO_KEY",
     "cli_overrides_from_options",
     "configure_console_logging",
     "default_output_dir",
     "detect_disturbance",
+    "disturbance_chips",
     "disturbance_figures",
     "parse_years",
 ]

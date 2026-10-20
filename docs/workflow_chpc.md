@@ -177,6 +177,13 @@ On WSL the default run on the ElkinsvilleNE quarter quad (3,800 ha, six years) t
 
 The CHMs written by `run_chm_inference.sbatch` are uint16 and are read as centimetres. If the log warns that a CHM year has no nodata value, find the fill value and pass it with `--chm-nodata` in stored units.
 
+To inspect a run before an accuracy assessment, `run_disturbance_chips.sbatch` samples it and draws NAIP RGB and CHM chips of each sampled unit (2 CPUs, 8 GB, 1 h). It reads small windows straight from `$CSDV_DATA_ROOT`, so the NAIP mosaics are not staged, and copies the chips to `<run>/inspection/` or to the `--output-dir` given. See "Inspecting a run with image chips" in the guide.
+
+```bash
+sbatch --output="$CSDV_LOG_DIR/%x-%j.out" \
+    scripts/slurm/run_disturbance_chips.sbatch "$CSDV_RESULTS_ROOT/disturbance/LincolnNH"
+```
+
 ## 7. Troubleshooting
 
 | Symptom | Where to look | Likely cause |

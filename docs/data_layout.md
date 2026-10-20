@@ -62,7 +62,8 @@ results/disturbance/<site_code>/
 │   ├── probability.tif              # float32 decision probability, one band per year
 │   ├── disturbances.gpkg            # objects, refined_outlines, refined_openings
 │   └── objects.csv                  # One row per object, with centroids, for sampling
-└── figures/                         # PNGs, rebuilt by csdv disturbance-figures
+├── figures/                         # PNGs, rebuilt by csdv disturbance-figures
+└── inspection/                      # Optional: csdv disturbance-chips (samples, chips, contact sheet)
 ```
 
 The rasters are on the run's cell grid (19.2 m by default), and band descriptions hold the year. [disturbance_api.md](disturbance_api.md) specifies every file, and `--from-run` reloads `layers/` and `z/` to repeat the decision with other settings, copying them into the new run folder.

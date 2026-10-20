@@ -138,6 +138,7 @@ csdv classify-trajectories
 csdv satellite {fetch,annual,join,list}
 csdv detect-disturbance           # NAIP-CHM disturbance map for one site
 csdv disturbance-figures          # rebuild a run's figures and report
+csdv disturbance-chips            # sample a run and draw NAIP RGB and CHM chips
 ```
 
 `detect-disturbance` takes `--site` and writes one run folder (default `$CSDV_RESULTS_ROOT/disturbance/<site>/`, never overwritten). Parameters come from `config/disturbance.yaml`, an optional `--config` YAML and explicit options, and `--from-run` reuses a saved run's layers and z. The guide is [guides/disturbance_detection.md](guides/disturbance_detection.md).

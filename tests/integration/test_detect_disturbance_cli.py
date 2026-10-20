@@ -372,3 +372,67 @@ def test_from_run_rejects_changed_window(project: dict[str, Path]) -> None:
     assert "standardize.window_m" in result.output
     assert "grid.grain_m" not in result.output
     assert not second_dir.exists()
+
+
+def _write_naip(data_root: Path) -> None:
+    """Write a 4-band uint8 NAIP image per year, shaded by the canopy height.
+
+    Args:
+        data_root: Value of ``CSDV_DATA_ROOT``.
+    """
+    heights = _canopy_years()
+    transform = from_origin(ORIGIN_X, ORIGIN_Y, PIXEL_M, PIXEL_M)
+    for year, year_heights in heights.items():
+        path = data_root / "naip" / SITE / str(year) / f"NAIP_{SITE}_{year}0612.tif"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        brightness = np.clip(220.0 - 8.0 * year_heights, 0.0, 255.0)
+        band = brightness.astype("uint8")
+        bands = np.stack([band, band, band, band])
+        profile = {
+            "driver": "GTiff",
+            "width": SIZE_PX,
+            "height": SIZE_PX,
+            "count": 4,
+            "dtype": "uint8",
+            "crs": CRS,
+            "transform": transform,
+        }
+        with rasterio.open(path, "w", **profile) as dataset:
+            dataset.write(bands)
+
+
+def test_disturbance_chips(project: dict[str, Path]) -> None:
+    """Sample a run and draw its chips, then refuse an existing folder."""
+    _write_naip(project["data"])
+    detect_result = _detect(project["config"])
+    assert detect_result.exit_code == 0, detect_result.output
+    run_dir = project["results"] / "disturbance" / SITE
+    arguments = [
+        "disturbance-chips",
+        "--run-dir",
+        str(run_dir),
+        "--n-detected",
+        "3",
+        "--n-below-mmu",
+        "1",
+        "--n-no-detection",
+        "2",
+        "--min-chip-m",
+        "60",
+    ]
+    runner = CliRunner()
+    result = runner.invoke(main, arguments, catch_exceptions=False)
+    assert result.exit_code == 0, result.output
+    inspection_dir = run_dir / "inspection"
+    samples = gpd.read_file(inspection_dir / "samples.gpkg")
+    assert "detected" in set(samples["stratum"])
+    assert (samples["stratum"] == "no_detection").sum() == 2
+    for name in ("samples.csv", "contact_sheet.png", "index.md"):
+        assert (inspection_dir / name).stat().st_size > 0
+    chip_paths = sorted((inspection_dir / "chips").glob("*.png"))
+    assert len(chip_paths) == len(samples)
+    index_text = (inspection_dir / "index.md").read_text()
+    assert "contact_sheet.png" in index_text
+    repeat = runner.invoke(main, arguments, catch_exceptions=False)
+    assert repeat.exit_code != 0
+    assert "already exists" in repeat.output
