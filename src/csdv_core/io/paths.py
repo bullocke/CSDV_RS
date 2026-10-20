@@ -36,11 +36,25 @@ class ProjectPaths:
 
     # ---- input subpaths -------------------------------------------------
 
+    def naip_site_dir(self, site: str) -> Path:
+        """NAIP imagery of one site, ``data_root/naip/<site>/``.
+
+        Holds one subfolder per NAIP year (see :meth:`naip_dir`).
+        """
+        return self.data_root / "naip" / site
+
     def naip_dir(self, site: str, year: int) -> Path:
-        return self.data_root / "naip" / site / str(year)
+        return self.naip_site_dir(site) / str(year)
+
+    def naip_chm_site_dir(self, site: str) -> Path:
+        """NAIP-derived CHMs of one site, ``data_root/naip_chm/<site>/``.
+
+        Holds one subfolder per NAIP year (see :meth:`naip_chm_dir`).
+        """
+        return self.data_root / "naip_chm" / site
 
     def naip_chm_dir(self, site: str, year: int) -> Path:
-        return self.data_root / "naip_chm" / site / str(year)
+        return self.naip_chm_site_dir(site) / str(year)
 
     def neon_chm_dir(self, site: str, year: int) -> Path:
         return self.data_root / "neon" / site / "als_chm" / str(year)
@@ -117,6 +131,17 @@ class ProjectPaths:
         polygon-based counterpart to :meth:`metrics_dir`, which is windowed.
         """
         return self.results_root / "stands" / site
+
+    def disturbance_dir(self, site: str) -> Path:
+        """Default disturbance run folder, ``results_root/disturbance/<site>/``.
+
+        ``csdv detect-disturbance`` writes one run here (layers, z stacks,
+        detection rasters, outlines, figures and the report) unless
+        ``--output-dir`` names another folder. The pipeline refuses to write
+        into a folder that already exists, so a second run at the same site
+        needs its own ``--output-dir``.
+        """
+        return self.results_root / "disturbance" / site
 
     def figures_dir(self) -> Path:
         return self.results_root / "figures"

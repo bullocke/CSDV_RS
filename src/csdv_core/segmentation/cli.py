@@ -15,20 +15,16 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import click
-import numpy as np
 
+from csdv_core.io.raster import read_chm_metres, resolve_scale_factor
 from csdv_core.segmentation.params import (
     DEFAULT_PARAMS,
     WINDOW_FUNCTIONS,
     SegmentationParams,
     WindowFunction,
 )
-
-if TYPE_CHECKING:
-    from rasterio.io import DatasetReader
 
 logger = logging.getLogger(__name__)
 
@@ -204,28 +200,6 @@ def cli(
     _write_sidecar(out_crowns, params, chm_path, engine="watershed")
     logger.info("Wrote %d crowns to %s", len(gdf), out_crowns)
     click.echo(str(out_crowns))
-
-
-def resolve_scale_factor(scale_factor: float | None, dtype: str) -> float:
-    """Pick the multiplier from stored CHM values to metres.
-
-    NAIP-CHM inference writes uint16 centimetres, while clipped and lidar CHMs
-    are float metres. An explicit ``scale_factor`` always wins.
-    """
-    if scale_factor is not None:
-        return float(scale_factor)
-    return 0.01 if np.issubdtype(np.dtype(dtype), np.integer) else 1.0
-
-
-def read_chm_metres(src: DatasetReader, scale_factor: float) -> np.ndarray:
-    """Read band 1 as float32 metres with nodata as NaN.
-
-    The cast comes before the fill because an integer array cannot hold NaN.
-    """
-    chm = src.read(1, masked=True).astype("float32").filled(np.nan)
-    if scale_factor != 1.0:
-        chm *= np.float32(scale_factor)
-    return chm
 
 
 def _write_sidecar(

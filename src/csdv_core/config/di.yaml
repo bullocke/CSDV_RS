@@ -1,3 +1,7 @@
+# This file serves the research scripts in analysis/NAIP_disturbance_detection
+# (through csdv_core.change.di and di_decide). The core pipeline
+# (csdv_core.disturbance, `csdv detect-disturbance`) reads disturbance.yaml.
+#
 # Disturbance Index (DI) parameters for csdv_core.change.di and di_decide.
 #
 # standardize (scene vs local and the window size are chosen per call):

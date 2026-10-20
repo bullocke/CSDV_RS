@@ -1,0 +1,135 @@
+# Parameters for the core disturbance detection pipeline (csdv_core.disturbance,
+# `csdv detect-disturbance`). Defaults reproduce the best tested case from
+# analysis/NAIP_disturbance_detection/2_Disturbance_Index: change in mean CHM
+# height on 19.2 m cells, two-pass 150 m local standardization, rule D6
+# (spatial support + persistence), a 1-acre minimum mapping unit and 0.6 m
+# outline refinement.
+#
+# Merge order at run time: this file <- optional --config YAML (partial, deep
+# merged) <- explicit CLI options. Unknown keys fail validation.
+#
+# inputs:
+#   input            Change layer to standardize: d_chm_h (mean CHM height),
+#                    d_chm_cov (CHM cover above forest.height_m) or d_ndvi.
+#   years            NAIP-CHM years to use (null = every year folder found).
+#   chm_scale        Multiplier from stored CHM values to metres (null = 0.01
+#                    for integer files, 1.0 for float files).
+#   chm_nodata       CHM nodata value (null = take it from the file metadata).
+#   naip_red_band    1-based NAIP band holding red (NDVI only, the RGB backdrop
+#                    always reads bands 1, 2 and 3).
+#   naip_nir_band    1-based NAIP band holding near infrared (NDVI).
+# grid:
+#   grain_m          Cell size in metres. Rounded to a whole number of source
+#                    pixels (19.2 m = 32 pixels at 0.6 m).
+#   reference_year   Year whose raster defines CRS and pixel alignment (null =
+#                    first year).
+#   min_valid_share  Least share of valid CHM pixels in a cell, else NaN.
+# forest:
+#   height_m         CHM height (m) above which a pixel counts as canopy.
+#   min_cover        Least canopy share for a cell to count as forest.
+# standardize:
+#   method           scene (median/MAD), scenemean (mean/SD), local (moving
+#                    window) or local_twopass (local, then again without cells
+#                    with spatially supported loss).
+#   window_m         Local window side in metres, rounded to an odd number of
+#                    cells (150 m = 9 cells at 19.2 m).
+#   min_frac         Least share of valid forest in a window before falling
+#                    back to scene statistics.
+#   trim_z           Population cells beyond +/- this robust scene z are left
+#                    out of window statistics.
+#   sd_floor         Least window SD as a share of the scene scale.
+# decide:
+#   rule             D1 (z <= -baseline_z), D2 (lfdr P > p_boundary), D5
+#                    (spatial support), D5s (D5, strict cell), D6 (D5 plus no
+#                    rebound at the next date), D6s (D6, strict cell).
+#   p_boundary       Bayes decision boundary on posterior probabilities.
+#   baseline_z       Fixed z threshold of rule D1.
+#   spatial_sigma_m  Gaussian smoothing scales (SD, m) for spatial support.
+#   pct0             Quantile range for Efron's central-matching null.
+#   bin_w            Histogram bin width in z units.
+#   smooth_bins      Gaussian smoothing of the mixture histogram, in bins.
+#   min_prior        Floor on the per-date prior probability of disturbance.
+#   min_fit_cells    Fewest monitored valid cells to fit a date's null model.
+#                    Dates with fewer cells are skipped and reported.
+# mmu:
+#   mmu_ha           Minimum mapping unit (ha). Objects are 8-connected cells
+#                    sharing an onset date. 0.405 ha = 1 acre.
+# refine (0.6 m outlines, port of 08_refine_best.refine_object):
+#   enabled          Redraw each detected object from the 0.6 m CHM pair.
+#   pad_m            Read window = object bounds buffered by this distance.
+#   ring_gap_m       Reference ring = forest outside the object buffered by
+#                    this distance.
+#   near_m           Loss pixels must lie within this distance of the object.
+#   forest_height_m  CHM height (m) at the earlier date that marks ring forest.
+#   min_ring_px      Fewest ring pixels to standardize an object, else skipped.
+#   p_loss           Posterior probability above which a pixel is loss.
+#   canopy_m, open_m, drop_m
+#                    RefineParams height thresholds for refine.loss_pixels.
+#                    The research refinement uses the lfdr loss test above
+#                    instead, so these only fill RefineParams.
+#   tolerance_px     Half width of the maximum filter on the later CHM.
+#   open_radius_m    Disk radius of the opening that removes crown slivers.
+#   min_opening_m2   Openings smaller than this are dropped.
+#   close_radius_m   Disk radius of the closing that joins openings.
+#   fill_holes_m2    Holes up to this area inside an envelope are filled.
+#   smooth_m         Buffer out/in distance that rounds envelope outlines.
+#   simplify_m       Douglas-Peucker tolerance for envelope outlines.
+#   The least envelope area equals mmu.mmu_ha.
+# figures:
+#   enabled          Write the PNG figures.
+#   naip_backdrop    Draw NAIP RGB under the maps (reads NAIP).
+#   dpi              Figure resolution.
+inputs:
+  input: d_chm_h
+  years: null
+  chm_scale: null
+  chm_nodata: null
+  naip_red_band: 1
+  naip_nir_band: 4
+grid:
+  grain_m: 19.2
+  reference_year: null
+  min_valid_share: 0.5
+forest:
+  height_m: 5.0
+  min_cover: 0.5
+standardize:
+  method: local_twopass
+  window_m: 150.0
+  min_frac: 0.2
+  trim_z: 3.0
+  sd_floor: 0.25
+decide:
+  rule: D6
+  p_boundary: 0.5
+  baseline_z: 3.0
+  spatial_sigma_m: [10.0, 25.0]
+  pct0: 0.25
+  bin_w: 0.05
+  smooth_bins: 2.0
+  min_prior: 0.01
+  min_fit_cells: 1000
+mmu:
+  mmu_ha: 0.405
+refine:
+  enabled: true
+  pad_m: 60.0
+  ring_gap_m: 20.0
+  near_m: 10.0
+  forest_height_m: 5.0
+  min_ring_px: 2000
+  p_loss: 0.5
+  canopy_m: 10.0
+  open_m: 5.0
+  drop_m: 8.0
+  tolerance_px: 1
+  open_radius_m: 1.0
+  min_opening_m2: 25.0
+  close_radius_m: 8.0
+  fill_holes_m2: 2500.0
+  smooth_m: 3.0
+  simplify_m: 0.6
+figures:
+  enabled: true
+  naip_backdrop: false
+  dpi: 200

@@ -63,3 +63,22 @@ def test_project_paths_is_frozen() -> None:
     p = project_paths()
     with pytest.raises(dataclasses.FrozenInstanceError):
         p.data_root = Path("/tmp")  # type: ignore[misc]
+
+
+def test_disturbance_dir(tmp_path: Path) -> None:
+    paths = ProjectPaths(
+        data_root=tmp_path / "d", results_root=tmp_path / "r", cache_root=tmp_path / "c"
+    )
+    assert paths.disturbance_dir("ElkinsvilleNE") == (
+        tmp_path / "r" / "disturbance" / "ElkinsvilleNE"
+    )
+
+
+def test_site_dirs_are_parents_of_year_dirs(tmp_path: Path) -> None:
+    paths = ProjectPaths(
+        data_root=tmp_path / "d", results_root=tmp_path / "r", cache_root=tmp_path / "c"
+    )
+    assert paths.naip_chm_site_dir("HARV") == tmp_path / "d" / "naip_chm" / "HARV"
+    assert paths.naip_site_dir("HARV") == tmp_path / "d" / "naip" / "HARV"
+    assert paths.naip_chm_dir("HARV", 2021).parent == paths.naip_chm_site_dir("HARV")
+    assert paths.naip_dir("HARV", 2021).parent == paths.naip_site_dir("HARV")

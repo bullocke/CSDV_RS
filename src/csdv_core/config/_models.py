@@ -350,3 +350,142 @@ class DIDecide(_Base):
 class DIConfig(_Base):
     standardize: DIStandardize = Field(default_factory=DIStandardize)
     decide: DIDecide = Field(default_factory=DIDecide)
+
+
+# ---------------------------------------------------------------------------
+# disturbance.yaml
+# ---------------------------------------------------------------------------
+
+#: Change layers the disturbance pipeline can standardize.
+DisturbanceInput = Literal["d_chm_h", "d_chm_cov", "d_ndvi"]
+#: Standardization methods of the disturbance pipeline.
+StandardizeMethod = Literal["scene", "scenemean", "local", "local_twopass"]
+#: Decision rules of the disturbance pipeline.
+DecisionRule = Literal["D1", "D2", "D5", "D5s", "D6", "D6s"]
+
+
+class DisturbanceInputs(_Base):
+    """Input selection and CHM / NAIP reading options."""
+
+    input: DisturbanceInput = "d_chm_h"
+    years: list[int] | None = None
+    chm_scale: float | None = Field(default=None, gt=0)
+    chm_nodata: float | None = None
+    naip_red_band: int = Field(default=1, ge=1)
+    naip_nir_band: int = Field(default=4, ge=1)
+
+    @model_validator(mode="after")
+    def _years_usable(self) -> DisturbanceInputs:
+        if self.years is None:
+            return self
+        if len(self.years) < 2:
+            raise ValueError(f"years needs at least two entries, got {self.years}")
+        if len(set(self.years)) != len(self.years):
+            raise ValueError(f"years has duplicates: {self.years}")
+        return self
+
+
+class DisturbanceGrid(_Base):
+    """Cell grid definition."""
+
+    grain_m: float = Field(default=19.2, gt=0)
+    reference_year: int | None = None
+    min_valid_share: float = Field(default=0.5, gt=0, le=1)
+
+
+class DisturbanceForest(_Base):
+    """Cell-level forest definition."""
+
+    height_m: float = Field(default=5.0, gt=0)
+    min_cover: float = Field(default=0.5, gt=0, le=1)
+
+
+class DisturbanceStandardize(_Base):
+    """Standardization of the change layer into z."""
+
+    method: StandardizeMethod = "local_twopass"
+    window_m: float = Field(default=150.0, gt=0)
+    min_frac: float = Field(default=0.2, gt=0, le=1)
+    trim_z: float | None = Field(default=3.0, gt=0)
+    sd_floor: float = Field(default=0.25, ge=0)
+
+
+class DisturbanceDecide(_Base):
+    """Decision rule and empirical-null fitting options."""
+
+    rule: DecisionRule = "D6"
+    p_boundary: float = Field(default=0.5, gt=0, lt=1)
+    baseline_z: float = Field(default=3.0, gt=0)
+    spatial_sigma_m: list[float] = Field(
+        default_factory=lambda: [10.0, 25.0], min_length=1
+    )
+    pct0: float = Field(default=0.25, gt=0, lt=0.5)
+    bin_w: float = Field(default=0.05, gt=0)
+    smooth_bins: float = Field(default=2.0, ge=0)
+    min_prior: float = Field(default=0.01, ge=0, lt=1)
+    min_fit_cells: int = Field(default=1000, ge=100)
+
+    @model_validator(mode="after")
+    def _sigmas_positive(self) -> DisturbanceDecide:
+        if any(sigma <= 0 for sigma in self.spatial_sigma_m):
+            raise ValueError(
+                f"spatial_sigma_m must be positive, got {self.spatial_sigma_m}"
+            )
+        return self
+
+
+class DisturbanceMmu(_Base):
+    """Minimum mapping unit."""
+
+    mmu_ha: float = Field(default=0.405, ge=0)
+
+
+class DisturbanceRefine(_Base):
+    """0.6 m outline refinement (see ``csdv_core.disturbance.outlines``)."""
+
+    enabled: bool = True
+    pad_m: float = Field(default=60.0, gt=0)
+    ring_gap_m: float = Field(default=20.0, ge=0)
+    near_m: float = Field(default=10.0, ge=0)
+    forest_height_m: float = Field(default=5.0, gt=0)
+    min_ring_px: int = Field(default=2000, ge=1)
+    p_loss: float = Field(default=0.5, gt=0, lt=1)
+    canopy_m: float = Field(default=10.0, gt=0)
+    open_m: float = Field(default=5.0, gt=0)
+    drop_m: float = Field(default=8.0, gt=0)
+    tolerance_px: int = Field(default=1, ge=0)
+    open_radius_m: float = Field(default=1.0, ge=0)
+    min_opening_m2: float = Field(default=25.0, ge=0)
+    close_radius_m: float = Field(default=8.0, ge=0)
+    fill_holes_m2: float = Field(default=2500.0, ge=0)
+    smooth_m: float = Field(default=3.0, ge=0)
+    simplify_m: float = Field(default=0.6, ge=0)
+
+
+class DisturbanceFigures(_Base):
+    """Figure output options."""
+
+    enabled: bool = True
+    naip_backdrop: bool = False
+    dpi: int = Field(default=200, ge=50, le=1200)
+
+
+class DisturbanceConfig(_Base):
+    """All parameters of one disturbance detection run."""
+
+    inputs: DisturbanceInputs = Field(default_factory=DisturbanceInputs)
+    grid: DisturbanceGrid = Field(default_factory=DisturbanceGrid)
+    forest: DisturbanceForest = Field(default_factory=DisturbanceForest)
+    standardize: DisturbanceStandardize = Field(default_factory=DisturbanceStandardize)
+    decide: DisturbanceDecide = Field(default_factory=DisturbanceDecide)
+    mmu: DisturbanceMmu = Field(default_factory=DisturbanceMmu)
+    refine: DisturbanceRefine = Field(default_factory=DisturbanceRefine)
+    figures: DisturbanceFigures = Field(default_factory=DisturbanceFigures)
+
+    @model_validator(mode="after")
+    def _reference_in_years(self) -> DisturbanceConfig:
+        reference = self.grid.reference_year
+        years = self.inputs.years
+        if reference is not None and years is not None and reference not in years:
+            raise ValueError(f"reference_year {reference} is not in years {years}")
+        return self

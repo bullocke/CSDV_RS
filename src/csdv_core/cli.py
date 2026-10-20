@@ -97,6 +97,18 @@ def _attach_check() -> None:
     main.add_command(_check_cli, name="check")
 
 
+def _attach_disturbance() -> None:
+    """Attach ``detect-disturbance`` and ``disturbance-figures``.
+
+    The pipeline modules (rasterio, geopandas, matplotlib) are imported inside
+    the command bodies, so attaching costs only the Click definitions.
+    """
+    from csdv_core.disturbance.cli import detect_disturbance, disturbance_figures
+
+    main.add_command(detect_disturbance, name="detect-disturbance")
+    main.add_command(disturbance_figures, name="disturbance-figures")
+
+
 # Attach now: imports are cheap (click + module-level imports only); heavy
 # imports (ee, torch, rasterio in segmentation) happen inside the command
 # bodies, not at import time.
@@ -109,6 +121,7 @@ _attach_stages()
 _attach_trajectories()
 _attach_satellite()
 _attach_check()
+_attach_disturbance()
 
 
 if __name__ == "__main__":

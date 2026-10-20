@@ -37,10 +37,35 @@ results/
 ├── stages/<site_code>/<year>/
 ├── stands/<site_code>/              # Per-stand tables, incl. satellite_annual.parquet
 ├── trajectories/<site_code>/
+├── disturbance/<site_code>/         # One csdv detect-disturbance run (see below)
 └── figures/
 ```
 
 `results/stands/<site_code>/satellite_annual.parquet` is the derived product: one row per stand per year, carrying the annual metrics, the support columns behind each one and a `satellite_unavailable` string naming the gate that voided anything missing. `csdv satellite join` merges its NAIP-year rows into the stand metrics so the stage classifier can read them.
+
+`results/disturbance/<site_code>/` is the default folder of `csdv detect-disturbance`. Other runs of the same site go to folders named with `--output-dir` (for example `results/disturbance/<site_code>_D6s_1ha/`), because a run never writes into an existing folder. Each run folder has the same layout:
+
+```
+results/disturbance/<site_code>/
+├── run_params.json                  # Final parameters, command line, grid
+├── detect_disturbance.log
+├── summary.json                     # Machine-readable summary
+├── report.md                        # Readable report with figure links
+├── layers/                          # Cell layers, one band per year (float32, NaN nodata)
+│   ├── chm_height.tif  chm_cover.tif  valid_share.tif  forest.tif (uint8)
+│   └── ndvi.tif                     # Only for --input d_ndvi
+├── z/                               # int16 z x 100, nodata -32768, one band per year
+│   └── z_<input>_<method>[_<window>m].tif
+├── detection/
+│   ├── onset_year.tif               # int16: onset year, 0 none, -1 never monitored
+│   ├── onset_year_nommu.tif         # The same before the minimum mapping unit
+│   ├── probability.tif              # float32 decision probability, one band per year
+│   ├── disturbances.gpkg            # objects, refined_outlines, refined_openings
+│   └── objects.csv                  # One row per object, with centroids, for sampling
+└── figures/                         # PNGs, rebuilt by csdv disturbance-figures
+```
+
+The rasters are on the run's cell grid (19.2 m by default), and band descriptions hold the year. [disturbance_api.md](disturbance_api.md) specifies every file, and `--from-run` reloads `layers/` and `z/` to repeat the decision with other settings, copying them into the new run folder.
 
 ## Viewer cache
 

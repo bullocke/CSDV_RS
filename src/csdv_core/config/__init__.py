@@ -17,6 +17,7 @@ import yaml
 
 from csdv_core.config._models import (
     DIConfig,
+    DisturbanceConfig,
     ForestMaskConfig,
     ForestMaskProfile,
     MetricsConfig,
@@ -38,6 +39,7 @@ __all__ = [
     "load_trajectories",
     "load_forest_mask",
     "load_di",
+    "load_disturbance",
     "reload_config",
     "SitesConfig",
     "SiteTypesConfig",
@@ -48,6 +50,7 @@ __all__ = [
     "ForestMaskConfig",
     "ForestMaskProfile",
     "DIConfig",
+    "DisturbanceConfig",
 ]
 
 
@@ -116,6 +119,12 @@ def load_di() -> DIConfig:
     return DIConfig.model_validate(load_yaml("di"))
 
 
+@lru_cache(maxsize=1)
+def load_disturbance() -> DisturbanceConfig:
+    """Load and validate ``disturbance.yaml`` (core disturbance pipeline defaults)."""
+    return DisturbanceConfig.model_validate(load_yaml("disturbance"))
+
+
 def reload_config() -> None:
     """Clear cached config loaders. Intended for tests."""
     for fn in (
@@ -127,5 +136,6 @@ def reload_config() -> None:
         load_trajectories,
         load_forest_mask,
         load_di,
+        load_disturbance,
     ):
         fn.cache_clear()

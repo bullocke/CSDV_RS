@@ -153,7 +153,31 @@ Staging is handled by `scripts/chpc/scratch.sh`. Outputs reach the store only wh
 
 The downstream steps (metrics, stratification, stage and trajectory classification) still run through `scripts/run_site_e2e.sh` with `--skip-download`. `scripts/slurm/run_site_e2e_scratch.sbatch` has not yet been moved onto the staging helpers.
 
-## 6. Troubleshooting
+## 6. Disturbance detection
+
+`csdv detect-disturbance` maps forest canopy loss and its onset interval for one site from the NAIP-CHM years that step 5 wrote. It needs no crowns. The method, its parameters and its outputs are described in [docs/guides/disturbance_detection.md](guides/disturbance_detection.md), and the API and file formats in [docs/disturbance_api.md](disturbance_api.md).
+
+One CPU job runs one site (`wangj-np`, 4 CPUs, 24 GB, 3 h):
+
+```bash
+source scripts/chpc/env.sh
+sbatch --output="$CSDV_LOG_DIR/%x-%j.out" \
+    scripts/slurm/run_detect_disturbance.sbatch SantaClara
+
+# Other parameters need a new output folder.
+sbatch --output="$CSDV_LOG_DIR/%x-%j.out" \
+    scripts/slurm/run_detect_disturbance.sbatch SantaClara \
+    --rule D6s --mmu-ha 1.0 \
+    --output-dir "$CSDV_RESULTS_ROOT/disturbance/SantaClara_D6s_1ha"
+```
+
+The first argument is the site, and every further argument goes to `csdv detect-disturbance`. Before staging anything, the job checks that `$CSDV_DATA_ROOT/naip_chm/<SITE>/` exists and that the destination does not, because a run never writes into an existing folder. It copies the CHM years (and the NAIP years when the arguments contain `d_ndvi` or `--naip-backdrop`) to node scratch, runs detection there, and copies the run folder to `$CSDV_RESULTS_ROOT/disturbance/<SITE>/` or to the `--output-dir` given. A failed run goes to `$CSDV_STORE/failed/<job id>/out/` with its `detect_disturbance.log`, and the destination stays free for a resubmission.
+
+On WSL the default run on the ElkinsvilleNE quarter quad (3,800 ha, six years) took about one minute and peaked at 0.65 GB of memory, so the request above leaves wide margins. Memory grows with the site area. `--from-run` also works in the job (pass the saved run folder under `$CSDV_RESULTS_ROOT`), and the CHM years are staged as usual because refinement reads them.
+
+The CHMs written by `run_chm_inference.sbatch` are uint16 and are read as centimetres. If the log warns that a CHM year has no nodata value, find the fill value and pass it with `--chm-nodata` in stored units.
+
+## 7. Troubleshooting
 
 | Symptom | Where to look | Likely cause |
 |---|---|---|
@@ -169,11 +193,12 @@ The downstream steps (metrics, stratification, stage and trajectory classificati
 | `metrics-X` step fails with "CHM required for ..." | metric registry | A Pass-1 metric needs CHM and none was found. Confirm step 3 ran. |
 | `compute-metrics` writes nothing visible | `results/metrics/.../manifest.yaml` | The script writes a metric stack TIF and a manifest. Inspect `manifest.yaml` to see which metrics were computed. |
 | Stage raster looks empty | `stages.yaml` thresholds | Rules may be too narrow for this site type. Inspect with `rasterio info`. |
+| Disturbance job fails within seconds with `output folder already exists` | the Slurm log | A run never overwrites. Pass a new `--output-dir`, or move the earlier run (or a failed one) away. |
 | `csdv check --strict` exits non-zero | any `[WARN]` row | Strict mode treats warnings as failures. Drop `--strict` for normal runs. |
 
 When a step fails, the dispatcher prints the path to its `.log` file. That log holds the full stack trace plus the CLI invocation. Re-run with the same arguments and `--force` once the underlying issue is fixed.
 
-## 7. Colab parity
+## 8. Colab parity
 
 For ad-hoc experimentation or when CHPC GPU queues are saturated:
 

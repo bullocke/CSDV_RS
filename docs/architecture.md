@@ -86,6 +86,8 @@ See [metrics.md](metrics.md) for every metric both paths produce.
 | `stages/` | rule engine reading `stages.yaml`. `stand.py` per stand, `classify.py` per pixel |
 | `trajectories/` | multi-date sequence assembly + 19-class rule evaluator |
 | `examples/` | stand screening for worked examples. Manifest tools and vocab not yet written |
+| `change/` | Disturbance Index algorithms shared by the research scripts and `disturbance/`: standardization (`di.py`), empirical null, lfdr and spatial probabilities (`di_decide.py`), 0.6 m outline refinement (`refine.py`) |
+| `disturbance/` | `csdv detect-disturbance` pipeline. NAIP-CHM years to cell layers, DI z stacks, decision rule, onset and MMU, objects with 0.6 m outlines, figures and a Markdown and JSON report. Defaults reproduce the best ElkinsvilleNE method. See [disturbance_api.md](disturbance_api.md) |
 | `viz/` | maps, metric trajectory panels, height histograms, scatter, shared style |
 | `validation/` | scatter, R², RMSE, Kruskal-Wallis, Dunn's |
 | `check.py` | `csdv check` preflight: environment, paths, configs, per-site pipeline state |
@@ -103,7 +105,7 @@ See [metrics.md](metrics.md) for every metric both paths produce.
 
 | Area | State |
 |---|---|
-| `config`, `io`, `preprocess`, `chm_inference`, `metrics`, `zonal`, `satellite`, `stratification`, `stages`, `trajectories`, `viz` | implemented |
+| `config`, `io`, `preprocess`, `chm_inference`, `metrics`, `zonal`, `satellite`, `stratification`, `stages`, `trajectories`, `change`, `disturbance`, `viz` | implemented |
 | `download` | 4 of 6 modules. `neon.py` and `topo_soils.py` are stubs |
 | `segmentation` | 3 of 4 modules. `deepforest.py` is a stub |
 | `examples` | 1 of 3 modules. `screen.py` works, `index.py` and `manifest.py` are stubs, `vocab/` is empty |
@@ -134,4 +136,8 @@ csdv compute-metrics              # raster path
 csdv classify-stages
 csdv classify-trajectories
 csdv satellite {fetch,annual,join,list}
+csdv detect-disturbance           # NAIP-CHM disturbance map for one site
+csdv disturbance-figures          # rebuild a run's figures and report
 ```
+
+`detect-disturbance` takes `--site` and writes one run folder (default `$CSDV_RESULTS_ROOT/disturbance/<site>/`, never overwritten). Parameters come from `config/disturbance.yaml`, an optional `--config` YAML and explicit options, and `--from-run` reuses a saved run's layers and z. The guide is [guides/disturbance_detection.md](guides/disturbance_detection.md).

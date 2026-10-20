@@ -1,0 +1,87 @@
+host=notch470 job=16166621_6 started=2026-10-09T16:58:22-06:00
+site=LincolnNH year=2023 naip=/uufs/chpc.utah.edu/common/home/dycelab/data/CSDV/data/naip/LincolnNH/2023/NAIP_LincolnNH_20230623_0p3m.tif -> crowns.gpkg
+node scratch: /scratch/local/u6065547/16166621 (5.6T free)
+staged in: /uufs/chpc.utah.edu/common/home/dycelab/data/CSDV/data/naip_chm/LincolnNH/2023/NAIP_LincolnNH_20230623_0p3m_chm.tif -> /scratch/local/u6065547/16166621/chm
+2026-10-09 16:58:38,825  INFO     Segmentation 68368c948c: smooth 0.6 m, ws clip(5, 5, 5), th_cr 0.7, max radius 12 m
+Traceback (most recent call last):
+  File "/uufs/chpc.utah.edu/common/home/u6065547/software/pkg/miniforge3/envs/csdv-gpu/lib/python3.12/site-packages/numpy/ma/core.py", line 510, in _check_fill_value
+    fill_value = np.asarray(fill_value, dtype=ndtype)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: cannot convert float NaN to integer
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/uufs/chpc.utah.edu/common/home/u6065547/software/pkg/miniforge3/envs/csdv-gpu/bin/csdv", line 6, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/uufs/chpc.utah.edu/common/home/u6065547/software/pkg/miniforge3/envs/csdv-gpu/lib/python3.12/site-packages/click/core.py", line 1631, in __call__
+    return self.main(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/uufs/chpc.utah.edu/common/home/u6065547/software/pkg/miniforge3/envs/csdv-gpu/lib/python3.12/site-packages/click/core.py", line 1552, in main
+    rv = self.invoke(ctx)
+         ^^^^^^^^^^^^^^^^
+  File "/uufs/chpc.utah.edu/common/home/u6065547/software/pkg/miniforge3/envs/csdv-gpu/lib/python3.12/site-packages/click/core.py", line 2032, in invoke
+    return _process_result(sub_ctx.command.invoke(sub_ctx))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/uufs/chpc.utah.edu/common/home/u6065547/software/pkg/miniforge3/envs/csdv-gpu/lib/python3.12/site-packages/click/core.py", line 1415, in invoke
+    return ctx.invoke(self.callback, **ctx.params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/uufs/chpc.utah.edu/common/home/u6065547/software/pkg/miniforge3/envs/csdv-gpu/lib/python3.12/site-packages/click/core.py", line 910, in invoke
+    return callback(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/uufs/chpc.utah.edu/common/home/dycelab/users/eric/code/CSDV/CSDV_RS/src/csdv_core/segmentation/cli.py", line 182, in cli
+    chm = src.read(1, masked=True).filled(float("nan")).astype("float32")
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/uufs/chpc.utah.edu/common/home/u6065547/software/pkg/miniforge3/envs/csdv-gpu/lib/python3.12/site-packages/numpy/ma/core.py", line 3916, in filled
+    fill_value = _check_fill_value(fill_value, self.dtype)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/uufs/chpc.utah.edu/common/home/u6065547/software/pkg/miniforge3/envs/csdv-gpu/lib/python3.12/site-packages/numpy/ma/core.py", line 516, in _check_fill_value
+    raise TypeError(err_msg % (fill_value, ndtype)) from e
+TypeError: Cannot convert fill_value nan to dtype uint16
+rm: cannot remove '/scratch/local/u6065547/16166621': Permission denied
+exit code 1 at 2026-10-09T16:58:44-06:00
+(base) [u6065547@notchpeak2:CSDV_RS]$ cat ../../../../../data/CSDV/logs/slurm/csdv_crowns-16166621_5.out 
+host=notch471 job=16166621_5 started=2026-10-09T16:53:21-06:00
+site=LincolnNH year=2021 naip=/uufs/chpc.utah.edu/common/home/dycelab/data/CSDV/data/naip/LincolnNH/2021/NAIP_LincolnNH_20210920_0p6m.tif -> crowns.gpkg
+node scratch: /scratch/local/u6065547/16166626 (5.6T free)
+staged in: /uufs/chpc.utah.edu/common/home/dycelab/data/CSDV/data/naip_chm/LincolnNH/2021/NAIP_LincolnNH_20210920_0p6m_chm.tif -> /scratch/local/u6065547/16166626/chm
+2026-10-09 16:53:34,458  INFO     Segmentation 68368c948c: smooth 0.6 m, ws clip(5, 5, 5), th_cr 0.7, max radius 12 m
+Traceback (most recent call last):
+  File "/uufs/chpc.utah.edu/common/home/u6065547/software/pkg/miniforge3/envs/csdv-gpu/lib/python3.12/site-packages/numpy/ma/core.py", line 510, in _check_fill_value
+    fill_value = np.asarray(fill_value, dtype=ndtype)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: cannot convert float NaN to integer
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/uufs/chpc.utah.edu/common/home/u6065547/software/pkg/miniforge3/envs/csdv-gpu/bin/csdv", line 6, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/uufs/chpc.utah.edu/common/home/u6065547/software/pkg/miniforge3/envs/csdv-gpu/lib/python3.12/site-packages/click/core.py", line 1631, in __call__
+    return self.main(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/uufs/chpc.utah.edu/common/home/u6065547/software/pkg/miniforge3/envs/csdv-gpu/lib/python3.12/site-packages/click/core.py", line 1552, in main
+    rv = self.invoke(ctx)
+         ^^^^^^^^^^^^^^^^
+  File "/uufs/chpc.utah.edu/common/home/u6065547/software/pkg/miniforge3/envs/csdv-gpu/lib/python3.12/site-packages/click/core.py", line 2032, in invoke
+    return _process_result(sub_ctx.command.invoke(sub_ctx))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/uufs/chpc.utah.edu/common/home/u6065547/software/pkg/miniforge3/envs/csdv-gpu/lib/python3.12/site-packages/click/core.py", line 1415, in invoke
+    return ctx.invoke(self.callback, **ctx.params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/uufs/chpc.utah.edu/common/home/u6065547/software/pkg/miniforge3/envs/csdv-gpu/lib/python3.12/site-packages/click/core.py", line 910, in invoke
+    return callback(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/uufs/chpc.utah.edu/common/home/dycelab/users/eric/code/CSDV/CSDV_RS/src/csdv_core/segmentation/cli.py", line 182, in cli
+    chm = src.read(1, masked=True).filled(float("nan")).astype("float32")
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/uufs/chpc.utah.edu/common/home/u6065547/software/pkg/miniforge3/envs/csdv-gpu/lib/python3.12/site-packages/numpy/ma/core.py", line 3916, in filled
+    fill_value = _check_fill_value(fill_value, self.dtype)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/uufs/chpc.utah.edu/common/home/u6065547/software/pkg/miniforge3/envs/csdv-gpu/lib/python3.12/site-packages/numpy/ma/core.py", line 516, in _check_fill_value
+    raise TypeError(err_msg % (fill_value, ndtype)) from e
+TypeError: Cannot convert fill_value nan to dtype uint16
+rm: cannot remove '/scratch/local/u6065547/16166626': Permission denied
+exit code 1 at 2026-10-09T16:53:39-06:00
