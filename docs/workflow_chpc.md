@@ -54,6 +54,15 @@ sbatch --output="$CSDV_LOG_DIR/%x-%j.out" scripts/slurm/run_download_dtn.sbatch 
 
 Output goes to `$CSDV_DATA_ROOT/naip/<SITE>/<YEAR>/NAIP_<SITE>_<YYYYMMDD>_<res>.tif` with a `.provenance.json` sidecar. The model reads day of year from the eight-digit date, so imagery from any other source (a USDA download, a collaborator's DOQQs) can be dropped into the same folders as long as each filename carries a `YYYYMMDD` token.
 
+The Planetary Computer stops at 2023. Newer years come from the USDA FPAC image service with `naip-rest`, which takes the same options and writes the same grid and file name. The service holds only the most recent collection for each area, so a year disappears from it once the next one is flown:
+
+```bash
+sbatch --output="$CSDV_LOG_DIR/%x-%j.out" scripts/slurm/run_download_dtn.sbatch \
+    naip-rest --site NorthMaine --bbox -69.5656 45.6636 -69.3253 45.7501 --years 2025
+```
+
+A state is not always flown completely in its scheduled year (USDA did not finish Maine, Montana or Idaho in 2023), so check the coverage warning in the log. Both downloaders write area without imagery as zero in every band and flag it in an internal mask, and `csdv chm-inference` sets those CHM pixels, plus a 50 m band around them (`chm_inference.gap_edge_m` in `metrics.yaml`), to nodata. CHMs predicted before that fix can be repaired in place with `scripts/slurm/run_mask_chm_naip_gaps.sbatch SITE YEAR`.
+
 ### 1b. Landsat observations (per site, on a data transfer node)
 
 `csdv satellite fetch` reduces forty years of Landsat inside each stand polygon on Earth Engine's servers and writes the result to `$CSDV_DATA_ROOT/satellite/<site>/`. It talks to Google over the network for the whole run, so it has the same constraint as step 1a and cannot run inside a compute job. Run it interactively on a data transfer node, because `earthengine authenticate` needs a browser flow.

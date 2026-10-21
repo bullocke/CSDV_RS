@@ -76,6 +76,7 @@ class ChmInferenceDefaults(_Base):
     aoi_half_km: float = 2.5
     chip_size: int = 432
     chip_overlap: float = 0.2
+    gap_edge_m: float = Field(default=50.0, ge=0.0)
 
 
 class MetricsConfig(_Base):

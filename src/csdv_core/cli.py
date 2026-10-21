@@ -41,9 +41,11 @@ def _attach_download_subcommands() -> None:
     from csdv_core.download.chm_model import conditioning_cli as _cond_cli
     from csdv_core.download.naip_gee import cli as _naip_cli
     from csdv_core.download.naip_pc import cli as _naip_pc_cli
+    from csdv_core.download.naip_rest import cli as _naip_rest_cli
 
     download.add_command(_naip_cli, name="naip")
     download.add_command(_naip_pc_cli, name="naip-pc")
+    download.add_command(_naip_rest_cli, name="naip-rest")
     download.add_command(_chm_cli, name="chm")
     download.add_command(_cond_cli, name="conditioning")
 

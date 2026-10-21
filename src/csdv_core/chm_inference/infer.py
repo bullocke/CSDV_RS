@@ -9,7 +9,10 @@ local clone of https://github.com/smorf-ntsg/naip-chm.
 
 The function validates that the NAIP filename contains a ``YYYYMMDD``
 token (the upstream model extracts DOY from the filename) and that the
-five conditioning rasters are present.
+five conditioning rasters are present. After inference, CHM pixels where the
+NAIP has no imagery, and a band around them, are set to nodata
+(:mod:`csdv_core.chm_inference.naip_gaps`), because the upstream model
+predicts heights over black fill.
 """
 
 from __future__ import annotations
@@ -39,6 +42,26 @@ def _validate_filename(path: Path) -> None:
         )
 
 
+def _mask_chm_outputs(naip_quad: Path, output_dir: Path, edge_m: float) -> None:
+    """Mask NAIP gaps in the CHM that inference wrote for ``naip_quad``.
+
+    The CHM is found with the pattern ``<naip stem>*chm*.tif``, the same one
+    ``scripts/slurm/run_chm_inference.sbatch`` uses to detect finished work.
+    """
+    from csdv_core.chm_inference.naip_gaps import mask_naip_gaps
+
+    outputs = sorted(output_dir.glob(f"{naip_quad.stem}*chm*.tif"))
+    if len(outputs) != 1:
+        logger.warning(
+            "Expected one CHM for %s in %s, found %d; NAIP gaps not masked",
+            naip_quad.name,
+            output_dir,
+            len(outputs),
+        )
+        return
+    mask_naip_gaps(naip_quad, outputs[0], edge_m=edge_m)
+
+
 def _resolve_repo_dir(repo_dir: Path | None) -> Path:
     if repo_dir is not None:
         return Path(repo_dir).resolve()
@@ -60,6 +83,8 @@ def predict_chm(
     chip_overlap: float | None = None,
     dry_run: bool = False,
     download_conditioning: bool = False,
+    mask_gaps: bool = True,
+    gap_edge_m: float | None = None,
 ) -> Path:
     """Run NAIP-CHM inference on a single NAIP AOI GeoTIFF.
 
@@ -79,6 +104,10 @@ def predict_chm(
         download_conditioning: If True, fetch any missing conditioning
             rasters (~1.65 GB) before validating. Off by default so inference
             jobs do not trigger a surprise download.
+        mask_gaps: Set CHM pixels without NAIP imagery to nodata after
+            inference (skipped for a dry run).
+        gap_edge_m: Width (m) of the band also masked around each gap.
+            Default from ``metrics.yaml``.
 
     Returns:
         Output directory path.
@@ -91,6 +120,7 @@ def predict_chm(
     defaults = load_metrics().chm_inference
     chip_size = chip_size if chip_size is not None else defaults.chip_size
     chip_overlap = chip_overlap if chip_overlap is not None else defaults.chip_overlap
+    gap_edge_m = gap_edge_m if gap_edge_m is not None else defaults.gap_edge_m
 
     repo = _resolve_repo_dir(repo_dir)
     inference_script = repo / "scripts" / "inference.py"
@@ -138,6 +168,8 @@ def predict_chm(
     result = subprocess.run(cmd, cwd=repo)
     if result.returncode != 0:
         raise RuntimeError(f"NAIP-CHM inference exited with code {result.returncode}")
+    if mask_gaps and not dry_run:
+        _mask_chm_outputs(naip_quad, output_dir, gap_edge_m)
     logger.info("Inference complete; outputs in %s", output_dir)
     return output_dir
 
@@ -174,6 +206,18 @@ def predict_chm(
     default=False,
     help="Fetch missing conditioning rasters (~1.65 GB) before inference.",
 )
+@click.option(
+    "--mask-gaps/--no-mask-gaps",
+    default=True,
+    show_default=True,
+    help="Set CHM pixels without NAIP imagery to nodata after inference.",
+)
+@click.option(
+    "--gap-edge-m",
+    default=None,
+    type=float,
+    help="Band (m) also masked around each NAIP gap. Default: metrics.yaml.",
+)
 def cli(
     naip_quad: Path,
     output_dir: Path,
@@ -183,6 +227,8 @@ def cli(
     chip_overlap: float | None,
     dry_run: bool,
     download_conditioning: bool,
+    mask_gaps: bool,
+    gap_edge_m: float | None,
 ) -> None:
     """Run NAIP-CHM inference on a single NAIP AOI GeoTIFF."""
     logging.basicConfig(
@@ -197,6 +243,8 @@ def cli(
         chip_overlap=chip_overlap,
         dry_run=dry_run,
         download_conditioning=download_conditioning,
+        mask_gaps=mask_gaps,
+        gap_edge_m=gap_edge_m,
     )
 
 

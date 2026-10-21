@@ -214,6 +214,10 @@ def naip_mosaic(
         identifiers, every acquisition date, the ground sample distances found
         and the grid written, which is what a later reader needs to judge
         whether two dates are comparable.
+
+    Pixels no quad reaches stay zero in every band and are flagged in an
+    internal dataset mask (0 = no imagery), so readers can tell a gap from
+    black imagery.
     """
     import numpy as np
     import rasterio
@@ -290,8 +294,12 @@ def naip_mosaic(
         "blockysize": 512,
         "BIGTIFF": "IF_SAFER",
     }
-    with rasterio.open(out_path, "w", **profile) as dst:
+    with (
+        rasterio.Env(GDAL_TIFF_INTERNAL_MASK=True),
+        rasterio.open(out_path, "w", **profile) as dst,
+    ):
         dst.write(mosaic)
+        dst.write_mask(written)
         dst.descriptions = NAIP_BANDS
 
     dates = [str(item.properties["datetime"]) for item in items]
