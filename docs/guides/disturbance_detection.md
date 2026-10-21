@@ -1,6 +1,6 @@
 # Disturbance detection from NAIP-CHM
 
-`csdv detect-disturbance` maps where forest canopy was lost between consecutive NAIP images and when. It takes the NAIP-derived canopy height models (CHMs) of one site, writes an onset map, a probability map, outlines of every detected object at 19.2 m and at 0.6 m, the standardized layers behind them, figures and a report. This guide explains the method, how to run it on a laptop and on CHPC, how to change it, and how to read and sample its output. Every function, parameter and output file is specified in [../disturbance_api.md](../disturbance_api.md).
+`csdv detect-disturbance` maps where forest canopy was lost between consecutive NAIP images and when. It takes the NAIP-derived canopy height models (CHMs) of one site, writes an onset map, a probability map, outlines of every detected object on 19.2 m cells (32 × 32 pixels of the 0.6 m CHM) and at 0.6 m, the standardized layers behind them, figures and a report. This guide explains the method, how to run it on a laptop and on CHPC, how to change it, and how to read and sample its output. Every function, parameter and output file is specified in [../disturbance_api.md](../disturbance_api.md). The [Glossary](#glossary) at the end defines the terms used here, and its [Rules](#rules) subsection compares the decision rules.
 
 ## What the method does
 
@@ -12,7 +12,7 @@ Each date's change is then converted to a z-score, a Disturbance Index (DI), aga
 
 The z-scores are turned into probabilities with Efron's empirical null. For each date, a normal curve is fitted to the centre of the monitored z histogram (between its quartiles), giving the null centre, its spread and the share of cells that follow it. The local false discovery rate then gives each cell a probability of loss. Decisions use the Bayes boundary, a probability above 0.5, rather than a tuned z threshold.
 
-Single cells are noisy, so the default rule (D6) asks for spatial support. The z field is smoothed with Gaussian kernels of 10 and 25 m, the null is refitted to each smoothed field, and a cell takes the larger of the two probabilities. A coherent patch stands out from the smoothed null while an isolated noisy cell does not. A cell is detected only when its own evidence also leans toward loss, so smoothing cannot grow a patch beyond its cells. D6 then multiplies that probability by the probability that the next date shows no rebound. A CHM failure that recovers at the next image is therefore suppressed, which is the probabilistic form of a persistence filter. The last interval has no next image and keeps the spatial-support probability without that check.
+Single cells are noisy, so the default rule (D6, see [Rules](#rules)) asks for spatial support. The z field is smoothed with Gaussian kernels of 10 and 25 m, the null is refitted to each smoothed field, and a cell takes the larger of the two probabilities. A coherent patch stands out from the smoothed null while an isolated noisy cell does not. A cell is detected only when its own evidence also leans toward loss, so smoothing cannot grow a patch beyond its cells. D6 then multiplies that probability by the probability that the next date shows no rebound. A CHM failure that recovers at the next image is therefore suppressed, which is the probabilistic form of a persistence filter. The last interval has no next image and keeps the spatial-support probability without that check.
 
 An optional rule, D7 ("bracketed"), tests each loss against the images on both sides of its interval instead of the gain at the next date. For the interval ending at date t it computes the spatial-support probability three times: for the one-step change h[t] − h[t−1], for the back change h[t] − h[t−2] and for the forward change h[t+1] − h[t−1]. Each two-step change is standardized like the main change (same window, same forest population) and gets its own null fits. The D7 probability is the smallest of the three. A spike in the earlier image vanishes in the back change and a dip in the later image vanishes in the forward change, so neither survives the minimum, while a real step down appears in all three. A check that does not exist is left out, so the first interval uses the forward check only and the last interval the back check only. D7s adds the strict cell test of D5s.
 
@@ -115,7 +115,7 @@ csdv detect-disturbance --site ElkinsvilleNE --config my_params.yaml \
     --output-dir results/disturbance/ElkinsvilleNE_custom
 ```
 
-The rules are D1 (z of −3 or lower, the per-cell baseline), D2 (per-cell probability above the boundary), D5 (spatial support), D6 (spatial support and persistence), D7 (spatial support bracketed by the images before and after the interval) and the strict D5s, D6s and D7s, which also require the cell's own probability to pass the boundary. D7 and D7s write two extra z stacks (`_back2` and `_fwd2`) to `z/`. The methods are `scene` (median and MAD over all forest), `scenemean` (mean and SD), `local` (one window pass) and `local_twopass` (the default).
+`--rule` chooses the decision rule: D1, D2, D5, D6 (the default), D7 or one of the strict variants D5s, D6s and D7s. The [Rules](#rules) subsection of the glossary states what each rule requires and compares them. D7 and D7s write two extra z stacks (`_back2` and `_fwd2`) to `z/`. `--method` chooses the standardization: `scene` (median and MAD over the whole site), `scenemean` (mean and standard deviation over the whole site), `local` (one window pass) or `local_twopass` (two window passes, the default). The [Glossary](#glossary) defines each of these terms.
 
 ## The output folder rule
 
@@ -132,7 +132,7 @@ csdv detect-disturbance --site ElkinsvilleNE \
     --output-dir results/disturbance/ElkinsvilleNE_D6s_p07
 ```
 
-The `inputs`, `grid`, `forest` and `standardize` sections shaped the saved layers and z stack, so the rerun takes them from the saved run's `run_params.json`, and options given to the first run (for example `--years` or `--window-m`) need not be repeated. Passing one of these options, or setting one of these keys in a `--config` file, is allowed only when the value equals the saved one. A different value stops the command before anything is written, with a list of every difference. The rule, boundary, minimum mapping unit, refinement and figure settings may change. They come from the packaged defaults, the rerun's `--config` file and its options, not from the saved run. The site must also match. The saved layers and z stack are copied into the new folder, so it is complete on its own and can serve as `--from-run` in turn. Refinement (on by default) and the NAIP backdrop still read the 0.6 m source rasters. In that case the site's files are discovered again (file metadata only), and the CHMs, plus NAIP for a backdrop, must still be under `$CSDV_DATA_ROOT`. Add `--no-refine` to rerun without them. The result goes to a new folder, as always.
+The `inputs`, `grid`, `forest` and `standardize` sections shaped the saved layers and z stack, so the rerun takes them from the saved run's `run_params.json`, and options given to the first run (for example `--years` or `--window-m`) need not be repeated. Passing one of these options, or setting one of these keys in a `--config` file, is allowed only when the value equals the saved one. A different value stops the command before anything is written, with a list of every difference. The rule, boundary, minimum mapping unit, refinement and figure settings may change. They come from the packaged defaults, the rerun's `--config` file and its options, not from the saved run. A changed boundary or smoothing scale then affects the decision only. In a fresh run with `local_twopass`, both also choose the cells left out of the second window pass, so a fresh run can give slightly different z and detections than a rerun with the same settings. The site must also match. The saved layers and z stack are copied into the new folder, so it is complete on its own and can serve as `--from-run` in turn. Refinement (on by default) and the NAIP backdrop still read the 0.6 m source rasters. In that case the site's files are discovered again (file metadata only), and the CHMs, plus NAIP for a backdrop, must still be under `$CSDV_DATA_ROOT`. Add `--no-refine` to rerun without them. The result goes to a new folder, as always.
 
 A rerun with `--rule D7` or `--rule D7s` reuses the saved two-step z stacks when the source run has them and otherwise computes them from the saved layers. A D6 run can therefore be re-decided as D7 without the source rasters:
 
@@ -247,3 +247,144 @@ The strata, sample sizes and the use of the maximum probability over dates are e
 | Detections in the last interval look doubtful | That interval has no later image, so D6 cannot check it for a rebound and D7 checks it against the image two dates back only. Such objects have `follow_up` False. Treat them as unconfirmed until the next NAIP year arrives |
 | Many detections in one interval that come back at the next image | An image spike or dip, often with a season mismatch between the two images (see the report caveats). Compare with a `--from-run --rule D7 --no-refine` rerun |
 | Process killed on WSL | Memory pressure. Lower `GDAL_CACHEMAX`, close other programs, or run on CHPC |
+
+## Glossary
+
+Terms are listed alphabetically, and the [Rules](#rules) subsection compares the decision rules. Sizes assume the default 19.2 m cell on a 0.6 m CHM. Example values come from the default runs on LincolnNH and NorthMaine (NorthMaine without 2023) and change from date to date.
+
+### Terms
+
+**Back change.** The two-step change h[t] − h[t−2] that rule D7 checks for the interval ending at date t. It skips the earlier image of the interval (t − 1), so a canopy that only looks tall in that image (a spike) shows no loss in the back change. It is standardized like the one-step change and saved as the `_back2` z stack.
+
+**Baseline.** D1 is called the per-cell baseline because it is the simplest rule, a fixed z cut applied to each cell on its own (the NISAR-style rule), and the probabilistic rules were measured against it. In `scripts/compare_disturbance_runs.py` the baseline is instead the first `--run`, the run that every other variant is compared with. Neither use refers to a baseline period of images.
+
+**Boundary (Bayes decision boundary).** The probability a cell must exceed to be called a loss, `decide.p_boundary` (`--p-boundary`, default 0.5). At 0.5 a cell is called when loss is more likely than no loss. The run label p09 means a boundary of 0.9. Probability rises steeply in the tail of the z histogram, so a higher boundary moves the z cutoff only a little: from 0.5 to 0.9 the per-cell cutoff on LincolnNH moved from about −3.5 to −4.1 and the 25 m cutoff from about −1.7 to −1.9. `local_twopass` also uses the boundary to choose the cells it leaves out of its second window pass (see two pass).
+
+**Bracketed spatial support.** The decision probability of rule D7, the smallest of three spatial-support probabilities: one for the one-step change h[t] − h[t−1], one for the back change and one for the forward change. Each comes from its own z stack with its own null fits. A loss passes only when it holds against the images on both sides of the interval. A check that does not exist (the back change in the first interval, the forward change in the last) is left out of the minimum.
+
+**Cell.** The unit of every decision, a square of 32 × 32 pixels of the 0.6 m CHM (19.2 m on a side, 0.0369 ha). Its value is the mean CHM height of its valid pixels, and it is left empty when fewer than half of its pixels are valid (`grid.min_valid_share`). The cell size is the grain.
+
+**Cell test.** The test on a cell's own evidence that the spatial rules (D5, D6 and D7) add to the neighbourhood test, so that smoothing cannot spread a detection into neighbouring forest that shows no loss. The guide calls a cell that passes it one whose evidence "leans toward loss". The plain rules ask that the per-cell probability exceed the prior. With the prior at its 0.01 floor, as on most dates so far, this passes nearly any cell whose z is below the null centre (about z < 0). The strict rules ask that the per-cell probability exceed the boundary, which is the D2 test.
+
+**Date and interval.** A date is one NAIP year, indexed t. An interval is the pair of consecutive dates t − 1 and t and is written with both years (2018-2021). Rasters with one band per date, such as `probability.tif` and the z stacks, store each interval under its later year, and the first date has no interval.
+
+**Disturbance Index (DI).** Another name for z.
+
+**Efron's empirical null.** The distribution of z expected for unchanged forest on one date, fitted from the data instead of assuming that z is standard normal (Efron, 2004, *Journal of the American Statistical Association* 99: 96–104). A normal curve N(μ0, σ0) is fitted to the centre of the histogram of monitored z, between its quartiles (`decide.pct0`), where nearly all cells are unchanged forest. The fit gives the null centre μ0, the null spread σ0 and the null share p0, the share of cells that follow the curve. Each date, each smoothing scale and each D7 check gets its own fit, so a date with noisier CHMs gets a wider null and needs a stronger change for the same probability. The raw z nulls of LincolnNH and NorthMaine had σ0 of 0.95 to 1.09. The report's null-fit table and `null_fits.png` show the fits.
+
+**Forest.** A cell where at least half of the valid pixels are taller than 5 m (`forest.min_cover`, `forest.height_m`).
+
+**Forward change.** The two-step change h[t+1] − h[t−1] that rule D7 checks for the interval ending at date t. It skips the later image of the interval (t), so a canopy that only looks short in that image (a dip) shows no loss in the forward change. It is saved as the `_fwd2` z stack.
+
+**Gain probability.** The probability that a change is a real height gain, from the upper tail of the z histogram. D6 computes it on the smoothed z of the next interval to detect a rebound.
+
+**Grain.** The cell size, `grid.grain_m` (`--grain-m`, default 19.2 m), rounded to a whole number of CHM pixels: 9.6 m is 16 × 16 pixels and 38.4 m is 64 × 64 at 0.6 m. On ElkinsvilleNE the hit rate rose from 0.47 at 2.4 m to 0.70 at 19.2 m and levelled off at 38.4 m, because finer cells broke partial and wind disturbance into fragments smaller than the MMU.
+
+**h.** The cell mean CHM height of one date, so h[t] − h[t−1] is the one-step change of the interval ending at t.
+
+**lfdr (local false discovery rate).** The probability that a cell with a given z belongs to the null: lfdr(z) = p0 f0(z) / f(z), where f0 is the fitted null curve and f is the smoothed histogram of all monitored cells. The probability of loss is P = 1 − lfdr. The test is one-sided, so a z at or above the null centre gets P = 0, and P is forced to rise steadily as z falls.
+
+**Local.** Standardization against the forest in the window around each cell instead of the whole scene (`--method local`, one window pass). It removes broad, smoothly varying height bias between CHM years, which `scene` standardization turns into false patches once z is smoothed.
+
+**MAD.** The median absolute deviation, the median distance of the values from their median, multiplied by 1.4826 so that it equals the standard deviation for normally distributed data. Extreme values such as clearcuts affect it much less than the standard deviation. `scene` divides by the MAD, and the local methods use the scene MAD to trim and floor their window statistics.
+
+**MMU (minimum mapping unit).** The smallest object kept, `mmu.mmu_ha` (`--mmu-ha`, default 0.405 ha or 1 acre, which is 11 cells at 19.2 m). It is applied after the rule, so it drops small objects but never changes which cells pass. Refined envelopes must reach the same area. The run label mmu1 means 1 ha (28 cells, 1.03 ha).
+
+**Monitored.** A cell is monitored in an interval when it was forest at the earlier date. A cleared cell stops being monitored once its canopy is gone, and the first date is never monitored.
+
+**Near miss.** An object that passed the rule but was smaller than the MMU. `csdv disturbance-chips` samples near misses of at least half the MMU.
+
+**Object.** Detected cells that share an onset and touch, diagonally included (8-connected).
+
+**Onset.** The first interval in which a cell is detected. `onset_year.tif` stores the later year of that interval, 0 for monitored cells never detected and −1 for cells never monitored. Each cell has at most one onset, so a second loss on the same cell is not mapped.
+
+**p, P and p0.** Three different quantities. Lowercase p in a run label (p09) is the boundary. Capital P is a probability of loss, 1 − lfdr. p0 is the null share of the empirical null.
+
+**Per-cell probability.** P computed from the cell's own unsmoothed z under the date's empirical null. D2 and the strict cell test compare it with the boundary, and the plain cell test compares it with the prior. On LincolnNH and NorthMaine it exceeded 0.5 at a z of about −2.8 to −3.6, depending on the date.
+
+**Persistence.** The factor that turns D5 into D6. The spatial-support probability of an interval is multiplied by 1 − P_gain, where P_gain is the gain probability of the same cell at the next interval (the larger of its values at the two smoothing scales). A loss that comes back at the next image, as when a CHM failure recovers, is suppressed. Because the factor multiplies, a loss with a probability near 1 survives a moderate rebound probability (0.99 × 0.6 = 0.59). The last interval has no next image and keeps its spatial-support probability.
+
+**Population.** The cells whose statistics set the reference for z on a date: the forest of the earlier date. The local methods use only the population cells inside each window, and the second pass of `local_twopass` also leaves out the cells with supported loss.
+
+**Prior.** The expected share of disturbed cells on a date, 1 − p0, floored at 0.01 (`decide.min_prior`). On most dates of LincolnNH and NorthMaine the null took in every cell (p0 = 1), so the prior sat at the floor.
+
+**Refinement and envelope.** The redraw of each object from the 0.6 m CHM pair. The height change around the object is standardized against a ring of forest outside it, pixels with a loss probability above 0.5 within 10 m of the object become openings, and the openings are closed into an envelope that follows canopy openings rather than cell edges. Envelopes smaller than the MMU are dropped.
+
+**Run label.** The suffix of a run folder that names the one setting changed from the defaults, such as D6s, p09, sig10 and mmu1 (see [Run labels](#run-labels)).
+
+**Scene.** The whole site grid on one date, which is the area that all years cover. `--method scene` standardizes each date with the median and MAD of all population cells, and `scenemean` with their mean and standard deviation. The local methods fall back to the scene statistics in windows with too little forest.
+
+**Sigma (σ, smoothing scale).** The standard deviation, in metres, of the Gaussian kernel that smooths z for spatial support (`decide.spatial_sigma_m`, default 10 and 25 m). The smoothed z of a cell is a weighted mean over the monitored cells around it, with non-forest neighbours left out and the weights rescaled. At 19.2 m cells, σ = 10 m (0.52 cells) gives the cell itself 58% of the weight and its eight neighbours the rest, so it acts nearly as a per-cell test that a strong single cell can pass. σ = 25 m (1.30 cells) gives the cell 9%, its 3 × 3 block 58% and its 5 × 5 block (96 m) 90%, so the loss must be shared by a patch of cells. The run label sig10 means the 10 m scale only. Do not confuse σ with σ0, the spread of the null.
+
+**Spatial support.** The decision probability of rule D5, which D6 and D7 build on. z is smoothed at each sigma, an empirical null is fitted to each smoothed field, and the cell takes the larger of the two probabilities. Smoothing averages noise down (smoothed σ0 of about 0.75 at 10 m and 0.45 at 25 m, against about 1 for raw z), while a patch whose cells all lost height keeps most of its depth. A coherent patch therefore stands far out from the smoothed null and an isolated noisy cell does not. On LincolnNH and NorthMaine a cell passed 0.5 at a smoothed z of about −2.1 to −2.7 at 10 m or −1.2 to −1.8 at 25 m.
+
+**Spike, dip and rebound.** Artefacts of a single image. A spike is canopy that looks taller in one image than in the images on either side, so the interval after it shows a loss that is not real. A dip is canopy that looks shorter in one image, which shows as a loss in the interval ending at that image and a gain (a rebound) in the next. D6 suppresses losses followed by a rebound and so removes dips, while D7 removes spikes with its back check and dips with its forward check.
+
+**Strict.** The s suffix (D5s, D6s and D7s). The cell test uses the boundary instead of the prior, so a cell must pass D2 on its own as well as have spatial support.
+
+**Two pass.** The default method, `local_twopass`. The first window pass gives z, from which the spatial-support probability is computed (without a cell test). Cells above the boundary leave the population, and the second pass recomputes the window mean and standard deviation without them, so a large disturbance does not set its own reference. Because the second pass depends on `decide.p_boundary` and `decide.spatial_sigma_m`, a fresh run that changes either also changes z. On NorthMaine the p09 run changed 31% of the z values, with a median shift of 0.03 and 0.8% of all values shifted by more than 0.5. A `--from-run` rerun keeps the saved z.
+
+**Window.** The square of cells around each cell that the local methods use, `standardize.window_m` (`--window-m`, default 150 m) rounded to an odd number of cells: 9 × 9 cells at 19.2 m (172.8 m, about 3 ha). The window mean and standard deviation come from its population cells, with three guards. Cells beyond ±3 scene z are left out (`trim_z`), windows with less than 20% valid forest use the scene statistics (`min_frac`), and the window standard deviation never falls below a quarter of the scene MAD (`sd_floor`).
+
+**Window pass.** One computation of the window mean and standard deviation over the population, and the z that follows from them. `local` makes one pass and `local_twopass` two.
+
+**z.** The standardized change of a cell over one interval, also called the Disturbance Index (DI). With the default input, z = (Δh − m) / s, where Δh = h[t] − h[t−1], and m and s are the mean and standard deviation of Δh over the population cells in the cell's window (the median and MAD over the scene for `scene`). Negative z means the cell lost more height than the forest around it. On LincolnNH and NorthMaine the median window standard deviation was 0.6 to 1.0 m, so z = −3 meant a drop about 2 to 3 m larger than in the surrounding forest. The z stacks in `z/` store 100 z as int16.
+
+### Rules
+
+Every rule answers the same question for each monitored cell and interval: did the cell lose canopy between dates t − 1 and t? Onset, objects, the MMU and refinement then work the same way for all rules. The rules differ in three things: the test on the cell's own z, whether its neighbourhood must show the loss too, and how many images must agree. The table summarizes them. Its last column gives the hit rate against the pooled ElkinsvilleNE reference (77 polygons) and the commission, both on 19.2 m cells with the 1-acre MMU and before refinement.
+
+| Rule | What must hold for the interval t − 1 to t | Space | Images | ElkinsvilleNE |
+|---|---|---|---|---|
+| D1 | z ≤ −3 | cell | t − 1, t | 0.49, 70 ha |
+| D2 | per-cell P > boundary | cell | t − 1, t | 0.61, 79 ha |
+| D3 | D2, then each cluster scored against the mirrored image | cluster | t − 1, t | research only |
+| D4 | per-cell evidence summed over dates > boundary | cell | every date up to t | research only |
+| D5 | spatial support > boundary, and per-cell P > prior | 10 or 25 m neighbourhood | t − 1, t | 0.70, 116 ha |
+| D5s | spatial support > boundary, and per-cell P > boundary | 10 or 25 m neighbourhood | t − 1, t | 0.62, 80 ha |
+| D6 (default) | spatial support × (1 − gain at t + 1) > boundary, and per-cell P > prior | 10 or 25 m neighbourhood | t − 1, t, t + 1 | 0.70, 48 ha |
+| D6s | as D6, with per-cell P > boundary | 10 or 25 m neighbourhood | t − 1, t, t + 1 | 0.61, 13 ha |
+| D7 | bracketed spatial support > boundary, and per-cell P > prior | 10 or 25 m neighbourhood | t − 2 to t + 1 | 0.42, 3.6 ha |
+| D7s | as D7, with per-cell P > boundary | 10 or 25 m neighbourhood | t − 2 to t + 1 | not tested |
+
+**D1, fixed cut.** The cell's z is −3 or lower. Space: the cell alone. Time: one image pair. No probability is computed, and the cut stays the same on every date whatever the CHM quality. Many D1 detections are scattered single cells, and the MMU removed 59% of the D1 area on ElkinsvilleNE.
+
+**D2, per-cell probability.** The cell's per-cell probability exceeds the boundary. Space: the cell alone. Time: one image pair. The cutoff adapts to each date through the empirical null (about z ≤ −2.8 to −3.6 on LincolnNH and NorthMaine), but single cells remain noisy, and the MMU removed 68% of the D2 area on ElkinsvilleNE.
+
+**D3 and D4, research only.** Neither is available in `csdv detect-disturbance`. D3 grouped D2 cells into clusters and scored each cluster against the clusters of the mirrored image (2μ0 − z), which shares the image's spatial noise but cannot contain loss. CHM noise produces false losses more often than false gains, so the mirrored image understated false clusters, and after the MMU D3 scored the same as D2. D4 summed per-cell evidence over dates (a CUSUM-style recursion) so that weak but repeated loss would build up, and its variant D4c required the loss to recur at the next date. Both were tested on height and cover rather than on their change and mostly flagged persistent stand structure such as young stands, edges and old gaps. The research scripts also tested D1n2 (z ≤ −3 at two consecutive dates) and D2bh (a Benjamini–Hochberg false discovery rate of 5%).
+
+**D5, spatial support.** The 10 m or the 25 m smoothed z passes the boundary under its own null, and the cell's own z leans toward loss (per-cell P above the prior). Space: at 10 m the cell and its eight neighbours, with most weight on the cell, and at 25 m a block of about 5 × 5 cells (96 m). Time: one image pair.
+
+**D6, spatial support and persistence (default).** D5 holds, and the cell does not regain height at the next interval: the D5 probability times 1 − P_gain of the next interval still exceeds the boundary. Space: as D5. Time: three images (t − 1, t and t + 1). The last interval has no next image and is decided as D5.
+
+**D7, bracketed spatial support.** Spatial support holds for the one-step change and for both two-step changes, so the loss appears whichever image before or after the interval it is compared with. Space: as D5. Time: four images (t − 2 to t + 1). The first interval has only the forward check and the last only the back check. D7 replaces the persistence factor of D6 rather than adding to it.
+
+**Strict variants (D5s, D6s and D7s).** As the plain rule, but the cell test is the D2 test: the cell's per-cell probability must also exceed the boundary. A strict rule therefore detects only cells that D2 would detect on their own and that also have neighbourhood support. Patches shrink to their strongest cells, and weak or partial loss drops out along with most commission.
+
+#### The tests in z
+
+The cutoffs below show what each test asks of z on LincolnNH and NorthMaine. They span the dates of both sites, with NorthMaine at the less negative end. The last column assumes a patch of equal z in continuous, otherwise unchanged forest and gives the z every cell of the patch needs for its centre cell to pass.
+
+| Test | Tested on | Boundary 0.5 | Boundary 0.9 | What it takes at 0.5 |
+|---|---|---|---|---|
+| D1 | raw z | −3.0 | −3.0 (fixed) | one cell at −3 |
+| Plain cell test | raw z | about 0 | about 0 | any cell below the null centre |
+| D2, strict cell test | raw z | −2.8 to −3.6 | −3.4 to −4.2 | one cell at the cutoff |
+| Spatial support, 10 m | smoothed z | −2.1 to −2.7 | −2.7 to −3.2 | a lone cell at −3.6 to −4.7, or a 3 × 3 patch at −2.1 to −2.7 |
+| Spatial support, 25 m | smoothed z | −1.2 to −1.8 | −1.5 to −2.1 | a 3 × 3 patch (0.33 ha) at −2.1 to −3.1, or a 5 × 5 patch (0.92 ha) at −1.3 to −2.0 |
+
+The plain cell test was stricter only on NorthMaine 2018-2021, where the null share fell to 0.94 and the cutoff to about −2.0. The table also explains the run labels. A boundary of 0.9 moves the cutoffs by 0.2 to 0.3 z at 25 m, 0.4 to 0.6 at 10 m and 0.6 to 0.7 on raw z, so p09 trims the edges and the weakest patches. Without the 25 m scale (sig10), a broad patch of moderate loss must reach the 10 m cutoff in each 3 × 3 block, so wide partial harvests drop out. The strict cell test asks each cell to reach −2.8 to −3.6 by itself, which keeps only the cores of strong patches. The MMU acts after the rule and removes whole objects below its size.
+
+#### Run labels
+
+The comparison runs of LincolnNH and NorthMaine are named by the one setting changed from the defaults. Detected areas are after the MMU, and NorthMaine was run without 2023.
+
+| Label | Changed setting | How to set it | LincolnNH (ha) | NorthMaine (ha) |
+|---|---|---|---|---|
+| D6 | none (defaults) | | 85.2 | 2,747 |
+| D6s | strict cell test | `--rule D6s` | 30.8 | 2,022 |
+| p09 | boundary of 0.9 | `--p-boundary 0.9` | 54.7 | 2,280 |
+| sig10 | 10 m smoothing only | `decide: spatial_sigma_m: [10.0]` in a `--config` YAML | 39.4 | 2,093 |
+| mmu1 | MMU of 1 ha | `--mmu-ha 1.0` | 57.3 | 2,605 |
+
+D6s and mmu1 decide on the same z stack as D6. The p09 and sig10 runs were run from scratch, so their z differs slightly from the default (see two pass), and a `--from-run` rerun with the same settings would not reproduce them exactly.
