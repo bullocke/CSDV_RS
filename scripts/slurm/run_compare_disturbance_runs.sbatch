@@ -11,7 +11,8 @@
 #SBATCH --output=%x-%j.out
 #
 # Compare detect-disturbance runs of one site (area, overlap, event size) and
-# draw chips with every variant's outlines over the same NAIP images
+# draw chips with every variant's polygons of every interval over the same NAIP
+# images
 # (scripts/compare_disturbance_runs.py). NAIP windows are read from the site's
 # mosaics under $CSDV_DATA_ROOT: `--naip-source local` is passed first, so a
 # later --naip-source on the command line wins. Every argument is passed to the
