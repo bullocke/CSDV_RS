@@ -23,6 +23,10 @@
 #   6. Vectorize, compute area and area-equivalent diameter, drop noise.
 #   7. Optionally write a crown-diameter CV raster on a grid.
 #
+# Each step prints a "TIMING <step> <seconds>" line, and the script ends with
+# "PEAK_RSS_KB <kB>" read from /proc/self/status. lidr_bridge parses both, so
+# the national cost benchmark can time lidR stage by stage.
+#
 # Usage
 # -----
 #   Rscript crown_segmentation.R --chm=<in.tif> --out-crowns=<out.gpkg> \
@@ -67,6 +71,20 @@ arg_chr <- function(args, name, default = NULL) {
 
 args <- parse_args(commandArgs(trailingOnly = TRUE))
 
+.t_last <- proc.time()[["elapsed"]]
+lap <- function(step) {
+  now <- proc.time()[["elapsed"]]
+  cat(sprintf("TIMING %s %.4f\n", step, now - .t_last))
+  .t_last <<- now
+}
+
+peak_rss_kb <- function() {
+  if (!file.exists("/proc/self/status")) return(NA_real_)
+  line <- grep("^VmHWM:", readLines("/proc/self/status"), value = TRUE)
+  if (length(line) == 0) return(NA_real_)
+  as.numeric(gsub("[^0-9]", "", line))
+}
+
 chm_path   <- arg_chr(args, "chm")
 out_crowns <- arg_chr(args, "out_crowns")
 if (is.null(chm_path) || is.null(out_crowns)) {
@@ -103,6 +121,7 @@ if (scale_factor != 1.0) chm <- chm * scale_factor
 pixel_size_m <- mean(terra::res(chm))
 cat("CHM   :", chm_path, "\n")
 cat("Pixel :", pixel_size_m, "m\n")
+lap("load")
 
 # ---------------------------------------------------------------------------
 # 2. Smooth. Radius in metres -> odd kernel in pixels, matching
@@ -117,11 +136,13 @@ if (kernel_px > 1) {
 } else {
   chm_smooth <- chm
 }
+lap("smooth")
 
 # ---------------------------------------------------------------------------
 # 3. Canopy floor
 # ---------------------------------------------------------------------------
 chm_smooth[chm_smooth < min_height_m] <- NA
+lap("mask")
 
 # ---------------------------------------------------------------------------
 # 4. Tree tops. ws is the search window DIAMETER in metres, which is what
@@ -134,6 +155,7 @@ ttops <- lidR::locate_trees(
   chm_smooth, lidR::lmf(ws = ws_fun, hmin = min_height_m, shape = "circular")
 )
 cat("Tops  :", nrow(ttops), "\n")
+lap("seeds")
 if (nrow(ttops) == 0) stop("No tree tops detected")
 
 # ---------------------------------------------------------------------------
@@ -146,6 +168,7 @@ algo <- lidR::dalponte2016(
   th_tree = min_height_m, th_seed = th_seed, th_cr = th_cr, max_cr = max_cr_px
 )
 crown_raster <- algo()
+lap("grow")
 
 # ---------------------------------------------------------------------------
 # 6. Vectorize
@@ -173,6 +196,7 @@ crown_sf$apex_h_m <- as.numeric(tt[[height_col]])[match_idx]
 crown_sf$seed_x <- tt_coords[match_idx, 1]
 crown_sf$seed_y <- tt_coords[match_idx, 2]
 
+lap("vectorize")
 cat("Crowns:", nrow(crown_sf), "\n")
 cat("Diam  :", round(range(crown_sf$crown_diam_m), 2), "m\n")
 cat("Mean  :", round(mean(crown_sf$crown_diam_m), 2), "m\n")
@@ -180,6 +204,7 @@ cat("Mean  :", round(mean(crown_sf$crown_diam_m), 2), "m\n")
 sf::st_write(crown_sf, out_crowns, layer = "crowns",
              delete_dsn = TRUE, quiet = TRUE)
 cat("Saved :", out_crowns, "\n")
+lap("write")
 
 # ---------------------------------------------------------------------------
 # 7. Optional crown-diameter CV raster
@@ -206,4 +231,5 @@ if (!is.null(out_cv_raster)) {
   cat("Saved :", out_cv_raster, "\n")
 }
 
+cat(sprintf("PEAK_RSS_KB %.0f\n", peak_rss_kb()))
 cat("=== done ===\n")

@@ -29,7 +29,7 @@ from csdv_core.segmentation.params import DEFAULT_PARAMS, SegmentationParams
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["run_lidr_segmentation", "lidr_available"]
+__all__ = ["run_lidr_segmentation", "lidr_available", "parse_r_timings"]
 
 
 def _rscript_path() -> str:
@@ -73,9 +73,11 @@ def run_lidr_segmentation(
     *,
     params: SegmentationParams = DEFAULT_PARAMS,
     scale_factor: float = 1.0,
+    th_seed: float = 0.45,
     out_cv_raster: Path | str | None = None,
     cv_grid_m: float = 50.0,
     cv_min_crowns: int = 3,
+    timings: dict[str, float] | None = None,
 ) -> Path:
     """Run the packaged lidR crown segmentation.
 
@@ -88,9 +90,16 @@ def run_lidr_segmentation(
             only in how they grow a crown from a tree top.
         scale_factor: Multiplier applied to raw CHM values. Use ``0.01`` for
             the uint16 NAIP-CHM product and ``1.0`` for float metre CHMs.
+        th_seed: ``dalponte2016`` growth rule. A pixel joins a crown only while
+            it is above ``th_seed`` times the crown's seed height. The Python
+            engine has no equivalent. The default is lidR's own.
         out_cv_raster: Optional crown-diameter CV raster. Skipped when None.
         cv_grid_m: Grid size for that raster.
         cv_min_crowns: Minimum crowns per cell before a CV is written.
+        timings: Optional dict that receives wall seconds per R step (``load``,
+            ``smooth``, ``mask``, ``seeds``, ``grow``, ``vectorize``,
+            ``write``) and ``peak_rss_mb``, the R process's peak resident
+            memory.
 
     Returns:
         ``Path(out_crowns)``.
@@ -126,6 +135,7 @@ def run_lidr_segmentation(
         f"--ws-hi={window.hi:g}",
         f"--smooth-radius-m={params.smooth_radius_m:g}",
         f"--min-height-m={params.min_height_m:g}",
+        f"--th-seed={th_seed:g}",
         f"--th-cr={params.th_cr:g}",
         f"--max-crown-radius-m={max_radius_m:g}",
         f"--min-crown-area-m2={params.min_crown_area_m2:g}",
@@ -150,4 +160,22 @@ def run_lidr_segmentation(
         raise RuntimeError(
             f"lidR segmentation failed with exit code {result.returncode}"
         )
+    if timings is not None:
+        timings.update(parse_r_timings(result.stdout))
     return out_crowns
+
+
+def parse_r_timings(stdout: str) -> dict[str, float]:
+    """Read the ``TIMING`` and ``PEAK_RSS_KB`` lines the R script prints.
+
+    Returns:
+        Seconds per step, plus ``peak_rss_mb`` when R could read it.
+    """
+    out: dict[str, float] = {}
+    for line in stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 3 and parts[0] == "TIMING":
+            out[parts[1]] = out.get(parts[1], 0.0) + float(parts[2])
+        elif len(parts) == 2 and parts[0] == "PEAK_RSS_KB" and parts[1] != "NA":
+            out["peak_rss_mb"] = float(parts[1]) / 1024.0
+    return out

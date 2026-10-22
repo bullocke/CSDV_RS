@@ -40,6 +40,15 @@ dependencies:
   # Point cloud / lidar
   - laspy
 
+  # R reference crown engine (csdv_core.segmentation.lidr_bridge runs
+  # segmentation/scripts/crown_segmentation.R through Rscript). Needed on CHPC
+  # for the national crown benchmark, which compares lidR dalponte2016 with
+  # the Python watershed engine.
+  - r-base
+  - r-lidr
+  - r-terra
+  - r-sf
+
 
   # Topographic analysis (Phase 4 stratification)
   - richdem

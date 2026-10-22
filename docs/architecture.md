@@ -75,10 +75,10 @@ See [metrics.md](metrics.md) for every metric both paths produce.
 |---|---|
 | `config/` | YAML: sites, site types, metric defaults, satellite settings, stage envelopes, trajectory rules. Pydantic models, `extra="forbid"` |
 | `io/` | rasterio/geopandas wrappers, AIS stand polygon reader, env-driven path resolver, metric and satellite parquet contracts |
-| `download/` | NAIP (GEE and Planetary Computer), NAIP-CHM weights and conditioning rasters. NEON and 3DEP/SSURGO not yet written |
+| `download/` | NAIP (GEE, Planetary Computer, USDA image service), NAIP-CHM weights and conditioning rasters, national NAIP-CHM tiles over HTTP (`naip_chm_http.py`). NEON and 3DEP/SSURGO not yet written |
 | `preprocess/` | NAIP mosaic and reprojection, CHM smoothing and masking, window tiling |
 | `chm_inference/` | NAIP-CHM model wrapper (CHPC + Colab parity) + the 5 static CONUS conditioning rasters |
-| `segmentation/` | crown segmentation: watershed (Python), `lidR` (rpy2). DeepForest not yet written |
+| `segmentation/` | crown segmentation: watershed (Python), `lidR` `dalponte2016` through `Rscript`. Both report per-stage timings on request. DeepForest not yet written |
 | `metrics/` | fixed-window raster path. 15 registered metrics, 4 wired in the orchestrator. Keyed to `(array, GridSpec, window_m)` |
 | `zonal/` | default path. Per-stand, per-date metrics inside a polygon. Pure `(array, mask) -> float`, no `window_m` |
 | `satellite/` | Landsat C2 L2 per-stand series from Earth Engine plus 3 annual metrics. Sensor, index and annual-metric registries. The only networked analysis module |
@@ -88,6 +88,8 @@ See [metrics.md](metrics.md) for every metric both paths produce.
 | `examples/` | stand screening for worked examples. Manifest tools and vocab not yet written |
 | `change/` | Disturbance Index algorithms shared by the research scripts and `disturbance/`: standardization (`di.py`), empirical null, lfdr and spatial probabilities (`di_decide.py`), 0.6 m outline refinement (`refine.py`) |
 | `disturbance/` | `csdv detect-disturbance` pipeline. NAIP-CHM years to cell layers, DI z stacks, decision rule, onset and MMU, objects with 0.6 m outlines, figures and a Markdown and JSON report. Defaults reproduce the best ElkinsvilleNE method. See [disturbance_api.md](disturbance_api.md) |
+| `national/` | feasibility tooling for a CONUS crown and AGB map from the national NAIP-CHM: tile inventory with nominal quarter-quad cells, overview canopy census, block-level engine benchmark (`csdv benchmark-crowns`), national cost model |
+| `biomass/` | crown-level AGB allometry (Jucker et al. 2017). Pure functions |
 | `viz/` | maps, metric trajectory panels, height histograms, scatter, shared style |
 | `validation/` | scatter, R², RMSE, Kruskal-Wallis, Dunn's |
 | `check.py` | `csdv check` preflight: environment, paths, configs, per-site pipeline state |
@@ -128,8 +130,9 @@ Three areas are implemented but do not yet cover their intended scope.
 ```
 csdv info
 csdv check
-csdv download {naip,chm,conditioning}
+csdv download {naip,naip-pc,naip-rest,chm,conditioning,naip-chm-http}
 csdv segment-crowns
+csdv benchmark-crowns            # time crown engines over one national tile
 csdv chm-inference
 csdv stratify
 csdv compute-metrics              # raster path

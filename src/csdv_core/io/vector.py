@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import geopandas as gpd
 
@@ -19,14 +20,21 @@ def write_vector(
     gdf: gpd.GeoDataFrame,
     path: Path | str,
     driver: str | None = None,
+    **kwargs: Any,
 ) -> Path:
     """Write a GeoDataFrame, inferring driver from extension if not given.
+
+    Parquet is written as GeoParquet with zstd compression unless ``kwargs``
+    say otherwise. zstd packs crown polygons tighter than the snappy default,
+    which matters at national scale.
 
     Args:
         gdf: Frame to write.
         path: Output file path.
         driver: Optional Fiona driver name (e.g. ``"GPKG"``, ``"GeoJSON"``).
             If omitted, the driver is inferred from the file extension.
+        **kwargs: Passed to :meth:`~geopandas.GeoDataFrame.to_parquet` or
+            :meth:`~geopandas.GeoDataFrame.to_file`.
 
     Returns:
         ``Path(path)``.
@@ -43,7 +51,8 @@ def write_vector(
             ".parquet": "Parquet",
         }.get(ext)
     if driver == "Parquet":
-        gdf.to_parquet(path)
+        kwargs.setdefault("compression", "zstd")
+        gdf.to_parquet(path, **kwargs)
     else:
-        gdf.to_file(path, driver=driver)
+        gdf.to_file(path, driver=driver, **kwargs)
     return path

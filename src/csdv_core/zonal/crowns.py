@@ -47,6 +47,7 @@ __all__ = [
     "DIAMETER_COLUMN",
     "MIN_CROWNS",
     "CrownStats",
+    "clip_to_cell",
     "crown_diameter_stats",
     "crowns_in_stand",
     "default_overlap_px",
@@ -167,6 +168,46 @@ def crown_diameter_stats(
         std=std,
         min_crowns=min_crowns,
     )
+
+
+def clip_to_cell(
+    crowns: gpd.GeoDataFrame,
+    bounds: tuple[float, float, float, float],
+    *,
+    bounds_crs: str = "EPSG:4269",
+) -> gpd.GeoDataFrame:
+    """Keep the crowns whose tree top falls inside a tile's nominal cell.
+
+    Adjacent NAIP-CHM tiles overlap by a few hundred metres, so a crown near a
+    tile edge is segmented twice, once from each tile. Assigning it by tree top
+    to the one nominal quarter-quad cell that holds it keeps it exactly once.
+    The cell is half-open (west and south edges in, east and north edges out),
+    so a tree top on a shared edge belongs to one cell, never to both and never
+    to neither.
+
+    The tree top is used rather than the polygon centroid because it always
+    lies inside its own crown and is the position the height was read at.
+
+    Args:
+        crowns: Crown frame with ``seed_x`` and ``seed_y`` in ``crowns.crs``.
+        bounds: ``(west, south, east, north)`` of the cell in ``bounds_crs``.
+        bounds_crs: CRS of ``bounds``. NAIP quarter quads are cut on NAD83.
+
+    Returns:
+        The rows of ``crowns`` inside the cell.
+    """
+    if crowns.empty:
+        return crowns
+    from pyproj import Transformer
+
+    to_cell = Transformer.from_crs(crowns.crs, bounds_crs, always_xy=True)
+    lon, lat = to_cell.transform(
+        crowns["seed_x"].to_numpy(dtype="float64"),
+        crowns["seed_y"].to_numpy(dtype="float64"),
+    )
+    west, south, east, north = bounds
+    inside = (lon >= west) & (lon < east) & (lat >= south) & (lat < north)
+    return crowns.loc[inside]
 
 
 def default_overlap_px(params: object, pixel_size_m: float) -> int:

@@ -19,6 +19,7 @@ from pathlib import Path
 import click
 
 from csdv_core.io.raster import read_chm_metres, resolve_scale_factor
+from csdv_core.io.vector import write_vector
 from csdv_core.segmentation.params import (
     DEFAULT_PARAMS,
     WINDOW_FUNCTIONS,
@@ -41,7 +42,10 @@ logger = logging.getLogger(__name__)
     "--out-crowns",
     required=True,
     type=click.Path(dir_okay=False, path_type=Path),
-    help="Output crown polygons. GeoPackage is the expected format.",
+    help=(
+        "Output crown polygons. The suffix picks the format: .gpkg, or .parquet "
+        "for GeoParquet (zstd), which is several times smaller."
+    ),
 )
 @click.option(
     "--engine",
@@ -196,7 +200,7 @@ def cli(
         )
     else:
         gdf = segment_crowns(chm, transform, crs, params=params)
-    gdf.to_file(out_crowns)
+    write_vector(gdf, out_crowns)
     _write_sidecar(out_crowns, params, chm_path, engine="watershed")
     logger.info("Wrote %d crowns to %s", len(gdf), out_crowns)
     click.echo(str(out_crowns))

@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 from typing import Any
 
 import geopandas as gpd
@@ -181,6 +182,21 @@ def locate_seeds(
     return rows, cols
 
 
+class _StageClock:
+    """Accumulates wall time per stage into a caller's dict, or does nothing."""
+
+    def __init__(self, sink: dict[str, float] | None) -> None:
+        self.sink = sink
+        self.t = time.perf_counter()
+
+    def lap(self, stage: str) -> None:
+        if self.sink is None:
+            return
+        now = time.perf_counter()
+        self.sink[stage] = self.sink.get(stage, 0.0) + now - self.t
+        self.t = now
+
+
 def _empty_crowns(crs: Any) -> gpd.GeoDataFrame:
     """An empty crown frame carrying the full schema."""
     return gpd.GeoDataFrame(
@@ -263,6 +279,7 @@ def segment_crowns(
     crs: Any,
     *,
     params: SegmentationParams = DEFAULT_PARAMS,
+    timings: dict[str, float] | None = None,
 ) -> gpd.GeoDataFrame:
     """Segment individual tree crowns from a canopy height model.
 
@@ -272,6 +289,9 @@ def segment_crowns(
         crs: CRS for the output GeoDataFrame.
         params: Segmentation configuration. Every value is in metres, so one
             set transfers between resolutions unchanged.
+        timings: Optional dict that receives wall seconds per stage
+            (``smooth``, ``seeds``, ``grow``, ``bound``, ``vectorize``), added to
+            any values already there. Used by the national cost benchmark.
 
     Returns:
         GeoDataFrame with ``segment_id``, ``area_m2``, ``crown_diam_m``,
@@ -283,11 +303,13 @@ def segment_crowns(
         segment grows with segment size, so using it would build a
         height-to-size relationship into the measurement.
     """
+    clock = _StageClock(timings)
     px = float(abs(transform.a))
     kernel = smooth_kernel_px(params.smooth_radius_m, px)
     smoothed = smooth_chm(np.asarray(chm, dtype="float32"), kernel=kernel)
     masked = mask_below(smoothed, threshold_m=params.min_height_m)
     valid = ~np.isnan(masked)
+    clock.lap("smooth")
     if not valid.any():
         logger.warning("segment_crowns: no pixels above %.2f m", params.min_height_m)
         return _empty_crowns(crs)
@@ -299,6 +321,7 @@ def segment_crowns(
         params.window,
         min_separation_m=params.min_separation_m,
     )
+    clock.lap("seeds")
     if seed_rows.size == 0:
         logger.warning("segment_crowns: no tree tops detected")
         return _empty_crowns(crs)
@@ -308,6 +331,7 @@ def segment_crowns(
 
     inv = np.where(valid, -masked, np.inf).astype("float32")
     labels = watershed(inv, markers=markers, mask=valid)
+    clock.lap("grow")
 
     apex = masked[seed_rows, seed_cols].astype("float64")
     max_radius_px = (
@@ -324,6 +348,7 @@ def segment_crowns(
         th_cr=float(params.th_cr),
         max_radius_px=max_radius_px,
     )
+    clock.lap("bound")
 
     # One connected component per label, so rio_shapes emits one polygon per
     # crown and no dissolve is needed. Connectivity must match ndi.label's
@@ -355,6 +380,7 @@ def segment_crowns(
     gdf["crown_diam_m"] = 2.0 * np.sqrt(gdf["area_m2"].to_numpy() / math.pi)
     gdf.reset_index(drop=True, inplace=True)
     gdf = gdf[list(CROWN_COLUMNS) + ["geometry"]]
+    clock.lap("vectorize")
 
     logger.info(
         "segment_crowns: %d crowns, mean diam %.2f m, %.1f%% shaped by the cap",
