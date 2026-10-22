@@ -40,6 +40,7 @@ OPTION_TO_KEY: dict[str, str] = {
     "rule": "decide.rule",
     "p_boundary": "decide.p_boundary",
     "mmu_ha": "mmu.mmu_ha",
+    "growth_mmu_ha": "mmu.growth_mmu_ha",
     "refine": "refine.enabled",
     "figures": "figures.enabled",
     "naip_backdrop": "figures.naip_backdrop",
@@ -203,7 +204,15 @@ def configure_console_logging(level_name: str) -> int:
 @click.option(
     "--p-boundary", type=float, default=None, help="Decision probability boundary."
 )
-@click.option("--mmu-ha", type=float, default=None, help="Minimum mapping unit (ha).")
+@click.option(
+    "--mmu-ha", type=float, default=None, help="Minimum mapping unit per interval (ha)."
+)
+@click.option(
+    "--growth-mmu-ha",
+    type=float,
+    default=None,
+    help="Minimum (ha) for objects that touch or overlap an earlier detection.",
+)
 @click.option("--refine/--no-refine", default=None, help="Refine outlines at 0.6 m.")
 @click.option("--figures/--no-figures", default=None, help="Write the PNG figures.")
 @click.option(

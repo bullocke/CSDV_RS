@@ -29,6 +29,7 @@ from csdv_core.disturbance.store import (
     RunPaths,
     claim_output_dir,
     load_run,
+    read_detected_by_interval,
     read_layers,
     read_run_params,
     read_year_stack,
@@ -269,6 +270,8 @@ def _objects_frame(grid: CellGrid) -> gpd.GeoDataFrame:
         "onset_index": [1],
         "n_cells": [4],
         "area_ha": [0.147456],
+        "earlier_share": [0.0],
+        "growth": [False],
         "mean_prob": [0.8],
         "max_prob": [0.9],
         "mean_z": [-4.0],
@@ -317,12 +320,16 @@ def test_write_detection(tmp_path: Path, grid: CellGrid) -> None:
     onset[:2, :2] = 2013
     onset[-1, -1] = -1
     probability = np.zeros((len(YEARS), CELL_ROWS, CELL_COLS), dtype="float32")
+    detected = np.zeros((len(YEARS), CELL_ROWS, CELL_COLS), dtype=bool)
+    detected[1, :2, :2] = True
+    detected[2, 1:3, 1:3] = True
     objects = _objects_frame(grid)
     refinement = _refinement(grid, objects)
     written = write_detection(
         run_paths,
         onset_year=onset,
         onset_year_nommu=onset,
+        detected=detected,
         probability=probability,
         grid=grid,
         years=YEARS,
@@ -332,6 +339,7 @@ def test_write_detection(tmp_path: Path, grid: CellGrid) -> None:
     assert set(written) == {
         "onset_year",
         "onset_year_nommu",
+        "detected_by_interval",
         "probability",
         "disturbances_gpkg",
         "objects_csv",
@@ -343,6 +351,8 @@ def test_write_detection(tmp_path: Path, grid: CellGrid) -> None:
     np.testing.assert_array_equal(stored_onset, onset)
     stored_probability = read_year_stack(run_paths.probability)
     assert stored_probability.years == YEARS
+    stored_detected = read_detected_by_interval(run_paths, YEARS)
+    np.testing.assert_array_equal(stored_detected, detected)
     for layer_name in (OBJECTS_LAYER, REFINED_OUTLINES_LAYER, REFINED_OPENINGS_LAYER):
         layer = gpd.read_file(run_paths.disturbances_gpkg, layer=layer_name)
         assert len(layer) == 1
@@ -357,11 +367,13 @@ def test_write_detection(tmp_path: Path, grid: CellGrid) -> None:
 def test_write_detection_d1_without_probability(tmp_path: Path, grid: CellGrid) -> None:
     run_paths = claim_output_dir(tmp_path / "run")
     onset = np.zeros((CELL_ROWS, CELL_COLS), dtype="int16")
+    detected = np.zeros((len(YEARS), CELL_ROWS, CELL_COLS), dtype=bool)
     objects = _objects_frame(grid)
     written = write_detection(
         run_paths,
         onset_year=onset,
         onset_year_nommu=onset,
+        detected=detected,
         probability=None,
         grid=grid,
         years=YEARS,
@@ -370,3 +382,32 @@ def test_write_detection_d1_without_probability(tmp_path: Path, grid: CellGrid) 
     )
     assert "probability" not in written
     assert not run_paths.probability.exists()
+
+
+def test_read_detected_by_interval_falls_back_to_onset(
+    tmp_path: Path, grid: CellGrid
+) -> None:
+    """Runs without the stack get one detection per cell from onset_year.tif."""
+    run_paths = claim_output_dir(tmp_path / "run")
+    onset = np.zeros((CELL_ROWS, CELL_COLS), dtype="int16")
+    onset[0, 0] = 2013
+    onset[1, 1] = 2015
+    onset[2, 2] = -1
+    detected = np.zeros((len(YEARS), CELL_ROWS, CELL_COLS), dtype=bool)
+    write_detection(
+        run_paths,
+        onset_year=onset,
+        onset_year_nommu=onset,
+        detected=detected,
+        probability=None,
+        grid=grid,
+        years=YEARS,
+        objects=_objects_frame(grid),
+        refinement=None,
+    )
+    run_paths.detected_by_interval.unlink()
+    stack = read_detected_by_interval(run_paths, YEARS)
+    assert stack.shape == (len(YEARS), CELL_ROWS, CELL_COLS)
+    assert not stack[0].any()
+    assert stack[1, 0, 0] and stack.sum() == 2
+    assert stack[2, 1, 1]

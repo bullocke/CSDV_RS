@@ -86,8 +86,8 @@ class FigureInputs:
         monitored: bool ``(T, rows, cols)``.
         z: float32 ``(T, rows, cols)`` quantized z.
         probability: float32 ``(T, rows, cols)`` or None (rule D1).
-        onset_year: int16 ``(rows, cols)`` after the MMU (0 none, -1
-            unmonitored).
+        onset_year: int16 ``(rows, cols)``, first detection after the MMU
+            (0 none, -1 unmonitored).
         fits: One :class:`DateFit` per date.
         intervals: One :class:`IntervalSummary` per interval.
         objects: Objects GeoDataFrame.
@@ -101,6 +101,9 @@ class FigureInputs:
         chm_height: float32 ``(T, rows, cols)`` mean CHM height per cell, or
             None. Without a NAIP backdrop, the onset maps draw the first
             year's height in grey underneath (see :func:`chm_height_backdrop`).
+        detected: bool ``(T, rows, cols)`` detections per interval, or None.
+            The per-interval map then shows each interval's detections,
+            otherwise the cells whose first detection falls in it.
     """
 
     grid: CellGrid
@@ -119,6 +122,7 @@ class FigureInputs:
     site_inputs: SiteInputs | None = None
     backdrop: NaipBackdrop | None = None
     chm_height: np.ndarray | None = None
+    detected: np.ndarray | None = None
 
 
 def read_naip_backdrop(
@@ -249,7 +253,13 @@ def make_figures(
             inputs.onset_year, years, grid, path, backdrop=onset_map_backdrop, dpi=dpi
         ),
         "onset_by_interval": lambda path: plot_onset_by_interval(
-            inputs.onset_year, years, grid, path, backdrop=onset_map_backdrop, dpi=dpi
+            inputs.onset_year,
+            years,
+            grid,
+            path,
+            detected=inputs.detected,
+            backdrop=onset_map_backdrop,
+            dpi=dpi,
         ),
         "z_maps": lambda path: plot_z_maps(
             inputs.z, years, grid, path, monitored=inputs.monitored, dpi=dpi

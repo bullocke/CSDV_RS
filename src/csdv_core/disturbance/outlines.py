@@ -1,17 +1,21 @@
 """csdv_core.disturbance.outlines: vectorize detected cells and refine them at 0.6 m.
 
 Detected cells (after the MMU) are grouped into objects: 8-connected cells
-sharing an onset date, dissolved into one (multi)polygon each. With
-refinement on, every object is redrawn from the 0.6 m CHM before and after
-its onset date, following ``08_refine_best.refine_object``: the CHM change
-(with a 3 x 3 maximum on the later CHM) is standardized against a ring of
-forest around the object, Efron's empirical null is fitted on the ring, and
-pixels with loss probability above ``refine.p_loss`` near the object become
-openings. :mod:`csdv_core.change.refine` closes the openings into an
-envelope that must touch the object and reach the MMU. Refinement always
-reads the CHM, whatever the detection input.
+detected in the same interval, dissolved into one (multi)polygon each. A cell
+detected in two intervals belongs to one object in each, so objects of
+different intervals can overlap. With refinement on, every object is redrawn
+from the 0.6 m CHM before and after its interval, following
+``08_refine_best.refine_object``: the CHM change (with a 3 x 3 maximum on the
+later CHM) is standardized against a ring of forest around the object,
+Efron's empirical null is fitted on the ring, and pixels with loss
+probability above ``refine.p_loss`` near the object become openings.
+:mod:`csdv_core.change.refine` closes the openings into an envelope that
+must touch the object and reach the MMU (the growth minimum for objects kept
+by the growth rule). Refinement always reads the CHM, whatever the
+detection input.
 
-Inputs: onset rasters, probability and z stacks, the grid, CHM windows.
+Inputs: detections per interval, probability and z stacks, the grid, CHM
+windows.
 Outputs: GeoDataFrames of objects, refined envelopes and openings.
 """
 
@@ -49,6 +53,8 @@ OBJECT_COLUMNS: tuple[str, ...] = (
     "onset_index",
     "n_cells",
     "area_ha",
+    "earlier_share",
+    "growth",
     "mean_prob",
     "max_prob",
     "mean_z",
@@ -216,45 +222,59 @@ def _masked_stat(
 
 
 def detection_objects(
-    onset_index: np.ndarray,
+    detected: np.ndarray,
     probability: np.ndarray | None,
     z: np.ndarray,
     grid: CellGrid,
     years: Sequence[int],
+    *,
+    min_cells: int | None = None,
 ) -> gpd.GeoDataFrame:
-    """Vectorize detected cells into objects.
+    """Vectorize the detections of every interval into objects.
 
-    Cells with the same onset index are labelled 8-connected
+    The cells detected at date ``t`` are labelled 8-connected
     (``scipy.ndimage.label``), polygonized on ``grid.cell_transform`` with
     ``rasterio.features.shapes`` and dissolved per label. ``object_id`` runs
-    from 1 in order of onset index, then label. For an object at onset index
-    ``t``: ``onset_year = years[t]``, ``year_before = years[t - 1]``,
-    ``area_ha = n_cells * grid.cell_ha``, ``mean_prob`` / ``max_prob`` over
+    from 1 in order of date, then label. For an object at date ``t``:
+    ``onset_year = years[t]`` (the later image of its interval),
+    ``year_before = years[t - 1]``, ``area_ha = n_cells * grid.cell_ha``,
+    ``earlier_share`` = share of its cells detected at an earlier date,
+    ``growth`` = fewer cells than ``min_cells`` (kept by the growth rule of
+    :func:`csdv_core.disturbance.decide.interval_detections`, False when
+    ``min_cells`` is None), ``mean_prob`` / ``max_prob`` over
     ``probability[t]`` (NaN when ``probability`` is None), ``mean_z`` over
     ``z[t]`` (NaN cells ignored) and ``follow_up = t < T - 1`` (a later image
     exists to confirm that the loss persists).
 
     Args:
-        onset_index: int8 ``(rows, cols)``, -1 = none (after the MMU).
+        detected: bool ``(T, rows, cols)`` detections per interval (after the
+            MMU), e.g. :attr:`csdv_core.disturbance.decide.DecisionResult.detected`.
         probability: float32 ``(T, rows, cols)`` or None (rule D1).
         z: float32 ``(T, rows, cols)`` quantized z.
         grid: Common grid.
         years: NAIP years, length ``T``.
+        min_cells: Cells an object needs without the growth rule
+            (:func:`csdv_core.disturbance.decide.mmu_cells`), or None.
 
     Returns:
         GeoDataFrame with :data:`OBJECT_COLUMNS` in grid CRS (empty, with the
         same columns, when nothing is detected).
     """
-    detected = onset_index[onset_index >= 0]
-    onset_dates = np.unique(detected)
     rows = []
     object_id = 0
-    for onset_date in onset_dates:
-        date_index = int(onset_date)
-        date_mask = onset_index == onset_date
+    n_dates_used = 0
+    earlier = np.zeros(detected.shape[1:], dtype=bool)
+    for date_index in range(detected.shape[0]):
+        date_mask = detected[date_index]
+        if not date_mask.any():
+            continue
+        n_dates_used += 1
         labels, n_labels = ndimage.label(date_mask, structure=EIGHT_CONNECTED)
         labels = labels.astype("int32")
         cell_counts = np.bincount(labels.ravel())
+        earlier_counts = np.bincount(
+            labels[earlier & date_mask], minlength=n_labels + 1
+        )
         geometry_by_label = _label_polygons(labels, grid.cell_transform)
         probability_date = None if probability is None else probability[date_index]
         z_date = z[date_index]
@@ -264,6 +284,7 @@ def detection_objects(
         for label in range(1, n_labels + 1):
             object_mask = labels == label
             n_cells = int(cell_counts[label])
+            is_growth = min_cells is not None and n_cells < min_cells
             object_id += 1
             rows.append(
                 {
@@ -274,6 +295,8 @@ def detection_objects(
                     "onset_index": date_index,
                     "n_cells": n_cells,
                     "area_ha": n_cells * grid.cell_ha,
+                    "earlier_share": int(earlier_counts[label]) / n_cells,
+                    "growth": is_growth,
                     "mean_prob": _masked_stat(probability_date, object_mask, np.mean),
                     "max_prob": _masked_stat(probability_date, object_mask, np.max),
                     "mean_z": _masked_stat(z_date, object_mask, np.mean),
@@ -281,10 +304,9 @@ def detection_objects(
                     "geometry": geometry_by_label[label],
                 }
             )
+        earlier |= date_mask
     objects = _frame(rows, OBJECT_COLUMNS, grid.crs)
-    logger.info(
-        "%d detection objects over %d onset dates", len(objects), len(onset_dates)
-    )
+    logger.info("%d detection objects over %d intervals", len(objects), n_dates_used)
     return objects
 
 
@@ -317,6 +339,8 @@ def refine_object(
     transform: Affine,
     geometry: BaseGeometry,
     params: DisturbanceConfig,
+    *,
+    min_area_ha: float | None = None,
 ) -> RefinedOutline | None:
     """Redraw one object at the CHM pixel size (port of ``08_refine_best``).
 
@@ -326,7 +350,8 @@ def refine_object(
     null and lfdr curve give each pixel a loss probability, and forest pixels
     within ``refine.near_m`` of the object above ``refine.p_loss`` are loss.
     :mod:`csdv_core.change.refine` cleans the loss into openings and closes
-    them into an envelope that must touch the object and reach the MMU.
+    them into an envelope that must touch the object and reach
+    ``min_area_ha`` (the MMU by default).
 
     Args:
         chm_before: float32 ``(rows, cols)`` CHM (m) at the year before onset,
@@ -336,6 +361,7 @@ def refine_object(
         transform: Affine transform of the window.
         geometry: The object polygon (grid CRS).
         params: Run parameters (``refine``, ``decide``, ``mmu``).
+        min_area_ha: Least envelope area (ha), or None for ``mmu.mmu_ha``.
 
     Returns:
         The refined outline, or None when the object cannot be refined.
@@ -349,6 +375,7 @@ def refine_object(
         )
     refine = params.refine
     decide = params.decide
+    envelope_min_ha = params.mmu.mmu_ha if min_area_ha is None else min_area_ha
     pixel_m = abs(transform.a)
     window_shape = chm_before.shape
 
@@ -397,7 +424,7 @@ def refine_object(
         pixel_m,
         close_radius_m=refine.close_radius_m,
         fill_holes_m2=refine.fill_holes_m2,
-        min_area_m2=params.mmu.mmu_ha * M2_PER_HA,
+        min_area_m2=envelope_min_ha * M2_PER_HA,
         seed=object_mask,
         clip=envelope_clip,
     )
@@ -431,8 +458,10 @@ def refine_objects(
     """Refine every object, reading CHM windows from the site inputs.
 
     For each object, the CHMs of ``year_before`` and ``onset_year`` are read
-    over the object bounds buffered by ``refine.pad_m``. Objects that cannot
-    be refined are listed in ``skipped_object_ids``.
+    over the object bounds buffered by ``refine.pad_m``. Objects kept by the
+    growth rule (column ``growth``) need an envelope of
+    ``min(mmu.growth_mmu_ha, mmu.mmu_ha)``, the others ``mmu.mmu_ha``.
+    Objects that cannot be refined are listed in ``skipped_object_ids``.
 
     Args:
         objects: From :func:`detection_objects`.
@@ -443,6 +472,7 @@ def refine_objects(
         The refinement result (empty GeoDataFrames when nothing is refined).
     """
     grid = site_inputs.grid
+    growth_min_ha = min(params.mmu.growth_mmu_ha, params.mmu.mmu_ha)
     outline_rows = []
     opening_rows = []
     skipped_object_ids: list[int] = []
@@ -454,7 +484,16 @@ def refine_objects(
         window_bounds = padded.bounds
         chm_before, transform = read_chm_bounds(site_inputs, year_before, window_bounds)
         chm_after, _ = read_chm_bounds(site_inputs, onset_year, window_bounds)
-        outline = refine_object(chm_before, chm_after, transform, row.geometry, params)
+        is_growth = bool(getattr(row, "growth", False))
+        min_area_ha = growth_min_ha if is_growth else params.mmu.mmu_ha
+        outline = refine_object(
+            chm_before,
+            chm_after,
+            transform,
+            row.geometry,
+            params,
+            min_area_ha=min_area_ha,
+        )
         if outline is None:
             skipped_object_ids.append(object_id)
             continue

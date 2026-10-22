@@ -10,7 +10,8 @@ assessment. It has three strata:
     out in proportion to the number of objects per interval.
 ``below_mmu``
     Near misses: objects that the decision rule flagged but the minimum
-    mapping unit removed (``onset_year_nommu > 0`` and ``onset_year == 0``),
+    mapping unit removed in every interval (``onset_year_nommu > 0`` and
+    ``onset_year == 0``), grouped by the interval the rule first passed and
     limited to objects of at least half the MMU so the chips show more than a
     single cell. They show what the MMU throws away. Their ``object_id`` is
     blank because they are not part of ``disturbances.gpkg``.
@@ -38,6 +39,7 @@ import pandas as pd
 import rasterio
 from shapely.geometry import box
 
+from csdv_core.disturbance.decide import onset_stack
 from csdv_core.disturbance.outlines import (
     detection_objects,
     interval_label,
@@ -228,7 +230,10 @@ def below_mmu_objects(saved: SavedRun) -> gpd.GeoDataFrame:
     if run_paths.probability.exists():
         probability_stack = read_year_stack(run_paths.probability)
         probability = probability_stack.values
-    return detection_objects(onset_index, probability, saved.z, saved.grid, saved.years)
+    removed_stack = onset_stack(onset_index, len(saved.years))
+    return detection_objects(
+        removed_stack, probability, saved.z, saved.grid, saved.years
+    )
 
 
 def no_detection_cells(

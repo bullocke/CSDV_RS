@@ -220,6 +220,79 @@ def test_apply_mmu_drops_small_and_keeps_diagonal() -> None:
     np.testing.assert_array_equal(unchanged, onset)
 
 
+def test_mmu_cells_and_growth_cap() -> None:
+    """1 acre is 11 cells at 19.2 m, 0.11 ha is 3, and growth never exceeds the MMU."""
+    cell_ha = 19.2**2 / 10_000
+    assert decide.mmu_cells(0.405, cell_ha) == 11
+    assert decide.mmu_cells(0.11, cell_ha) == 3
+    assert decide.mmu_cells(0.0, cell_ha) == 0
+    assert decide.growth_min_cells(0.405, 0.11, cell_ha) == 3
+    assert decide.growth_min_cells(0.05, 0.11, cell_ha) == 2
+
+
+def test_interval_detections_keeps_second_detection() -> None:
+    """A cell kept at date 1 is kept again at date 2 when flagged in a large object."""
+    flags = np.zeros((3, 8, 8), dtype=bool)
+    flags[1, 0:3, 0:3] = True
+    flags[2, 0:4, 0:4] = True
+    detected = decide.interval_detections(
+        flags, cell_ha=0.1, mmu_ha=0.9, growth_mmu_ha=0.9
+    )
+    assert detected[1].sum() == 9
+    assert detected[2].sum() == 16
+    assert detected[2, 0, 0] and detected[1, 0, 0]
+    first = decide.first_onset(detected)
+    assert first[0, 0] == 1
+    assert first[3, 3] == 2
+
+
+def test_interval_detections_growth_rule() -> None:
+    """Small objects touching an earlier detection survive, isolated ones do not."""
+    flags = np.zeros((3, 10, 10), dtype=bool)
+    flags[1, 0:3, 0:3] = True
+    flags[2, 3, 0:2] = True
+    flags[2, 8, 8:10] = True
+    flags[2, 0, 5] = True
+    detected = decide.interval_detections(
+        flags, cell_ha=0.1, mmu_ha=0.9, growth_mmu_ha=0.2
+    )
+    assert detected[1].sum() == 9
+    assert detected[2, 3, 0:2].all()
+    assert not detected[2, 8, 8:10].any()
+    assert not detected[2, 0, 5]
+    without_growth = decide.interval_detections(
+        flags, cell_ha=0.1, mmu_ha=0.9, growth_mmu_ha=0.9
+    )
+    assert not without_growth[2].any()
+    any_size = decide.interval_detections(
+        flags, cell_ha=0.1, mmu_ha=0.9, growth_mmu_ha=0.0
+    )
+    assert any_size[2].sum() == 2
+
+
+def test_interval_detections_frees_cells_of_discarded_objects() -> None:
+    """A flag removed by the MMU does not block a later detection of the cell."""
+    flags = np.zeros((3, 8, 8), dtype=bool)
+    flags[1, 0, 0] = True
+    flags[2, 0:3, 0:3] = True
+    detected = decide.interval_detections(
+        flags, cell_ha=0.1, mmu_ha=0.9, growth_mmu_ha=0.9
+    )
+    assert not detected[1].any()
+    assert detected[2, 0, 0]
+    onset_mmu = decide.apply_mmu(decide.first_onset(flags), cell_ha=0.1, mmu_ha=0.9)
+    assert onset_mmu[0, 0] == decide.NO_ONSET
+
+
+def test_onset_stack_is_one_hot() -> None:
+    onset = np.array([[1, -1], [2, 1]], dtype="int8")
+    stack = decide.onset_stack(onset, 3)
+    assert stack.shape == (3, 2, 2)
+    assert not stack[0].any()
+    np.testing.assert_array_equal(stack[1], [[True, False], [False, True]])
+    np.testing.assert_array_equal(decide.first_onset(stack), onset)
+
+
 def test_skipped_date_has_no_detections(planted_z: np.ndarray) -> None:
     """A date with too few monitored cells is skipped and detects nothing."""
     monitored = _monitored()
@@ -253,6 +326,12 @@ def test_decide_d6_maps_patch_and_years(planted_z: np.ndarray) -> None:
     assert (patch_years[detected_in_patch] == YEARS[1]).all()
     assert onset_year[0, 0] == decide.ONSET_YEAR_UNMONITORED
     assert onset_year[0, 1] == decide.ONSET_YEAR_NONE
+    assert result.flags.shape == planted_z.shape
+    assert result.detected.shape == planted_z.shape
+    assert not (result.detected & ~result.flags).any()
+    np.testing.assert_array_equal(
+        result.onset_index_mmu, decide.first_onset(result.detected)
+    )
 
 
 def test_decide_d1_has_no_probability(planted_z: np.ndarray) -> None:

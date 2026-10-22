@@ -2,8 +2,8 @@
 # `csdv detect-disturbance`). Defaults reproduce the best tested case from
 # analysis/NAIP_disturbance_detection/2_Disturbance_Index: change in mean CHM
 # height on 19.2 m cells, two-pass 150 m local standardization, rule D6
-# (spatial support + persistence), a 1-acre minimum mapping unit and 0.6 m
-# outline refinement.
+# (spatial support + persistence), a 1-acre minimum mapping unit per interval
+# (0.11 ha for growth of earlier detections) and 0.6 m outline refinement.
 #
 # Merge order at run time: this file <- optional --config YAML (partial, deep
 # merged) <- explicit CLI options. Unknown keys fail validation.
@@ -54,9 +54,15 @@
 #   min_prior        Floor on the per-date prior probability of disturbance.
 #   min_fit_cells    Fewest monitored valid cells to fit a date's null model.
 #                    Dates with fewer cells are skipped and reported.
-# mmu:
+# mmu (applied to each interval on its own, so a cell that is still forest can
+# be detected again in a later interval):
 #   mmu_ha           Minimum mapping unit (ha). Objects are 8-connected cells
-#                    sharing an onset date. 0.405 ha = 1 acre.
+#                    detected in the same interval. 0.405 ha = 1 acre.
+#   growth_mmu_ha    Smaller minimum (ha) for objects that touch or overlap a
+#                    detection of an earlier interval, so a disturbance can
+#                    grow by less than mmu_ha per interval. 0.11 ha = 3 cells
+#                    at 19.2 m. 0 keeps such objects at any size, and a value
+#                    of mmu_ha or more turns the rule off.
 # refine (0.6 m outlines, port of 08_refine_best.refine_object):
 #   enabled          Redraw each detected object from the 0.6 m CHM pair.
 #   pad_m            Read window = object bounds buffered by this distance.
@@ -77,7 +83,8 @@
 #   fill_holes_m2    Holes up to this area inside an envelope are filled.
 #   smooth_m         Buffer out/in distance that rounds envelope outlines.
 #   simplify_m       Douglas-Peucker tolerance for envelope outlines.
-#   The least envelope area equals mmu.mmu_ha.
+#   The least envelope area equals mmu.mmu_ha (mmu.growth_mmu_ha for growth
+#   objects).
 # figures:
 #   enabled          Write the PNG figures.
 #   naip_backdrop    Draw NAIP RGB under the maps (reads NAIP).
@@ -114,6 +121,7 @@ decide:
   min_fit_cells: 1000
 mmu:
   mmu_ha: 0.405
+  growth_mmu_ha: 0.11
 refine:
   enabled: true
   pad_m: 60.0

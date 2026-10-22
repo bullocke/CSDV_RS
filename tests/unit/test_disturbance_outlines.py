@@ -13,6 +13,7 @@ from shapely.geometry import Polygon, box
 
 from csdv_core.config._models import DisturbanceConfig
 from csdv_core.disturbance import outlines, windows
+from csdv_core.disturbance.decide import onset_stack
 from csdv_core.disturbance.inputs import CellGrid, SiteInputs, YearInput
 
 #: UTM zone used by the synthetic grids.
@@ -40,7 +41,7 @@ def _grid(cell_rows: int = 10, cell_cols: int = 10) -> CellGrid:
 
 
 def _two_object_stack() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Onset, probability and z with one object at t=1 and one at t=2."""
+    """Detections, probability and z with one object at t=1 and one at t=2."""
     onset_index = np.full((10, 10), -1, dtype="int8")
     onset_index[1:3, 1:4] = 1
     onset_index[6:9, 6:8] = 2
@@ -52,14 +53,14 @@ def _two_object_stack() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     z[1, 1:3, 1:4] = -4.0
     z[2, 6:9, 6:8] = -3.0
     z[2, 6, 6] = np.nan
-    return onset_index, probability, z
+    return onset_stack(onset_index, len(YEARS)), probability, z
 
 
 def test_detection_objects_two_years() -> None:
-    """Objects at two onset dates get the right years, labels and sizes."""
+    """Objects at two dates get the right years, labels and sizes."""
     grid = _grid()
-    onset_index, probability, z = _two_object_stack()
-    objects = outlines.detection_objects(onset_index, probability, z, grid, YEARS)
+    detected, probability, z = _two_object_stack()
+    objects = outlines.detection_objects(detected, probability, z, grid, YEARS)
     assert list(objects.columns) == list(outlines.OBJECT_COLUMNS)
     assert list(objects["object_id"]) == [1, 2]
     first = objects.iloc[0]
@@ -79,7 +80,27 @@ def test_detection_objects_two_years() -> None:
     assert second["mean_z"] == pytest.approx(-3.0)
     assert bool(first["follow_up"]) is True
     assert bool(second["follow_up"]) is False
+    assert first["earlier_share"] == 0.0
+    assert bool(first["growth"]) is False
     assert objects.crs == TEST_CRS
+
+
+def test_detection_objects_overlap_across_intervals() -> None:
+    """A cell detected twice belongs to one object per interval."""
+    grid = _grid()
+    detected = np.zeros((3, 10, 10), dtype=bool)
+    detected[1, 2:5, 2:5] = True
+    detected[2, 3:6, 3:6] = True
+    z = np.zeros((3, 10, 10), dtype="float32")
+    objects = outlines.detection_objects(detected, None, z, grid, YEARS, min_cells=11)
+    assert list(objects["onset_index"]) == [1, 2]
+    assert list(objects["n_cells"]) == [9, 9]
+    second = objects.iloc[1]
+    assert second["earlier_share"] == pytest.approx(4 / 9)
+    assert bool(second["growth"]) is True
+    assert objects.iloc[0].geometry.intersection(second.geometry).area == (
+        pytest.approx(4 * grid.cell_m**2)
+    )
 
 
 def test_detection_objects_diagonal_merges() -> None:
@@ -90,7 +111,8 @@ def test_detection_objects_diagonal_merges() -> None:
     onset_index[3, 3] = 1
     onset_index[4, 4] = 1
     z = np.zeros((3, 10, 10), dtype="float32")
-    objects = outlines.detection_objects(onset_index, None, z, grid, YEARS)
+    detected = onset_stack(onset_index, len(YEARS))
+    objects = outlines.detection_objects(detected, None, z, grid, YEARS)
     assert len(objects) == 1
     assert objects.iloc[0]["n_cells"] == 3
     assert np.isnan(objects.iloc[0]["mean_prob"])
@@ -99,9 +121,9 @@ def test_detection_objects_diagonal_merges() -> None:
 def test_detection_objects_empty() -> None:
     """No detection gives an empty frame with the object columns."""
     grid = _grid()
-    onset_index = np.full((10, 10), -1, dtype="int8")
+    detected = np.zeros((3, 10, 10), dtype=bool)
     z = np.zeros((3, 10, 10), dtype="float32")
-    objects = outlines.detection_objects(onset_index, None, z, grid, YEARS)
+    objects = outlines.detection_objects(detected, None, z, grid, YEARS)
     assert objects.empty
     assert list(objects.columns) == list(outlines.OBJECT_COLUMNS)
 
@@ -109,8 +131,8 @@ def test_detection_objects_empty() -> None:
 def test_objects_table_adds_centroids() -> None:
     """The flat table drops geometry and adds projected and lon/lat centroids."""
     grid = _grid()
-    onset_index, probability, z = _two_object_stack()
-    objects = outlines.detection_objects(onset_index, probability, z, grid, YEARS)
+    detected, probability, z = _two_object_stack()
+    objects = outlines.detection_objects(detected, probability, z, grid, YEARS)
     table = outlines.objects_table(objects)
     assert "geometry" not in table.columns
     for column in outlines.CENTROID_COLUMNS:
@@ -159,6 +181,21 @@ def test_refine_object_finds_clearing() -> None:
     assert outline.n_ring_px >= params.refine.min_ring_px
     assert 0.5 < outline.opening_share <= 1.0
     assert outline.n_openings >= 1
+
+
+def test_refine_object_min_area_for_growth() -> None:
+    """A 0.2 ha clearing fails the 1-acre envelope minimum but passes 0.11 ha."""
+    params = DisturbanceConfig()
+    block = slice(163, 237)
+    chm_before, chm_after, transform = _synthetic_chm_pair(400, block)
+    geometry = _block_polygon(block)
+    default = outlines.refine_object(chm_before, chm_after, transform, geometry, params)
+    assert default is None
+    growth = outlines.refine_object(
+        chm_before, chm_after, transform, geometry, params, min_area_ha=0.11
+    )
+    assert growth is not None
+    assert 0.11 <= growth.envelope_ha < params.mmu.mmu_ha
 
 
 def test_refine_object_ring_too_small() -> None:

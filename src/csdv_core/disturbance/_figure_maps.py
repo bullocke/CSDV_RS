@@ -266,20 +266,19 @@ def draw_onset(
 
 
 def _interval_area_label(
-    onset_year: np.ndarray, year_before: int, year: int, grid: CellGrid
+    detected: np.ndarray, year_before: int, year: int, grid: CellGrid
 ) -> str:
     """Label an interval with its detected area, e.g. ``"2016-2018: 12.3 ha"``.
 
     Args:
-        onset_year: int16 ``(rows, cols)``.
+        detected: bool ``(rows, cols)``, the cells counted for the interval.
         year_before: Earlier image year.
-        year: Later image year (the onset year).
+        year: Later image year.
         grid: Common grid.
 
     Returns:
         The label.
     """
-    detected = onset_year == year
     n_cells = np.count_nonzero(detected)
     area_ha = n_cells * grid.cell_ha
     label = interval_label(year_before, year)
@@ -309,7 +308,7 @@ def _onset_legend_handles(
     for year_before, year, color in zip(
         years[:-1], years[1:], year_colors, strict=True
     ):
-        label = _interval_area_label(onset_year, year_before, year, grid)
+        label = _interval_area_label(onset_year == year, year_before, year, grid)
         patch = Patch(facecolor=color, label=label)
         handles.append(patch)
     if backdrop is None:
@@ -371,7 +370,7 @@ def plot_disturbance_onset(
         bbox_to_anchor=(1.02, 1.0),
         alignment="left",
     )
-    ax.set_title("Disturbance onset by NAIP interval")
+    ax.set_title("Disturbance onset (first detection) by NAIP interval")
     return save_fig(figure, out_path, dpi=dpi)
 
 
@@ -381,16 +380,23 @@ def plot_onset_by_interval(
     grid: CellGrid,
     out_path: Path,
     *,
+    detected: np.ndarray | None = None,
     backdrop: NaipBackdrop | None = None,
     dpi: int = DEFAULT_DPI,
 ) -> Path:
     """One panel per interval (``years[1:]``) showing that interval's detections.
 
+    With ``detected``, a panel shows every cell detected in its interval,
+    including cells detected in an earlier interval as well. Without it, a
+    panel shows the cells whose first detection falls in the interval.
+
     Args:
-        onset_year: int16 ``(rows, cols)`` after the MMU.
+        onset_year: int16 ``(rows, cols)`` after the MMU (also sets the
+            neutral classes, 0 and -1).
         years: NAIP years.
         grid: Common grid.
         out_path: PNG to write.
+        detected: bool ``(T, rows, cols)`` detections per interval, or None.
         backdrop: Grey backdrop drawn underneath, or None.
         dpi: Output resolution.
 
@@ -402,16 +408,20 @@ def plot_onset_by_interval(
     year_colors = helpers.interval_colors(n_intervals)
     figure, axes = helpers.scene_axes(n_intervals, extent)
     neutral_colors = _neutral_colors(backdrop)
-    for ax, year_before, year, color in zip(
-        axes, years[:-1], years[1:], year_colors, strict=True
+    for date_index, (ax, year_before, year, color) in enumerate(
+        zip(axes, years[:-1], years[1:], year_colors, strict=True), start=1
     ):
         _start_map(ax, grid, backdrop)
-        interval_codes = np.where(onset_year == year, 1, onset_year)
+        if detected is None:
+            interval_cells = onset_year == year
+        else:
+            interval_cells = detected[date_index]
+        interval_codes = np.where(interval_cells, 1, onset_year)
         panel_colors = dict(neutral_colors)
         panel_colors[1] = color
         panel_rgba = helpers.category_rgba(interval_codes, panel_colors)
         _show_cells(ax, panel_rgba, extent)
-        title = _interval_area_label(onset_year, year_before, year, grid)
+        title = _interval_area_label(interval_cells, year_before, year, grid)
         ax.set_title(title)
     helpers.scale_bar(axes[0], grid.bounds)
     return save_fig(figure, out_path, dpi=dpi)

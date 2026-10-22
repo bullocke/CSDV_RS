@@ -6,8 +6,8 @@ A run folder holds::
     layers/      chm_height.tif chm_cover.tif valid_share.tif [ndvi.tif] forest.tif
     z/           z_<input>_<method>[_<window>m].tif
                  [z_..._back2.tif z_..._fwd2.tif]  (rules D7 and D7s)
-    detection/   onset_year.tif onset_year_nommu.tif probability.tif
-                 disturbances.gpkg objects.csv
+    detection/   onset_year.tif onset_year_nommu.tif detected_by_interval.tif
+                 probability.tif disturbances.gpkg objects.csv
     figures/     *.png
 
 Year stacks are multi-band GeoTIFFs on the cell grid, one band per year,
@@ -90,8 +90,13 @@ class RunPaths:
         z_dir: ``z/``.
         detection_dir: ``detection/``.
         figures_dir: ``figures/``.
-        onset_year: ``detection/onset_year.tif`` (int16, after MMU).
-        onset_year_nommu: ``detection/onset_year_nommu.tif`` (int16).
+        onset_year: ``detection/onset_year.tif`` (int16, first detection
+            after the MMU).
+        onset_year_nommu: ``detection/onset_year_nommu.tif`` (int16, first
+            date the rule passes, before the MMU).
+        detected_by_interval: ``detection/detected_by_interval.tif`` (uint8,
+            one band per year, 1 = detected in the interval closing that
+            year, after the MMU).
         probability: ``detection/probability.tif`` (float32, one band per year).
         disturbances_gpkg: ``detection/disturbances.gpkg``.
         objects_csv: ``detection/objects.csv``.
@@ -108,6 +113,7 @@ class RunPaths:
     figures_dir: Path
     onset_year: Path
     onset_year_nommu: Path
+    detected_by_interval: Path
     probability: Path
     disturbances_gpkg: Path
     objects_csv: Path
@@ -131,6 +137,7 @@ class RunPaths:
             figures_dir=figures_dir,
             onset_year=detection_dir / "onset_year.tif",
             onset_year_nommu=detection_dir / "onset_year_nommu.tif",
+            detected_by_interval=detection_dir / "detected_by_interval.tif",
             probability=detection_dir / "probability.tif",
             disturbances_gpkg=detection_dir / "disturbances.gpkg",
             objects_csv=detection_dir / "objects.csv",
@@ -510,6 +517,7 @@ def write_detection(
     *,
     onset_year: np.ndarray,
     onset_year_nommu: np.ndarray,
+    detected: np.ndarray,
     probability: np.ndarray | None,
     grid: CellGrid,
     years: Sequence[int],
@@ -519,7 +527,9 @@ def write_detection(
     """Write the detection rasters, the GeoPackage and ``objects.csv``.
 
     ``onset_year*.tif``: single band int16 on the cell grid, no nodata value
-    (0 = no detection, -1 = never monitored). ``probability.tif``: float32
+    (0 = no detection, -1 = never monitored). ``detected_by_interval.tif``:
+    uint8 ``(T, rows, cols)`` 0/1, band description = year (band 1, the
+    first year, is all 0). ``probability.tif``: float32
     ``(T, rows, cols)``, nodata NaN, band description = year (skipped when
     ``probability`` is None, rule D1). GeoPackage layers
     :data:`OBJECTS_LAYER` and, when ``refinement`` is given,
@@ -531,6 +541,7 @@ def write_detection(
         run_paths: Paths of the run.
         onset_year: int16 ``(rows, cols)`` after the MMU.
         onset_year_nommu: int16 ``(rows, cols)`` before the MMU.
+        detected: bool ``(T, rows, cols)`` detections per interval.
         probability: float32 ``(T, rows, cols)``, or None.
         grid: Common grid.
         years: NAIP years, length ``T``.
@@ -539,8 +550,8 @@ def write_detection(
 
     Returns:
         Mapping from a short name (``onset_year``, ``onset_year_nommu``,
-        ``probability``, ``disturbances_gpkg``, ``objects_csv``) to each
-        written path.
+        ``detected_by_interval``, ``probability``, ``disturbances_gpkg``,
+        ``objects_csv``) to each written path.
     """
     written: dict[str, Path] = {}
     onset_rasters = {
@@ -553,6 +564,9 @@ def write_detection(
         written[short_name] = _write_raster(
             onset_path, single_band, grid, nodata=None, band_names=[short_name]
         )
+    written["detected_by_interval"] = write_year_stack(
+        run_paths.detected_by_interval, detected.astype(bool), grid, years
+    )
     if probability is not None:
         written["probability"] = write_year_stack(
             run_paths.probability, probability, grid, years
@@ -570,6 +584,40 @@ def write_detection(
     written["objects_csv"] = run_paths.objects_csv
     logger.info("Wrote detection outputs to %s", run_paths.detection_dir)
     return written
+
+
+def read_detected_by_interval(run_paths: RunPaths, years: Sequence[int]) -> np.ndarray:
+    """Detections per interval of a saved run.
+
+    Runs written before ``detected_by_interval.tif`` existed kept one
+    detection per cell, so their ``onset_year.tif`` gives the stack
+    (``out[t] = onset_year == years[t]``).
+
+    Args:
+        run_paths: Paths of the run.
+        years: NAIP years of the run, length ``T``.
+
+    Returns:
+        bool ``(T, rows, cols)``.
+
+    Raises:
+        FileNotFoundError: If neither raster exists.
+        ValueError: If the stack's band years differ from ``years``.
+    """
+    if run_paths.detected_by_interval.is_file():
+        stack = read_year_stack(run_paths.detected_by_interval)
+        if list(stack.years) != list(years):
+            raise ValueError(
+                f"{run_paths.detected_by_interval} has years {stack.years}, "
+                f"expected {tuple(years)}"
+            )
+        return stack.values
+    if not run_paths.onset_year.is_file():
+        raise FileNotFoundError(f"Raster not found: {run_paths.onset_year}")
+    with rasterio.open(run_paths.onset_year) as dataset:
+        onset_year = dataset.read(1)
+    year_values = np.asarray(years).reshape(-1, 1, 1)
+    return onset_year[np.newaxis, :, :] == year_values
 
 
 def write_run_params(
@@ -732,6 +780,7 @@ __all__ = [
     "claim_output_dir",
     "load_run",
     "read_bracket_z",
+    "read_detected_by_interval",
     "read_layers",
     "read_run_params",
     "read_year_stack",

@@ -222,6 +222,14 @@ def test_each_plot_writes_png(
         figures.plot_onset_by_interval(
             figure_inputs.onset_year, years, grid, tmp_path / "d.png", dpi=60
         ),
+        figures.plot_onset_by_interval(
+            figure_inputs.onset_year,
+            years,
+            grid,
+            tmp_path / "d2.png",
+            detected=np.stack([figure_inputs.onset_year == year for year in years]),
+            dpi=60,
+        ),
         figures.plot_z_maps(figure_inputs.z, years, grid, tmp_path / "e.png", dpi=60),
         figures.plot_probability_maps(
             figure_inputs.probability,

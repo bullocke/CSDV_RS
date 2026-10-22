@@ -436,9 +436,10 @@ class DisturbanceDecide(_Base):
 
 
 class DisturbanceMmu(_Base):
-    """Minimum mapping unit."""
+    """Minimum mapping unit, and the smaller one for growth of earlier detections."""
 
     mmu_ha: float = Field(default=0.405, ge=0)
+    growth_mmu_ha: float = Field(default=0.11, ge=0)
 
 
 class DisturbanceRefine(_Base):

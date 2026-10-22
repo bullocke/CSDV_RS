@@ -158,8 +158,12 @@ Every function mosaics one band of a year's files into a window of the grid's pi
 | `bracketed_probability` | `(z, monitored, models, bracket_z, params, cell_m, years) -> ndarray` | D7 probability: `fmin` of the main, back and forward D5 probabilities, so NaN checks drop out. The last date uses the back check only and the first date the forward check only |
 | `rule_bracketed` | `(z, monitored, models, bracket_z, params, cell_m, years, *, strict) -> (flags, probability)` | D7 and D7s. The cell test uses the main z, as in D5 and D5s |
 | `first_onset` | `(flags) -> ndarray` | int8 index of the first flagged date, `NO_ONSET` where none |
-| `apply_mmu` | `(onset_index, cell_ha, mmu_ha) -> ndarray` | Removes objects (8-connected cells sharing an onset) with fewer than `ceil(mmu_ha / cell_ha)` cells. At 19.2 m the 1-acre MMU is 11 cells (0.406 ha) |
-| `decide` | `(z, monitored, params, cell_m, *, years, bracket_z=None) -> DecisionResult` | Fits the nulls (for every rule, so the report always lists them), runs `decide.rule`, onset and MMU. Raises `ValueError` when D7 or D7s gets no `bracket_z` |
+| `onset_stack` | `(onset_index, n_dates) -> ndarray` | One-hot bool stack of an onset map, `out[t] = onset_index == t` |
+| `mmu_cells` | `(mmu_ha, cell_ha) -> int` | Fewest cells to reach an area, `ceil(mmu_ha / cell_ha)`. At 19.2 m the 1-acre MMU is 11 cells (0.406 ha) and 0.11 ha is 3 cells |
+| `growth_min_cells` | `(mmu_ha, growth_mmu_ha, cell_ha) -> int` | Cells a growth object needs, `mmu_cells(growth_mmu_ha)` capped at `mmu_cells(mmu_ha)` |
+| `interval_detections` | `(flags, cell_ha, mmu_ha, growth_mmu_ha) -> ndarray` | The MMU per interval. Flags of each date are labelled 8-connected, and an object is kept with at least `mmu_cells(mmu_ha)` cells, or with at least `growth_min_cells` cells when it touches or overlaps (8-neighbourhood) a cell kept at an earlier date. A cell can be kept at more than one date |
+| `apply_mmu` | `(onset_index, cell_ha, mmu_ha) -> ndarray` | Removes objects (8-connected cells sharing an onset) with fewer than `mmu_cells` cells from an onset map. `decide` uses `interval_detections` instead |
+| `decide` | `(z, monitored, params, cell_m, *, years, bracket_z=None) -> DecisionResult` | Fits the nulls (for every rule, so the report always lists them), runs `decide.rule`, applies `interval_detections` (`mmu.mmu_ha`, `mmu.growth_mmu_ha`) and takes the onsets. Raises `ValueError` when D7 or D7s gets no `bracket_z` |
 | `onset_index_to_year` | `(onset_index, years, monitored) -> ndarray` | int16 raster: the onset year, 0 where monitored but not detected, -1 where never monitored |
 
 `DateFit` (frozen) records one date's null.
@@ -173,7 +177,7 @@ Every function mosaics one band of a year's files into a window of the grid's pi
 | `method` | `str` | `"central"`, `"iqr"` (fallback) or `"skipped"` |
 | `skipped` | `bool` | True when too few cells, always True at index 0. Nothing is detected on a skipped date, except under D1 |
 
-`DecisionResult` (frozen) holds `rule`, `onset_index` (int8, before the MMU), `onset_index_mmu` (int8, after the MMU), `probability` (float32 year stack, NaN on skipped dates and on cells not monitored at that date, so index 0 is all NaN, None for D1) and `fits` (one `DateFit` per date).
+`DecisionResult` (frozen) holds `rule`, `flags` (bool year stack, cells where the rule passes, before the MMU), `detected` (bool year stack, `flags` after `interval_detections`), `onset_index` (int8, first date the rule passes, before the MMU), `onset_index_mmu` (int8, first date in `detected`), `probability` (float32 year stack, NaN on skipped dates and on cells not monitored at that date, so index 0 is all NaN, None for D1) and `fits` (one `DateFit` per date).
 
 ## `outlines`
 
@@ -181,9 +185,9 @@ Every function mosaics one band of a year's files into a window of the grid's pi
 |---|---|---|
 | `OBJECT_COLUMNS`, `REFINED_COLUMNS`, `OPENING_COLUMNS`, `CENTROID_COLUMNS` | tuples | Column orders (see the output specification below) |
 | `interval_label` | `(year_before, year) -> str` | `"2016-2018"` |
-| `detection_objects` | `(onset_index, probability, z, grid, years) -> GeoDataFrame` | Labels 8-connected cells per onset index, polygonizes them on the cell grid and dissolves per label. `object_id` runs from 1 by onset index, then label. `follow_up` is True when a later image exists. Empty frame with the same columns when nothing is detected |
-| `refine_object` | `(chm_before, chm_after, transform, geometry, params) -> RefinedOutline \| None` | Redraws one object from the 0.6 m CHM pair (port of `08_refine_best.refine_object`). Returns None when the forest ring is too small, statistics fail, or the envelope is empty |
-| `refine_objects` | `(objects, site_inputs, params) -> RefinementResult` | Reads each object's CHM windows (bounds buffered by `refine.pad_m`) and refines it |
+| `detection_objects` | `(detected, probability, z, grid, years, *, min_cells=None) -> GeoDataFrame` | Labels the 8-connected cells of each date of the `detected` stack, polygonizes them on the cell grid and dissolves per label, so objects of different intervals can overlap. `object_id` runs from 1 by date, then label. `earlier_share` is the share of cells detected at an earlier date, `growth` is True for objects with fewer than `min_cells` cells (False when `min_cells` is None), and `follow_up` is True when a later image exists. Empty frame with the same columns when nothing is detected |
+| `refine_object` | `(chm_before, chm_after, transform, geometry, params, *, min_area_ha=None) -> RefinedOutline \| None` | Redraws one object from the 0.6 m CHM pair (port of `08_refine_best.refine_object`). The envelope must reach `min_area_ha` (`mmu.mmu_ha` when None). Returns None when the forest ring is too small, statistics fail, or the envelope is empty |
+| `refine_objects` | `(objects, site_inputs, params) -> RefinementResult` | Reads each object's CHM windows (bounds buffered by `refine.pad_m`) and refines it, with the smaller envelope minimum `min(mmu.growth_mmu_ha, mmu.mmu_ha)` for growth objects |
 | `objects_table` | `(objects) -> DataFrame` | Objects without geometry, plus centroids in grid CRS and in EPSG:4326 |
 
 `refine_object` works in six steps. It takes the CHM change with a 3 by 3 maximum on the later CHM (`refine.tolerance_px`), builds a reference ring of earlier forest (CHM above `refine.forest_height_m`) outside the object buffered by `refine.ring_gap_m`, standardizes the change against the ring, fits Efron's null on the ring, marks loss where the posterior exceeds `refine.p_loss` within `refine.near_m` of the object, and closes the resulting openings into an envelope that must touch the object and reach the MMU. Refinement always reads the CHM, whatever the detection input.
@@ -202,18 +206,19 @@ Every function mosaics one band of a year's files into a window of the grid's pi
 | `write_year_stack` / `read_year_stack` | `(path, stack, grid, years) -> Path` / `(path) -> YearStack` | Multi-band year rasters on the cell grid |
 | `write_z` / `read_z` | `(path, z, grid, years) -> Path` / `(path) -> YearStack` | int16 z stacks through `encode_z` and `decode_z` |
 | `write_layers` / `read_layers` | `(run_paths, layers, grid) -> dict` / `(run_paths) -> CellLayers` | The `layers/` folder (`ndvi.tif` is optional on read) |
-| `write_detection` | `(run_paths, *, onset_year, onset_year_nommu, probability, grid, years, objects, refinement) -> dict` | Detection rasters, GeoPackage and `objects.csv` |
+| `write_detection` | `(run_paths, *, onset_year, onset_year_nommu, detected, probability, grid, years, objects, refinement) -> dict` | Detection rasters (including `detected_by_interval.tif`), GeoPackage and `objects.csv` |
+| `read_detected_by_interval` | `(run_paths, years) -> ndarray` | Detections per interval of a saved run. Runs written before the stack existed get one detection per cell from `onset_year.tif` |
 | `write_run_params` / `read_run_params` | `(run_paths, params, *, site, command_line, config_path, from_run, grid=None) -> Path` / `(run_dir) -> dict` | `run_params.json`, written after claiming the folder and again once the grid exists |
 | `read_bracket_z` | `(run_paths, params, years) -> (back_z, forward_z) \| None` | The bracket z stacks when both files exist |
 | `load_run` | `(run_dir) -> SavedRun` | Reloads parameters, grid, layers, z and (when saved) the bracket z stacks without the source CHMs |
 
-`RunPaths` (frozen) holds every path of a run folder: `root`, `run_params`, `log`, `summary_json`, `report_md`, `layers_dir`, `z_dir`, `detection_dir`, `figures_dir`, `onset_year`, `onset_year_nommu`, `probability`, `disturbances_gpkg` and `objects_csv`. Build it with `RunPaths.for_root(root)`. The methods `layer_path(name)`, `z_path(params)` and `bracket_z_paths(params)` (the `_back2` and `_fwd2` variants of `z_path`) return file paths. `YearStack` (frozen) holds `values` and `years` (from the band descriptions). `SavedRun` (frozen) holds `run_paths`, `site`, `params`, `grid`, `layers`, `z` (decoded, already quantized), `years` and `bracket_z` (None unless the run saved the bracket stacks).
+`RunPaths` (frozen) holds every path of a run folder: `root`, `run_params`, `log`, `summary_json`, `report_md`, `layers_dir`, `z_dir`, `detection_dir`, `figures_dir`, `onset_year`, `onset_year_nommu`, `detected_by_interval`, `probability`, `disturbances_gpkg` and `objects_csv`. Build it with `RunPaths.for_root(root)`. The methods `layer_path(name)`, `z_path(params)` and `bracket_z_paths(params)` (the `_back2` and `_fwd2` variants of `z_path`) return file paths. `YearStack` (frozen) holds `values` and `years` (from the band descriptions). `SavedRun` (frozen) holds `run_paths`, `site`, `params`, `grid`, `layers`, `z` (decoded, already quantized), `years` and `bracket_z` (None unless the run saved the bracket stacks).
 
 ## `report`
 
 | Name | Value or signature | Purpose |
 |---|---|---|
-| `SUMMARY_SCHEMA_VERSION` | `1` | Version of the `summary.json` layout |
+| `SUMMARY_SCHEMA_VERSION` | `2` | Version of the `summary.json` layout. Version 2 counts detections per interval and adds `repeat_ha`, `growth_ha` and `ever_detected_ha`. Version 1 files still load, with those fields at their defaults |
 | `REPORTED_PACKAGES` | numpy, scipy, rasterio, geopandas, shapely, pydantic, matplotlib | Versions recorded in every run |
 | `DEFAULT_CAVEATS` | three sentences | No persistence check on the last interval, refinement always uses the CHM, no reference scoring |
 | `software_info` | `(repo_root=None) -> dict[str, str]` | `csdv_core` version, `git_commit`, `git_dirty`, `python` and package versions. Git failures give `"unknown"` |
@@ -225,7 +230,7 @@ Every function mosaics one band of a year's files into a window of the grid's pi
 | `write_summary_json` / `read_summary_json` | `(summary, path) -> Path` / `(path) -> RunSummary` | `summary.json`, indent 2, keys in field order (stage times in stage order) |
 | `write_report_markdown` | `(summary, path, *, figure_paths=None) -> Path` | `report.md` |
 
-`InputFileInfo` (frozen) has `year`, `kind` (`"chm"` or `"naip"`), `path`, `acquisition_date` (ISO string or None), `dtype`, `scale` and `nodata`. `GridSummary` (frozen) has `crs`, `bounds`, `pixel_m`, `block_px`, `cell_m`, `cell_rows`, `cell_cols`, `area_ha`, `window_cells` and `window_m_effective` (None for scene methods) and `sigma_cells`. `IntervalSummary` (frozen) has `year_before`, `year`, `label`, `monitored_ha`, `detected_ha`, `detected_ha_nommu`, `n_objects`, `share_of_monitored`, `fit` (a `DateFit`), `skipped`, `n_refined` and `refined_ha`. `RunSummary` is described with `summary.json` below.
+`InputFileInfo` (frozen) has `year`, `kind` (`"chm"` or `"naip"`), `path`, `acquisition_date` (ISO string or None), `dtype`, `scale` and `nodata`. `GridSummary` (frozen) has `crs`, `bounds`, `pixel_m`, `block_px`, `cell_m`, `cell_rows`, `cell_cols`, `area_ha`, `window_cells` and `window_m_effective` (None for scene methods) and `sigma_cells`. `IntervalSummary` (frozen) has `year_before`, `year`, `label`, `monitored_ha`, `detected_ha`, `detected_ha_nommu`, `n_objects`, `share_of_monitored`, `fit` (a `DateFit`), `skipped`, `n_refined`, `refined_ha`, `repeat_ha` (part of `detected_ha` already detected at an earlier date) and `growth_ha` (area of objects kept by the growth rule). `detected_ha` counts every cell detected in the interval and `detected_ha_nommu` every cell where the rule passed. `RunSummary` is described with `summary.json` below.
 
 ## `figures`
 
@@ -238,7 +243,7 @@ All functions use the Agg backend, take explicit arrays and return the written p
 | `chm_height_backdrop(chm_height, grid) -> NaipBackdrop` | One year of cell CHM height as a grey image, 0 m to the 99th percentile (`CHM_BACKDROP_PERCENTILE`), taller canopy lighter |
 | `onset_backdrop(inputs) -> NaipBackdrop \| None` | Backdrop of the onset maps: the NAIP backdrop when given, otherwise the grey CHM height of the first year when `chm_height` is set |
 | `draw_forest`, `plot_forest_initial`, `plot_forest_by_year` | Forest mask at the first year and per year |
-| `draw_onset`, `plot_disturbance_onset`, `plot_onset_by_interval` | Onset map (one colour per year) and one panel per interval, over the backdrop from `onset_backdrop` |
+| `draw_onset`, `plot_disturbance_onset`, `plot_onset_by_interval` | Onset map (first detection, one colour per year) and one panel per interval, over the backdrop from `onset_backdrop`. With `detected`, an interval panel shows every cell detected in that interval, otherwise the cells whose onset falls in it |
 | `plot_z_maps` | Diverging z panel per interval, limits plus and minus 4 |
 | `plot_probability_maps` | Probability panel per interval. The colour ramp changes from neutral to warm at `p_boundary` (a colour break, not a contour line), the colour bar marks the boundary, and NaN cells are grey |
 | `draw_null_fit`, `plot_null_fits` | Monitored z histogram with the fitted null `p0 N(mu0, sigma0)` per interval. The dashed boundary is approximate: it marks where the cell-level posterior `1 - p0 f0 / f`, with `f` from the plotted histogram, reaches `p_boundary`, not the smoothed lfdr curve used for decisions |
@@ -246,7 +251,7 @@ All functions use the Agg backend, take explicit arrays and return the written p
 | `plot_refined_examples` | CHM before and after for the largest refined objects, with the cell object and envelope |
 | `make_figures(inputs, figures_dir, *, dpi=200) -> dict[str, Path]` | Writes every figure the inputs allow. A failing figure is logged and left out |
 
-`NaipBackdrop` (frozen) holds `rgb` (uint8, decimated) and `extent`. `FigureInputs` collects what `make_figures` draws: `grid`, `years`, `forest`, `monitored`, `z`, `probability`, `onset_year`, `fits`, `intervals`, `objects`, `refined`, `p_boundary`, `bin_w`, and the optional `site_inputs`, `backdrop` and `chm_height` (the cell CHM height stack, which supplies the default grey onset-map backdrop).
+`NaipBackdrop` (frozen) holds `rgb` (uint8, decimated) and `extent`. `FigureInputs` collects what `make_figures` draws: `grid`, `years`, `forest`, `monitored`, `z`, `probability`, `onset_year`, `fits`, `intervals`, `objects`, `refined`, `p_boundary`, `bin_w`, and the optional `site_inputs`, `backdrop`, `chm_height` (the cell CHM height stack, which supplies the default grey onset-map backdrop) and `detected` (the detections per interval for `onset_by_interval.png`).
 
 ## `report_caveats`
 
@@ -344,7 +349,8 @@ Defaults reproduce the best tested case from `2_Disturbance_Index`. Every key ma
 | `decide.smooth_bins` | 2.0 | none | Gaussian smoothing of the mixture histogram (bins) |
 | `decide.min_prior` | 0.01 | none | Floor on the per-date prior probability of disturbance |
 | `decide.min_fit_cells` | 1000 | none | Fewest monitored cells to fit a date (at least 100). Smaller dates are skipped and reported |
-| `mmu.mmu_ha` | 0.405 | `--mmu-ha` | Minimum mapping unit (ha), 1 acre. 0 keeps every object |
+| `mmu.mmu_ha` | 0.405 | `--mmu-ha` | Minimum mapping unit of each interval (ha), 1 acre. 0 keeps every object |
+| `mmu.growth_mmu_ha` | 0.11 | `--growth-mmu-ha` | Minimum (ha) for objects that touch or overlap a detection of an earlier interval, 3 cells at 19.2 m. 0 keeps them at any size, a value of `mmu_ha` or more turns the rule off |
 | `refine.enabled` | true | `--refine/--no-refine` | Redraw objects from the 0.6 m CHM |
 | `refine.pad_m` | 60.0 | none | Read window buffer around each object (m) |
 | `refine.ring_gap_m` | 20.0 | none | Gap between object and reference ring (m) |
@@ -364,7 +370,7 @@ Defaults reproduce the best tested case from `2_Disturbance_Index`. Every key ma
 | `figures.naip_backdrop` | false | `--naip-backdrop/--no-naip-backdrop` | Draw NAIP RGB under the maps (reads NAIP) |
 | `figures.dpi` | 200 | none | Figure resolution (50 to 1200) |
 
-The least refined envelope area is `mmu.mmu_ha`. With `--from-run`, the `inputs`, `grid`, `forest` and `standardize` sections are taken from the saved run, and an explicit option or config value in those sections must equal the saved one. `decide`, `mmu`, `refine` and `figures` may change, and they come from the packaged defaults, the rerun's `--config` and its options.
+The least refined envelope area is `mmu.mmu_ha`, or `min(mmu.growth_mmu_ha, mmu.mmu_ha)` for growth objects. With `--from-run`, the `inputs`, `grid`, `forest` and `standardize` sections are taken from the saved run, and an explicit option or config value in those sections must equal the saved one. `decide`, `mmu`, `refine` and `figures` may change, and they come from the packaged defaults, the rerun's `--config` and its options.
 
 ## Output specification
 
@@ -389,6 +395,7 @@ The least refined envelope area is `mmu.mmu_ha`. With `--from-run`, the `inputs`
 ├── detection/
 │   ├── onset_year.tif
 │   ├── onset_year_nommu.tif
+│   ├── detected_by_interval.tif
 │   ├── probability.tif        not written for rule D1
 │   ├── disturbances.gpkg
 │   └── objects.csv
@@ -418,8 +425,9 @@ All rasters share the cell grid (`CellGrid.cell_transform` and CRS), DEFLATE com
 | `layers/ndvi.tif` | one per year | float32 | NaN | Cell-mean NAIP NDVI |
 | `layers/forest.tif` | one per year | uint8 | none | 1 forest, 0 not forest |
 | `z/z_*.tif` | one per year | int16 | -32768 | `round(z * 100)`, clipped to plus or minus 32767. Divide by 100 for z. Band 1 is all nodata for change inputs. In `_back2` bands 1 and 2 are nodata, in `_fwd2` the first and last bands |
-| `detection/onset_year.tif` | 1 | int16 | none | Onset year after the MMU, 0 monitored without detection, -1 never monitored |
-| `detection/onset_year_nommu.tif` | 1 | int16 | none | The same before the MMU |
+| `detection/onset_year.tif` | 1 | int16 | none | Year of the first detection after the MMU, 0 monitored without detection, -1 never monitored |
+| `detection/onset_year_nommu.tif` | 1 | int16 | none | Year of the first date the rule passes, before the MMU |
+| `detection/detected_by_interval.tif` | one per year | uint8 | none | 1 where the cell is detected in the interval closing that year (after the MMU and the growth rule), else 0. Band 1 is all 0. A cell can be detected in several bands |
 | `detection/probability.tif` | one per year | float32 | NaN | Decision probability of the rule (D2 lfdr posterior, D5 and D5s spatial loss probability, D6 and D6s with persistence, D7 and D7s the bracketed minimum). NaN on skipped dates and on cells not monitored at that date, so band 1 is all NaN |
 
 An onset year is the later image of its interval. A value of 2018 in a 2012 to 2022 biennial series means the loss happened between the 2016 and 2018 images. A cell is monitored at date `t` when it was forest at `t - 1`, so -1 marks cells that were never forest at any image before the last.
@@ -428,19 +436,21 @@ An onset year is the later image of its interval. A value of 2018 in a 2012 to 2
 
 All layers are in the grid CRS. Areas are in hectares.
 
-Layer `objects`, one row per detected object after the MMU:
+Layer `objects`, one row per detected object after the MMU. Each interval has its own objects, so a cell detected in two intervals lies in two objects that overlap:
 
 | Column | Type | Meaning |
 |---|---|---|
-| `object_id` | int | 1-based, ordered by onset index, then label |
+| `object_id` | int | 1-based, ordered by date index, then label |
 | `onset_year` | int | Later image year of the interval |
 | `year_before` | int | Earlier image year |
 | `interval` | str | `"<year_before>-<onset_year>"` |
 | `onset_index` | int | Date index `t` in `years` |
 | `n_cells` | int | Cells in the object |
 | `area_ha` | float | `n_cells * cell_ha` |
-| `mean_prob`, `max_prob` | float | Mean and maximum decision probability at the onset date (NaN for D1) |
-| `mean_z` | float | Mean z at the onset date |
+| `earlier_share` | float | Share of the object's cells detected in an earlier interval |
+| `growth` | bool | True when the object is smaller than the MMU and was kept because it touches or overlaps an earlier detection |
+| `mean_prob`, `max_prob` | float | Mean and maximum decision probability at the object's date (NaN for D1) |
+| `mean_z` | float | Mean z at the object's date |
 | `follow_up` | bool | True when a later image exists after the onset image, False for objects in the last interval |
 | `geometry` | (Multi)Polygon | Dissolved cell outline |
 
@@ -482,7 +492,7 @@ The file is enough to rebuild the grid and reload the run without the source CHM
 
 | Key | Content |
 |---|---|
-| `schema_version` | 1 |
+| `schema_version` | 2 |
 | `site`, `created`, `output_dir` | Run identity |
 | `command_line`, `config_path`, `from_run` | As in `run_params.json` |
 | `params` | Final parameters |
@@ -491,14 +501,15 @@ The file is enough to rebuild the grid and reload the run without the source CHM
 | `inputs` | Inventory: one `InputFileInfo` per file (year, kind, path, acquisition date, dtype, scale, nodata) |
 | `grid` | `GridSummary`: CRS, bounds, pixel and cell size, cell counts, area (ha), window size in cells and metres, smoothing scales in cells |
 | `forest_ha_by_year` | Forest area per year (ha) |
-| `intervals` | One `IntervalSummary` per interval: monitored, detected (after and before the MMU) and refined area, object counts, share of monitored forest, null fit, skipped flag |
+| `intervals` | One `IntervalSummary` per interval: monitored, detected (after and before the MMU), repeat, growth and refined area, object counts, share of monitored forest, null fit, skipped flag |
 | `skipped_years` | Years whose null fit was skipped (the first year excluded) |
-| `n_objects`, `detected_ha` | Totals after the MMU |
+| `n_objects`, `detected_ha` | Totals after the MMU, summed over intervals (a cell detected twice counts twice) |
 | `n_refined`, `n_refine_skipped`, `refined_ha` | Refinement totals (0 with `--no-refine`) |
 | `stage_seconds` | Wall time per stage (s) |
 | `software` | `software_info()`: package version, git commit and dirty flag, Python and package versions |
 | `caveats` | Sentences printed in the report |
 | `outputs` | Short name to file path relative to the run folder |
+| `ever_detected_ha` | Area detected in at least one interval (ha), null in schema 1 files |
 
 ### `report.md` and the log
 

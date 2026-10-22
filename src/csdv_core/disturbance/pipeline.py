@@ -8,7 +8,7 @@
 3. ``layers``: cell layers, written to ``layers/``.
 4. ``standardize``: change layer, population, z stack (quantized), written to
    ``z/``. Rules D7 and D7s also write the two-step z stacks.
-5. ``decide``: rule, onset and MMU.
+5. ``decide``: rule, MMU per interval (with the growth rule) and onset.
 6. ``outlines``: objects (and refinement), then the detection rasters, the
    GeoPackage and the CSV.
 7. ``report``: ``summary.json`` and ``report.md``.
@@ -42,7 +42,7 @@ from csdv_core.disturbance._pipeline_figures import (
     write_run_figures,
 )
 from csdv_core.disturbance._pipeline_inputs import prepare_fresh, prepare_from_run
-from csdv_core.disturbance.decide import decide, onset_index_to_year
+from csdv_core.disturbance.decide import decide, mmu_cells, onset_index_to_year
 from csdv_core.disturbance.layers import monitored_mask
 from csdv_core.disturbance.outlines import detection_objects, refine_objects
 from csdv_core.disturbance.report import (
@@ -197,7 +197,12 @@ def _run_stages(
         onset_year_nommu = onset_index_to_year(decision.onset_index, years, monitored)
     with timer.stage("outlines"):
         objects = detection_objects(
-            decision.onset_index_mmu, decision.probability, prepared.z, grid, years
+            decision.detected,
+            decision.probability,
+            prepared.z,
+            grid,
+            years,
+            min_cells=mmu_cells(params.mmu.mmu_ha, grid.cell_ha),
         )
         refinement = None
         if params.refine.enabled:
@@ -206,6 +211,7 @@ def _run_stages(
             run_paths,
             onset_year=onset_year,
             onset_year_nommu=onset_year_nommu,
+            detected=decision.detected,
             probability=decision.probability,
             grid=grid,
             years=years,
@@ -243,6 +249,7 @@ def _run_stages(
                 z=prepared.z,
                 probability=decision.probability,
                 onset_year=onset_year,
+                detected=decision.detected,
                 fits=decision.fits,
                 intervals=summary.intervals,
                 objects=objects,

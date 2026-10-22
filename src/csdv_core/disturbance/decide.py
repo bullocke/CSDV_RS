@@ -25,9 +25,18 @@ D2), ``_spatial`` (D5, D5s, D6, D6s) and ``apply_mmu`` onto
 Every date ``t`` gets its own empirical null with ``seed = t``. Dates with
 fewer than ``min_fit_cells`` monitored valid cells are skipped.
 
+The MMU is applied to each interval on its own (:func:`interval_detections`).
+A cell that is still forest at the start of a later interval can therefore be
+detected again, as when a strip cut or thinning is followed by an overstory
+removal. Objects smaller than ``mmu.mmu_ha`` are kept when they touch or
+overlap a detection of an earlier interval and reach ``mmu.growth_mmu_ha``,
+so a disturbance can grow slowly. The onset is the first interval with a
+detection that survives these rules.
+
 Inputs: quantized z and the monitored mask, ``(T, rows, cols)``, plus the
 two-step z stacks for D7 and D7s.
-Outputs: :class:`DecisionResult` with onset indices before and after the MMU.
+Outputs: :class:`DecisionResult` with the rule flags, the detections per
+interval and the onset indices before and after the MMU.
 """
 
 from __future__ import annotations
@@ -94,10 +103,16 @@ class DecisionResult:
     Attributes:
         rule: Rule name (``D1``, ``D2``, ``D5``, ``D5s``, ``D6``, ``D6s``,
             ``D7``, ``D7s``).
-        onset_index: int8 ``(rows, cols)``, index ``t`` of the first date with
-            a detection, :data:`NO_ONSET` (-1) where none. Before the MMU.
-        onset_index_mmu: int8 ``(rows, cols)``, ``onset_index`` with objects
-            smaller than ``mmu.mmu_ha`` set to -1.
+        flags: bool ``(T, rows, cols)``, cells where the rule passes, before
+            the MMU (index 0 is all False).
+        detected: bool ``(T, rows, cols)``, ``flags`` after the MMU and the
+            growth rule of :func:`interval_detections`, one map per interval.
+            A cell can be detected in more than one interval.
+        onset_index: int8 ``(rows, cols)``, index ``t`` of the first date
+            where the rule passes, :data:`NO_ONSET` (-1) where none. Before
+            the MMU.
+        onset_index_mmu: int8 ``(rows, cols)``, index of the first date with a
+            detection in ``detected``, -1 where none.
         probability: float32 ``(T, rows, cols)`` decision probability (D2:
             lfdr posterior, D5/D5s: spatial loss probability, D6/D6s: with
             persistence, D7/D7s: minimum over the bracket checks). NaN
@@ -107,6 +122,8 @@ class DecisionResult:
     """
 
     rule: str
+    flags: np.ndarray
+    detected: np.ndarray
     onset_index: np.ndarray
     onset_index_mmu: np.ndarray
     probability: np.ndarray | None
@@ -569,12 +586,105 @@ def first_onset(flags: np.ndarray) -> np.ndarray:
     return onset.astype("int8")
 
 
+def onset_stack(onset_index: np.ndarray, n_dates: int) -> np.ndarray:
+    """One-hot stack of an onset map, ``out[t] = onset_index == t``.
+
+    Args:
+        onset_index: int8 ``(rows, cols)``, -1 = none.
+        n_dates: Number of dates ``T``.
+
+    Returns:
+        bool ``(T, rows, cols)`` with at most one True per cell.
+    """
+    date_numbers = np.arange(n_dates).reshape(-1, 1, 1)
+    return onset_index[np.newaxis, :, :] == date_numbers
+
+
+def mmu_cells(mmu_ha: float, cell_ha: float) -> int:
+    """Fewest cells an object needs to reach an area, ``ceil(mmu_ha / cell_ha)``.
+
+    A tolerance of 1e-9 keeps an exact multiple from rounding up, so 1 acre
+    (0.405 ha) is 11 cells at 19.2 m and 0.11 ha is 3 cells.
+
+    Args:
+        mmu_ha: Minimum area (ha).
+        cell_ha: Cell area (ha).
+
+    Returns:
+        Fewest cells (0 when ``mmu_ha`` is 0).
+    """
+    min_cells_float = np.ceil(mmu_ha / cell_ha - 1e-9)
+    return max(int(min_cells_float), 0)
+
+
+def growth_min_cells(mmu_ha: float, growth_mmu_ha: float, cell_ha: float) -> int:
+    """Fewest cells of an object kept by the growth rule.
+
+    Args:
+        mmu_ha: Minimum mapping unit (ha).
+        growth_mmu_ha: Minimum for objects that touch an earlier detection.
+        cell_ha: Cell area (ha).
+
+    Returns:
+        ``mmu_cells(growth_mmu_ha)``, capped at ``mmu_cells(mmu_ha)``.
+    """
+    standalone_cells = mmu_cells(mmu_ha, cell_ha)
+    growth_cells = mmu_cells(growth_mmu_ha, cell_ha)
+    return min(growth_cells, standalone_cells)
+
+
+def interval_detections(
+    flags: np.ndarray, cell_ha: float, mmu_ha: float, growth_mmu_ha: float
+) -> np.ndarray:
+    """Apply the MMU to each interval, with a smaller minimum for growth.
+
+    Interval by interval, the flagged cells are labelled 8-connected. An
+    object is kept when it has at least ``mmu_cells(mmu_ha)`` cells, or when
+    it touches or overlaps (8-neighbourhood) a cell kept in an earlier
+    interval and has at least :func:`growth_min_cells` cells. Each interval
+    is decided independently of the onset of its cells, so a cell flagged in
+    two intervals can be kept in both.
+
+    Args:
+        flags: bool ``(T, rows, cols)`` rule flags.
+        cell_ha: Cell area (ha).
+        mmu_ha: Minimum mapping unit (ha).
+        growth_mmu_ha: Minimum (ha) for objects touching an earlier detection.
+
+    Returns:
+        bool ``(T, rows, cols)``, the kept cells per interval.
+    """
+    min_cells = mmu_cells(mmu_ha, cell_ha)
+    growth_cells = growth_min_cells(mmu_ha, growth_mmu_ha, cell_ha)
+    use_growth = growth_cells < min_cells
+    detected = np.zeros(flags.shape, dtype=bool)
+    earlier = np.zeros(flags.shape[1:], dtype=bool)
+    for date_index in range(flags.shape[0]):
+        date_flags = flags[date_index]
+        if not date_flags.any():
+            continue
+        labels, n_labels = ndimage.label(date_flags, EIGHT_CONNECTED)
+        object_sizes = np.bincount(labels.ravel(), minlength=n_labels + 1)
+        keep = object_sizes >= min_cells
+        if use_growth and earlier.any():
+            near_earlier = ndimage.binary_dilation(earlier, EIGHT_CONNECTED)
+            touching_labels = np.unique(labels[near_earlier & date_flags])
+            touching = np.zeros(n_labels + 1, dtype=bool)
+            touching[touching_labels] = True
+            keep |= touching & (object_sizes >= growth_cells)
+        keep[0] = False
+        detected[date_index] = keep[labels]
+        earlier |= detected[date_index]
+    return detected
+
+
 def apply_mmu(onset_index: np.ndarray, cell_ha: float, mmu_ha: float) -> np.ndarray:
-    """Remove objects smaller than the minimum mapping unit.
+    """Remove objects smaller than the minimum mapping unit from an onset map.
 
     An object is a set of 8-connected cells sharing one onset index. Objects
-    with fewer than ``ceil(mmu_ha / cell_ha - 1e-9)`` cells become
-    :data:`NO_ONSET`. ``mmu_ha = 0`` keeps everything.
+    with fewer than :func:`mmu_cells` cells become :data:`NO_ONSET`.
+    ``mmu_ha = 0`` keeps everything. :func:`decide` uses
+    :func:`interval_detections` instead, which also keeps later detections.
 
     Args:
         onset_index: int8 ``(rows, cols)`` from :func:`first_onset`.
@@ -585,8 +695,7 @@ def apply_mmu(onset_index: np.ndarray, cell_ha: float, mmu_ha: float) -> np.ndar
         int8 ``(rows, cols)``, a filtered copy.
     """
     filtered = onset_index.copy()
-    min_cells_float = np.ceil(mmu_ha / cell_ha - 1e-9)
-    min_cells = int(min_cells_float)
+    min_cells = mmu_cells(mmu_ha, cell_ha)
     detected_values = onset_index[onset_index >= 0]
     onset_values = np.unique(detected_values)
     for onset_value in onset_values:
@@ -635,11 +744,13 @@ def decide(
     years: Sequence[int],
     bracket_z: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> DecisionResult:
-    """Run the configured rule (``decide.rule``), onset and MMU.
+    """Run the configured rule (``decide.rule``), the MMU per interval and onset.
 
     Null models are fitted for every rule, D1 included, so the report always
     lists the per-date fits. For D1 the fits do not affect the decision and
-    a skipped date is still evaluated.
+    a skipped date is still evaluated. The flags go through
+    :func:`interval_detections` (``mmu.mmu_ha`` and ``mmu.growth_mmu_ha``),
+    and ``onset_index_mmu`` is the first date of the result.
 
     Args:
         z: float32 ``(T, rows, cols)`` quantized z.
@@ -693,18 +804,28 @@ def decide(
         raise ValueError(f"Unknown decision rule {rule!r}")
     if probability is not None:
         probability = mask_probability(probability, monitored, fits)
-    onset_index = first_onset(flags)
     cell_ha = cell_m**2 / M2_PER_HA
-    onset_index_mmu = apply_mmu(onset_index, cell_ha, params.mmu.mmu_ha)
-    detected_mask = onset_index >= 0
-    kept_mask = onset_index_mmu >= 0
-    detected_cells = int(detected_mask.sum())
-    kept_cells = int(kept_mask.sum())
+    detected = interval_detections(
+        flags, cell_ha, params.mmu.mmu_ha, params.mmu.growth_mmu_ha
+    )
+    onset_index = first_onset(flags)
+    onset_index_mmu = first_onset(detected)
+    flagged_count = flags.sum()
+    detected_count = detected.sum()
+    ever_mask = onset_index_mmu >= 0
+    ever_count = ever_mask.sum()
     logger.info(
-        "Rule %s: %d cells detected, %d after the MMU", rule, detected_cells, kept_cells
+        "Rule %s: %d cell-intervals flagged, %d after the MMU, %d cells detected "
+        "at least once",
+        rule,
+        int(flagged_count),
+        int(detected_count),
+        int(ever_count),
     )
     return DecisionResult(
         rule=rule,
+        flags=flags,
+        detected=detected,
         onset_index=onset_index,
         onset_index_mmu=onset_index_mmu,
         probability=probability,
@@ -753,7 +874,11 @@ __all__ = [
     "decide",
     "first_onset",
     "fit_date_models",
+    "growth_min_cells",
+    "interval_detections",
     "mask_probability",
+    "mmu_cells",
+    "onset_stack",
     "onset_index_to_year",
     "persistence_probability",
     "rule_d1",

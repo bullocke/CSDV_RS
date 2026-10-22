@@ -50,8 +50,11 @@ from csdv_core.disturbance.store import RunPaths
 
 logger = logging.getLogger(__name__)
 
-#: Version of the ``summary.json`` layout.
-SUMMARY_SCHEMA_VERSION = 1
+#: Version of the ``summary.json`` layout. Version 2 counts detections per
+#: interval (a cell can be detected in more than one interval) and adds
+#: ``repeat_ha``, ``growth_ha`` and ``ever_detected_ha``. Version 1 files still
+#: load, with those fields at their defaults.
+SUMMARY_SCHEMA_VERSION = 2
 #: Packages whose versions go into :func:`software_info`.
 REPORTED_PACKAGES: tuple[str, ...] = (
     "numpy",
@@ -139,15 +142,20 @@ class IntervalSummary:
         year: Later image year, ``years[t]`` (the onset year label).
         label: ``"<year_before>-<year>"``.
         monitored_ha: Area monitored at ``t`` (forest at ``t - 1``).
-        detected_ha: Detected area after the MMU.
-        detected_ha_nommu: Detected area before the MMU.
-        n_objects: Objects with this onset after the MMU.
+        detected_ha: Area detected in the interval after the MMU, including
+            cells detected in an earlier interval as well.
+        detected_ha_nommu: Area where the rule passes, before the MMU.
+        n_objects: Objects of this interval after the MMU.
         share_of_monitored: ``detected_ha / monitored_ha`` (0 when nothing is
             monitored).
         fit: The date's null fit.
         skipped: Same as ``fit.skipped``.
         n_refined: Objects of this interval with a refined envelope.
         refined_ha: Refined envelope area of this interval (ha).
+        repeat_ha: Part of ``detected_ha`` already detected in an earlier
+            interval (ha).
+        growth_ha: Area of objects smaller than the MMU kept because they
+            touch an earlier detection (ha).
     """
 
     year_before: int
@@ -162,6 +170,8 @@ class IntervalSummary:
     skipped: bool
     n_refined: int
     refined_ha: float
+    repeat_ha: float = 0.0
+    growth_ha: float = 0.0
 
 
 @dataclass
@@ -186,8 +196,9 @@ class RunSummary:
         forest_ha_by_year: Forest area per year (ha), keys are years.
         intervals: One entry per interval (``T - 1`` entries).
         skipped_years: Years whose null fit was skipped (index 0 excluded).
-        n_objects: Objects after the MMU.
-        detected_ha: Detected area after the MMU (ha).
+        n_objects: Objects after the MMU, over all intervals.
+        detected_ha: Detected area after the MMU summed over intervals (ha). A
+            cell detected in two intervals counts twice.
         n_refined: Objects with a refined envelope (0 when refinement is off).
         n_refine_skipped: Objects refinement could not redraw.
         refined_ha: Total refined envelope area (ha).
@@ -195,6 +206,8 @@ class RunSummary:
         software: Output of :func:`software_info`.
         caveats: Caveats for the reader.
         outputs: Output files relative to ``output_dir`` keyed by short name.
+        ever_detected_ha: Area detected in at least one interval (ha), None in
+            summaries written before schema version 2.
     """
 
     schema_version: int
@@ -223,6 +236,7 @@ class RunSummary:
     software: dict[str, str]
     caveats: list[str] = field(default_factory=lambda: list(DEFAULT_CAVEATS))
     outputs: dict[str, str] = field(default_factory=dict)
+    ever_detected_ha: float | None = None
 
 
 def _run_git(arguments: Sequence[str], repo_root: Path) -> str | None:
@@ -404,9 +418,12 @@ def build_summary(
 ) -> RunSummary:
     """Assemble the run summary from the stage results.
 
-    Areas are cell counts times ``grid.cell_ha``. Monitored and detected
-    areas per interval use ``monitored[t]`` and ``decision.onset_index`` /
-    ``onset_index_mmu == t``. ``outputs`` lists the files that exist in the
+    Areas are cell counts times ``grid.cell_ha``. Per interval, monitored
+    area uses ``monitored[t]``, detected area ``decision.detected[t]`` (after
+    the MMU) and ``decision.flags[t]`` (before it), repeat area the detected
+    cells also detected at an earlier date, and growth area the objects with
+    ``growth`` True. ``ever_detected_ha`` counts cells with
+    ``onset_index_mmu >= 0``. ``outputs`` lists the files that exist in the
     run folder at call time, relative to ``run_paths.root``. The caveats are
     :data:`DEFAULT_CAVEATS`, the count of objects without a follow-up image
     and one line per interval with a season mismatch (see
@@ -440,19 +457,27 @@ def build_summary(
         forest_ha_by_year[year] = int(n_forest) * cell_ha
     refined_outlines = None if refinement is None else refinement.outlines
     intervals: list[IntervalSummary] = []
+    detected_before = np.zeros(decision.detected.shape[1:], dtype=bool)
     for year_index in range(1, len(years)):
         year_before = years[year_index - 1]
         year = years[year_index]
+        detected_now = decision.detected[year_index]
         n_monitored = np.count_nonzero(monitored[year_index])
-        n_detected = np.count_nonzero(decision.onset_index_mmu == year_index)
-        n_detected_nommu = np.count_nonzero(decision.onset_index == year_index)
+        n_detected = np.count_nonzero(detected_now)
+        n_detected_nommu = np.count_nonzero(decision.flags[year_index])
+        n_repeat = np.count_nonzero(detected_now & detected_before)
+        detected_before |= detected_now
         monitored_ha = int(n_monitored) * cell_ha
         detected_ha = int(n_detected) * cell_ha
         detected_ha_nommu = int(n_detected_nommu) * cell_ha
+        repeat_ha = int(n_repeat) * cell_ha
         share = detected_ha / monitored_ha if monitored_ha > 0 else 0.0
         interval_objects = objects["onset_index"] == year_index
         n_objects_found = interval_objects.sum()
         n_objects = int(n_objects_found)
+        growth_objects = interval_objects & objects["growth"].astype(bool)
+        growth_area = objects.loc[growth_objects, "area_ha"].sum()
+        growth_ha = float(growth_area)
         n_refined = 0
         refined_ha = 0.0
         if refined_outlines is not None:
@@ -478,10 +503,14 @@ def build_summary(
                 skipped=fit.skipped,
                 n_refined=n_refined,
                 refined_ha=refined_ha,
+                repeat_ha=repeat_ha,
+                growth_ha=growth_ha,
             )
         )
     skipped_years = [fit.year for fit in decision.fits[1:] if fit.skipped]
     total_detected_ha = sum(interval.detected_ha for interval in intervals)
+    ever_detected = decision.onset_index_mmu >= 0
+    ever_detected_ha = int(np.count_nonzero(ever_detected)) * cell_ha
     total_refined_ha = sum(interval.refined_ha for interval in intervals)
     n_refined_total = 0
     n_refine_skipped = 0
@@ -527,6 +556,7 @@ def build_summary(
         software=software,
         caveats=caveats,
         outputs=outputs,
+        ever_detected_ha=ever_detected_ha,
     )
 
 

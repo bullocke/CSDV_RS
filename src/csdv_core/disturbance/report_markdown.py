@@ -145,17 +145,38 @@ def _summary_section(summary: RunSummary) -> list[str]:
     first_year = summary.years[0]
     last_year = summary.years[-1]
     n_years = len(summary.years)
-    mmu_ha = summary.params["mmu"]["mmu_ha"]
+    mmu_params = summary.params["mmu"]
+    mmu_ha = mmu_params["mmu_ha"]
+    growth_mmu_ha = mmu_params.get("growth_mmu_ha")
     detected_text = _format_number(summary.detected_ha)
     objects_text = _count_text(summary.n_objects, "object")
-    paragraph = (
+    intro = (
         f"This run used {n_years} NAIP-CHM years from {first_year} to "
         f"{last_year}. The detection input was {input_label} "
         f"(`{summary.input_name}`), standardized with {method_label} "
-        f"(`{summary.method}`). Rule `{summary.rule}` ({rule_label}) and a "
-        f"minimum mapping unit of {mmu_ha} ha produced {objects_text} "
-        f"covering {detected_text} ha."
+        f"(`{summary.method}`)."
     )
+    if summary.ever_detected_ha is None:
+        paragraph = (
+            f"{intro} Rule `{summary.rule}` ({rule_label}) and a minimum mapping "
+            f"unit of {mmu_ha} ha produced {objects_text} covering "
+            f"{detected_text} ha."
+        )
+    else:
+        ever_text = _format_number(summary.ever_detected_ha)
+        growth_text = ""
+        if growth_mmu_ha is not None and growth_mmu_ha < mmu_ha:
+            growth_text = (
+                f" ({growth_mmu_ha} ha for objects that touch or overlap an "
+                "earlier detection)"
+            )
+        paragraph = (
+            f"{intro} Rule `{summary.rule}` ({rule_label}) and a minimum mapping "
+            f"unit of {mmu_ha} ha per interval{growth_text} produced "
+            f"{objects_text}. They cover {ever_text} ha of forest. The areas of "
+            f"the intervals sum to {detected_text} ha, because a cell that is "
+            "still forest can be detected again in a later interval."
+        )
     lines = ["## Run summary", "", paragraph, ""]
     if summary.params["refine"]["enabled"]:
         refined_text = _format_number(summary.refined_ha)
@@ -274,8 +295,12 @@ def _detections_section(summary: RunSummary) -> list[str]:
     """Lines of the per-interval detection table."""
     intro = (
         "Monitored area is the forest of the earlier image. Detected area "
-        "counts cells whose first detection falls in the interval, before and "
-        "after the minimum mapping unit."
+        "counts the cells detected in the interval after the minimum mapping "
+        "unit, and Before MMU the cells where the rule passed. Repeat is the "
+        "part of the detected area already detected in an earlier interval "
+        "(for example an overstory removal after a strip cut), and Growth the "
+        "area of objects smaller than the minimum mapping unit that were kept "
+        "because they touch or overlap an earlier detection."
     )
     rows = []
     for interval in summary.intervals:
@@ -286,6 +311,8 @@ def _detections_section(summary: RunSummary) -> list[str]:
                 _format_number(interval.monitored_ha, 2),
                 _format_number(interval.detected_ha, 2),
                 _format_number(interval.detected_ha_nommu, 2),
+                _format_number(interval.repeat_ha, 2),
+                _format_number(interval.growth_ha, 2),
                 str(interval.n_objects),
                 f"{interval.share_of_monitored:.2%}",
                 str(interval.n_refined),
@@ -297,6 +324,8 @@ def _detections_section(summary: RunSummary) -> list[str]:
         "Monitored (ha)",
         "Detected (ha)",
         "Before MMU (ha)",
+        "Repeat (ha)",
+        "Growth (ha)",
         "Objects",
         "Share",
         "Refined objects",

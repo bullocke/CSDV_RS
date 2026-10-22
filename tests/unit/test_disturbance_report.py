@@ -14,7 +14,7 @@ from rasterio.crs import CRS
 from shapely.geometry import box
 
 from csdv_core.config._models import DisturbanceConfig
-from csdv_core.disturbance.decide import DateFit, DecisionResult
+from csdv_core.disturbance.decide import DateFit, DecisionResult, onset_stack
 from csdv_core.disturbance.inputs import CellGrid
 from csdv_core.disturbance.layers import CellLayers
 from csdv_core.disturbance.report import (
@@ -69,8 +69,14 @@ def grid() -> CellGrid:
     )
 
 
-def _summary(tmp_path: Path, grid: CellGrid) -> tuple[RunSummary, RunPaths]:
-    """Build a summary of a synthetic run with one detected object."""
+def _summary(
+    tmp_path: Path, grid: CellGrid, *, repeat: bool = False
+) -> tuple[RunSummary, RunPaths]:
+    """Build a summary of a synthetic run with one detected object.
+
+    With ``repeat``, the object's cells are detected again in the second
+    interval as a growth object.
+    """
     run_paths = claim_output_dir(tmp_path / "run")
     run_paths.run_params.write_text("{}", encoding="utf-8")
     shape = (len(YEARS), CELL_ROWS, CELL_COLS)
@@ -96,8 +102,15 @@ def _summary(tmp_path: Path, grid: CellGrid) -> tuple[RunSummary, RunPaths]:
         DateFit(2013, 24, -0.02, 1.01, 0.97, "central", False),
         DateFit(2015, 24, math.nan, math.nan, math.nan, "skipped", True),
     ]
+    flags = onset_stack(onset_index, len(YEARS))
+    detected = onset_stack(onset_index_mmu, len(YEARS))
+    if repeat:
+        flags[2, 2:4, 1:3] = True
+        detected[2, 2:4, 1:3] = True
     decision = DecisionResult(
         rule="D6",
+        flags=flags,
+        detected=detected,
         onset_index=onset_index,
         onset_index_mmu=onset_index_mmu,
         probability=None,
@@ -105,18 +118,23 @@ def _summary(tmp_path: Path, grid: CellGrid) -> tuple[RunSummary, RunPaths]:
     )
     left, _, _, top = grid.bounds
     polygon = box(left + 19.2, top - 76.8, left + 57.6, top - 38.4)
+    object_rows = {
+        "object_id": [1],
+        "onset_index": [1],
+        "onset_year": [2013],
+        "area_ha": [0.147456],
+        "growth": [False],
+        "follow_up": [True],
+    }
+    geometries = [polygon]
+    if repeat:
+        for column, value in zip(
+            object_rows, [2, 2, 2015, 0.147456, True, False], strict=True
+        ):
+            object_rows[column].append(value)
+        geometries.append(polygon)
     objects = gpd.GeoDataFrame(
-        pd.DataFrame(
-            {
-                "object_id": [1],
-                "onset_index": [1],
-                "onset_year": [2013],
-                "area_ha": [0.147456],
-                "follow_up": [True],
-            }
-        ),
-        geometry=[polygon],
-        crs=grid.crs,
+        pd.DataFrame(object_rows), geometry=geometries, crs=grid.crs
     )
     inputs = [
         InputFileInfo(
@@ -179,6 +197,20 @@ def test_grid_summary_window_and_sigmas(grid: CellGrid) -> None:
     assert scene_summary.window_m_effective is None
 
 
+def test_build_summary_repeat_growth_and_ever(tmp_path: Path, grid: CellGrid) -> None:
+    """A second detection of the same cells counts per interval, not twice."""
+    summary, _ = _summary(tmp_path, grid, repeat=True)
+    cell_ha = grid.cell_ha
+    first, second = summary.intervals
+    assert first.repeat_ha == 0.0
+    assert second.detected_ha == pytest.approx(4 * cell_ha)
+    assert second.detected_ha_nommu == pytest.approx(5 * cell_ha)
+    assert second.repeat_ha == pytest.approx(4 * cell_ha)
+    assert second.growth_ha == pytest.approx(0.147456)
+    assert summary.detected_ha == pytest.approx(8 * cell_ha)
+    assert summary.ever_detected_ha == pytest.approx(4 * cell_ha)
+
+
 def test_build_summary_areas(tmp_path: Path, grid: CellGrid) -> None:
     summary, _ = _summary(tmp_path, grid)
     cell_ha = grid.cell_ha
@@ -217,6 +249,21 @@ def test_summary_json_round_trip(tmp_path: Path, grid: CellGrid) -> None:
     assert math.isnan(loaded.intervals[1].fit.mu0)
     assert loaded.intervals[0] == summary.intervals[0]
     assert loaded.params == summary.params
+
+
+def test_summary_from_dict_reads_schema_1(tmp_path: Path, grid: CellGrid) -> None:
+    """Summaries written before per-interval detection load with defaults."""
+    summary, _ = _summary(tmp_path, grid)
+    data = summary_to_dict(summary)
+    data["schema_version"] = 1
+    del data["ever_detected_ha"]
+    for interval in data["intervals"]:
+        del interval["repeat_ha"]
+        del interval["growth_ha"]
+    loaded = summary_from_dict(data)
+    assert loaded.ever_detected_ha is None
+    assert loaded.intervals[0].repeat_ha == 0.0
+    assert loaded.intervals[0].growth_ha == 0.0
 
 
 def test_summary_from_dict_rejects_newer_schema(tmp_path: Path, grid: CellGrid) -> None:

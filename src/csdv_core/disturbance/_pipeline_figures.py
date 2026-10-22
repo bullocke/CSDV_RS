@@ -40,6 +40,7 @@ from csdv_core.disturbance.store import (
     REFINED_OUTLINES_LAYER,
     RunPaths,
     load_run,
+    read_detected_by_interval,
     read_year_stack,
 )
 
@@ -78,6 +79,7 @@ def write_run_figures(
     z: np.ndarray,
     probability: np.ndarray | None,
     onset_year: np.ndarray,
+    detected: np.ndarray,
     fits: list[DateFit],
     intervals: list[IntervalSummary],
     objects: gpd.GeoDataFrame,
@@ -95,6 +97,7 @@ def write_run_figures(
         z: Quantized z.
         probability: Decision probability, or None.
         onset_year: ``onset_year`` raster after the MMU.
+        detected: bool ``(T, rows, cols)`` detections per interval.
         fits: Null fit per date.
         intervals: Summary per interval.
         objects: Objects GeoDataFrame.
@@ -122,6 +125,7 @@ def write_run_figures(
         intervals=intervals,
         objects=objects,
         refined=refined,
+        detected=detected,
         p_boundary=params.decide.p_boundary,
         bin_w=params.decide.bin_w,
         site_inputs=site_inputs,
@@ -230,6 +234,7 @@ def rebuild_figures(
         use_backdrop = naip_backdrop
     summary = read_summary_json(run_paths.summary_json)
     onset_year = _read_single_band(run_paths.onset_year)
+    detected = read_detected_by_interval(run_paths, saved.years)
     probability = None
     if run_paths.probability.is_file():
         probability_stack = read_year_stack(run_paths.probability)
@@ -255,6 +260,7 @@ def rebuild_figures(
         z=saved.z,
         probability=probability,
         onset_year=onset_year,
+        detected=detected,
         fits=all_fits,
         intervals=summary.intervals,
         objects=objects,
