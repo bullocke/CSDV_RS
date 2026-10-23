@@ -138,52 +138,8 @@ def fetch_naip() -> None:
         )
 
 
-def fetch_neon() -> None:
-    import ee
-    from csdv_core.download.ee_auth import initialize_ee
-
-    initialize_ee()
-    units = L.neon_units()
-    table = unit_table().set_index("unit_id")
-    out_dir = L.DATA_DIR / "units" / "neon"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    coll = ee.ImageCollection("projects/neon-prod-earthengine/assets/CHM/001")
-    rows = []
-    for site, grp in units.groupby("site"):
-        site_coll = coll.filter(ee.Filter.eq("NEON_SITE", site))
-        years = sorted(
-            int(y) for y in site_coll.aggregate_array("NEON_YEAR").getInfo() or []
-        )
-        if not years:
-            log.warning("%s: no lidar CHM in Earth Engine", site)
-            continue
-        t0 = time.perf_counter()
-        n_new = 0
-        for uid, poly, epsg in zip(
-            grp["unit_id"], grp.geometry, grp["epsg"], strict=True
-        ):
-            path = L.unit_chip("neon", uid)
-            survey = table.loc[uid, "survey_year"]
-            year = (
-                min(years, key=lambda y: abs(y - survey))
-                if np.isfinite(survey)
-                else years[-1]
-            )
-            rows.append({"unit_id": uid, "lidar_chm_year": year})
-            if path.exists():
-                continue
-            utm = utm_bounds(poly, units.crs, int(epsg), BUFFER_M)
-            img = site_coll.filter(ee.Filter.eq("NEON_YEAR", str(year))).mosaic()
-            download_ee_chip(img, utm, int(epsg), path)
-            n_new += 1
-        log.info(
-            "%s: %d new chips in %.1f s (years %s)",
-            site,
-            n_new,
-            time.perf_counter() - t0,
-            years,
-        )
-    pd.DataFrame(rows).to_csv(L.TABLE_DIR / "neon_unit_lidar_years.csv", index=False)
+NEON_CHM = "projects/neon-prod-earthengine/assets/CHM/001"
+EE_WORKERS = 8
 
 
 def utm_bounds(
@@ -201,32 +157,108 @@ def utm_bounds(
     )
 
 
-def download_ee_chip(img, bounds, epsg: int, path) -> None:
-    """Download one 1 m chip on a whole-metre UTM grid as float32 GeoTIFF."""
-    import io
-    import urllib.request
-    import zipfile
+def neon_chm_image(site: str, lon: float, lat: float, year: int):
+    """The site's NEON CHM image covering a point, nearest ``year`` within two."""
+    import ee
 
+    coll = (
+        ee.ImageCollection(NEON_CHM)
+        .filter(ee.Filter.eq("NEON_SITE", site))
+        .filterBounds(ee.Geometry.Point([lon, lat]))
+    )
+    for y in sorted({year + d for d in (0, -1, 1, -2, 2)}, key=lambda v: abs(v - year)):
+        img = coll.filterDate(f"{y}-01-01", f"{y + 1}-01-01")
+        if img.size().getInfo():
+            return ee.Image(img.first()), y
+    return None, None
+
+
+def download_chip(img, bounds, epsg: int, path) -> None:
+    """One 1 m chip on a whole-metre UTM grid, through ``computePixels``."""
     import ee
 
     x0, y0, x1, y1 = bounds
-    region = ee.Geometry.Rectangle([x0, y0, x1, y1], f"EPSG:{epsg}", False)
-    url = img.getDownloadURL(
-        {
-            "region": region,
-            "crs": f"EPSG:{epsg}",
-            "crsTransform": [1, 0, x0, 0, -1, y1],
-            "dimensions": f"{int(x1 - x0)}x{int(y1 - y0)}",
-            "format": "GEO_TIFF",
-        }
-    )
-    with urllib.request.urlopen(url, timeout=120) as resp:
-        payload = resp.read()
-    if payload[:2] == b"PK":
-        with zipfile.ZipFile(io.BytesIO(payload)) as zf:
-            payload = zf.read(next(n for n in zf.namelist() if n.endswith(".tif")))
+    request = {
+        "expression": img.select(0),
+        "fileFormat": "GEO_TIFF",
+        "grid": {
+            "dimensions": {"width": int(x1 - x0), "height": int(y1 - y0)},
+            "affineTransform": {
+                "scaleX": 1.0, "shearX": 0, "translateX": x0,
+                "shearY": 0, "scaleY": -1.0, "translateY": y1,
+            },
+            "crsCode": f"EPSG:{epsg}",
+        },
+    }  # fmt: skip
+    payload = ee.data.computePixels(request)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(payload)
+    tmp = path.with_suffix(".part")
+    tmp.write_bytes(payload)
+    tmp.replace(path)
+
+
+def fetch_neon() -> None:
+    """Chips of the NEON lidar CHM, the image of each unit's refAGB lidar year."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from csdv_core.download._ee import initialize_ee
+
+    initialize_ee()
+    units = L.neon_units()
+    rows, todo = [], []
+    for unit in units.itertuples():
+        path = L.unit_chip("neon", unit.unit_id)
+        rows.append({"unit_id": unit.unit_id, "requested_year": int(unit.lidar_year)})
+        if not path.exists():
+            todo.append(unit)
+    log.info("%d of %d NEON chips to fetch", len(todo), len(units))
+
+    def one(unit) -> dict:
+        img, year = neon_chm_image(unit.site, unit.lon, unit.lat, int(unit.lidar_year))
+        if img is None:
+            return {"unit_id": unit.unit_id, "lidar_chm_year": None}
+        bounds = utm_bounds(unit.geometry, units.crs, int(unit.epsg), BUFFER_M)
+        for attempt in range(4):
+            try:
+                download_chip(
+                    img, bounds, int(unit.epsg), L.unit_chip("neon", unit.unit_id)
+                )
+                break
+            except Exception as exc:  # EE quota and transient HTTP errors
+                if attempt == 3:
+                    log.warning("%s: %s", unit.unit_id, exc)
+                    return {"unit_id": unit.unit_id, "lidar_chm_year": None}
+                time.sleep(2.0 * (attempt + 1))
+        return {"unit_id": unit.unit_id, "lidar_chm_year": year}
+
+    t0 = time.perf_counter()
+    got = []
+    with ThreadPoolExecutor(max_workers=EE_WORKERS) as pool:
+        futures = [pool.submit(one, u) for u in todo]
+        for i, fut in enumerate(as_completed(futures), 1):
+            got.append(fut.result())
+            if i % 50 == 0:
+                log.info(
+                    "%d / %d chips (%.0f s)", i, len(todo), time.perf_counter() - t0
+                )
+    years = pd.DataFrame(rows).merge(
+        pd.DataFrame(got, columns=["unit_id", "lidar_chm_year"]),
+        on="unit_id",
+        how="left",
+    )
+    old = L.TABLE_DIR / "neon_unit_lidar_years.csv"
+    if old.exists():
+        prev = pd.read_csv(old)
+        years = (
+            years.set_index("unit_id")
+            .combine_first(prev.set_index("unit_id"))
+            .reset_index()
+        )
+    years.to_csv(old, index=False)
+    missing = sum(1 for g in got if g["lidar_chm_year"] is None)
+    log.info(
+        "Done in %.0f s, %d units without a chip", time.perf_counter() - t0, missing
+    )
 
 
 def main() -> None:
