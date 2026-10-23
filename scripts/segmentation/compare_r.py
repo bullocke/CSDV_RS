@@ -131,6 +131,7 @@ def main() -> int:
     logger.info("R side: %s", versions)
 
     params = SegmentationParams(
+        bound_mode="post_trim",
         smooth_radius_m=args.smooth_radius_m,
         window=WINDOW_FUNCTIONS[args.window],
         th_cr=args.th_cr,

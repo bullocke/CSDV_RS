@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -24,7 +26,7 @@ from csdv_core.segmentation.params import (
     DEFAULT_PARAMS,
     WINDOW_FUNCTIONS,
     SegmentationParams,
-    WindowFunction,
+    tallo_params,
 )
 
 logger = logging.getLogger(__name__)
@@ -87,6 +89,35 @@ logger = logging.getLogger(__name__)
     help="Crown extent bound as a fraction of tree-top height. 0 disables it.",
 )
 @click.option(
+    "--bound-mode",
+    type=click.Choice(["flood", "post_trim"]),
+    default=DEFAULT_PARAMS.bound_mode,
+    show_default=True,
+    help="(watershed) flood applies th_cr during growth; post_trim is the earlier engine.",
+)
+@click.option(
+    "--th-seed",
+    type=float,
+    default=DEFAULT_PARAMS.th_seed,
+    show_default=True,
+    help="Floor as a fraction of tree-top height, as lidR's th_seed.",
+)
+@click.option(
+    "--min-crown-depth-m",
+    type=float,
+    default=None,
+    help="(flood) Every crown may extend at least this far below its apex.",
+)
+@click.option(
+    "--tallo-biome",
+    type=str,
+    default=None,
+    help=(
+        "Start from the refAGB Tallo preset for this RESOLVE biome instead of the "
+        "default. Explicit options still override it."
+    ),
+)
+@click.option(
     "--max-crown-radius-m",
     type=float,
     default=DEFAULT_PARAMS.max_crown_radius_m,
@@ -135,6 +166,10 @@ def cli(
     smooth_radius_m: float,
     min_height_m: float,
     th_cr: float,
+    bound_mode: str,
+    th_seed: float,
+    min_crown_depth_m: float | None,
+    tallo_biome: str | None,
     max_crown_radius_m: float,
     min_crown_area_m2: float,
     block_px: int,
@@ -147,22 +182,37 @@ def cli(
     )
     out_crowns.parent.mkdir(parents=True, exist_ok=True)
 
-    base = WINDOW_FUNCTIONS[window] if window else DEFAULT_PARAMS.window
-    ws = WindowFunction(
+    preset = tallo_params(tallo_biome) if tallo_biome else DEFAULT_PARAMS
+    ctx = click.get_current_context()
+
+    def chosen(name: str, value: Any) -> Any:
+        """An explicit option wins, otherwise the preset's value."""
+        source = ctx.get_parameter_source(name)
+        explicit = source is not None and source.name != "DEFAULT"
+        return value if explicit or preset is DEFAULT_PARAMS else getattr(preset, name)
+
+    base = WINDOW_FUNCTIONS[window] if window else preset.window
+    custom = (ws_a, ws_b, ws_c, ws_lo, ws_hi) != (None,) * 5
+    ws = replace(
+        base,
         a=base.a if ws_a is None else ws_a,
         b=base.b if ws_b is None else ws_b,
         c=base.c if ws_c is None else ws_c,
         lo=base.lo if ws_lo is None else ws_lo,
         hi=base.hi if ws_hi is None else ws_hi,
-        name=base.name if (ws_a, ws_b, ws_c, ws_lo, ws_hi) == (None,) * 5 else "custom",
+        name="custom" if custom else base.name,
     )
-    params = SegmentationParams(
-        min_height_m=min_height_m,
-        smooth_radius_m=smooth_radius_m,
+    radius = chosen("max_crown_radius_m", max_crown_radius_m)
+    params = preset.replace(
+        min_height_m=chosen("min_height_m", min_height_m),
+        smooth_radius_m=chosen("smooth_radius_m", smooth_radius_m),
         window=ws,
-        th_cr=th_cr,
-        max_crown_radius_m=None if max_crown_radius_m < 0 else max_crown_radius_m,
-        min_crown_area_m2=min_crown_area_m2,
+        th_cr=chosen("th_cr", th_cr),
+        bound_mode=chosen("bound_mode", bound_mode),
+        th_seed=chosen("th_seed", th_seed),
+        min_crown_depth_m=chosen("min_crown_depth_m", min_crown_depth_m),
+        max_crown_radius_m=None if radius is None or radius < 0 else radius,
+        min_crown_area_m2=chosen("min_crown_area_m2", min_crown_area_m2),
     )
     logger.info("Segmentation %s: %s", params.key, params.describe())
 

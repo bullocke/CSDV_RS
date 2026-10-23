@@ -19,7 +19,11 @@
 #   2. Mean-smooth with a kernel whose radius is given in metres.
 #   3. Mask below the canopy floor.
 #   4. Locate tree tops with lmf(), variable window, ws given as a DIAMETER.
-#   5. Segment with dalponte2016().
+#      With --seeds, read tree tops from a CSV (columns x, y, z) instead, so
+#      dalponte2016 can grow from exactly the seeds another engine found.
+#   5. Segment with dalponte2016(). Note that C_dalponte2016 applies max_cr as
+#      a square half-width, |dx| < max_cr and |dy| < max_cr, so the reach is
+#      max_cr - 1 pixels along an axis and more along a diagonal.
 #   6. Vectorize, compute area and area-equivalent diameter, drop noise.
 #   7. Optionally write a crown-diameter CV raster on a grid.
 #
@@ -31,6 +35,7 @@
 # -----
 #   Rscript crown_segmentation.R --chm=<in.tif> --out-crowns=<out.gpkg> \
 #       [--ws-a=0.6] [--ws-b=0.33] [--ws-c=0.0] [--ws-lo=3] [--ws-hi=12] \
+#       [--ws-form=poly|power] [--ws-k=1] [--threads=1] [--seeds=<tops.csv>] \
 #       [--smooth-radius-m=0.6] [--min-height-m=2] \
 #       [--th-seed=0.45] [--th-cr=0.55] [--max-crown-radius-m=8] \
 #       [--min-crown-area-m2=1] [--scale-factor=1] \
@@ -96,6 +101,11 @@ ws_b  <- arg_num(args, "ws_b", 0.33)
 ws_c  <- arg_num(args, "ws_c", 0.00)
 ws_lo <- arg_num(args, "ws_lo", 3.0)
 ws_hi <- arg_num(args, "ws_hi", 12.0)
+ws_form <- arg_chr(args, "ws_form", "poly")
+ws_k    <- arg_num(args, "ws_k", 1.0)
+threads <- arg_num(args, "threads", 1)
+seeds_path <- arg_chr(args, "seeds", NULL)
+lidR::set_lidr_threads(as.integer(threads))
 
 smooth_radius_m    <- arg_num(args, "smooth_radius_m", 0.6)
 min_height_m       <- arg_num(args, "min_height_m", 2.0)
@@ -148,12 +158,26 @@ lap("mask")
 # 4. Tree tops. ws is the search window DIAMETER in metres, which is what
 #    lmf() expects. The implied minimum separation between tops is ws/2.
 # ---------------------------------------------------------------------------
-ws_fun <- function(h) {
-  pmax(ws_lo, pmin(ws_hi, ws_a + ws_b * h + ws_c * h * h))
+ws_fun <- if (ws_form == "power") {
+  function(h) {
+    w <- ws_k * ws_a * pmax(h, 0)^ws_b
+    w[!is.finite(w)] <- ws_lo
+    pmax(ws_lo, pmin(ws_hi, w))
+  }
+} else {
+  function(h) pmax(ws_lo, pmin(ws_hi, ws_k * (ws_a + ws_b * h + ws_c * h * h)))
 }
-ttops <- lidR::locate_trees(
-  chm_smooth, lidR::lmf(ws = ws_fun, hmin = min_height_m, shape = "circular")
-)
+if (is.null(seeds_path)) {
+  ttops <- lidR::locate_trees(
+    chm_smooth, lidR::lmf(ws = ws_fun, hmin = min_height_m, shape = "circular")
+  )
+} else {
+  seeds <- utils::read.csv(seeds_path)
+  ttops <- sf::st_as_sf(
+    data.frame(treeID = seq_len(nrow(seeds)), Z = seeds$z, x = seeds$x, y = seeds$y),
+    coords = c("x", "y"), crs = terra::crs(chm)
+  )
+}
 cat("Tops  :", nrow(ttops), "\n")
 lap("seeds")
 if (nrow(ttops) == 0) stop("No tree tops detected")

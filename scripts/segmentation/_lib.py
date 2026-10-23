@@ -328,6 +328,7 @@ def parameter_grid(
                 for m in max_radius:
                     out.append(
                         SegmentationParams(
+                            bound_mode="post_trim",
                             smooth_radius_m=s,
                             window=WINDOW_FUNCTIONS[w],
                             th_cr=t,
@@ -354,6 +355,7 @@ def params_from_row(row) -> SegmentationParams:
     """Rebuild a parameter set from a sweep row."""
     cap = row["max_crown_radius_m"]
     return SegmentationParams(
+        bound_mode="post_trim",
         smooth_radius_m=float(row["smooth_radius_m"]),
         window=WINDOW_FUNCTIONS[str(row["window"])],
         th_cr=float(row["th_cr"]),

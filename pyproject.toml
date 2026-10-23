@@ -67,6 +67,8 @@ csdv_core = [
     "config/*.yaml",
     "examples/vocab/*.yaml",
     "segmentation/scripts/*.R",
+    "segmentation/coefs/*.csv",
+    "biomass/coefs/*.csv",
 ]
 
 [tool.black]

@@ -16,16 +16,23 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass, field, replace
+from functools import lru_cache
+from importlib import resources
 from typing import Any
 
 import numpy as np
+import pandas as pd
 
 __all__ = [
     "WindowFunction",
     "SegmentationParams",
     "WINDOW_FUNCTIONS",
     "DEFAULT_PARAMS",
+    "OPTIMIZED_POST_TRIM_PARAMS",
     "LEGACY_PARAMS",
+    "TALLO_BIOMES",
+    "tallo_window",
+    "tallo_params",
     "LEGACY_AS_SHIPPED_PARAMS",
 ]
 
@@ -34,7 +41,14 @@ __all__ = [
 class WindowFunction:
     """Search window **diameter** in metres as a function of canopy height.
 
-    ``ws(h) = clip(a + b*h + c*h**2, lo, hi)``.
+    Two forms:
+
+    ``poly`` (default)  ``ws(h) = clip(k*(a + b*h + c*h**2), lo, hi)``
+    ``power``           ``ws(h) = clip(k*a*h**b, lo, hi)``
+
+    The power form is a crown-width allometry ``CW = a*h**b`` scaled by the
+    window-to-crown proportion ``k``, as in the refAGB Tallo windows, where
+    ``a`` and ``b`` are fitted per biome to the Tallo database and ``k`` is 0.5.
 
     Diameter, not radius, and not a peak separation. This follows lidR's
     ``lmf(ws=...)``, where a pixel is a tree top when it is the maximum inside
@@ -53,21 +67,55 @@ class WindowFunction:
     lo: float = 3.0
     hi: float = 12.0
     name: str = ""
+    form: str = "poly"
+    k: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.form not in ("poly", "power"):
+            raise ValueError(f"Unknown window form {self.form!r}")
 
     def __call__(self, height_m: np.ndarray | float) -> np.ndarray:
         """Window diameter in metres for each height."""
         h = np.asarray(height_m, dtype="float64")
-        ws = self.a + self.b * h + self.c * h * h
+        if self.form == "power":
+            with np.errstate(invalid="ignore", divide="ignore"):
+                ws = self.k * self.a * np.power(np.maximum(h, 0.0), self.b)
+            ws = np.where(np.isfinite(ws), ws, self.lo)
+        else:
+            ws = self.k * (self.a + self.b * h + self.c * h * h)
         return np.clip(ws, self.lo, self.hi)
+
+    def as_dict(self) -> dict[str, Any]:
+        """Coefficients for hashing and sidecars. ``form`` and ``k`` appear only
+        when they differ from the polynomial default, so the keys of every
+        parameter set written before they existed are unchanged."""
+        out: dict[str, Any] = {
+            "a": self.a,
+            "b": self.b,
+            "c": self.c,
+            "lo": self.lo,
+            "hi": self.hi,
+        }
+        if self.form != "poly":
+            out["form"] = self.form
+        if self.k != 1.0:
+            out["k"] = self.k
+        return out
 
     def describe(self) -> str:
         """One-line algebraic form, for figure labels and logs."""
+        if self.form == "power":
+            body = f"{self.k:g}*{self.a:.4g}*h^{self.b:.4g}"
+            return f"clip({body}, {self.lo:g}, {self.hi:g})"
         terms = [f"{self.a:g}"]
         if self.b:
             terms.append(f"{self.b:+g}h")
         if self.c:
             terms.append(f"{self.c:+g}h²")
-        return f"clip({' '.join(terms)}, {self.lo:g}, {self.hi:g})"
+        body = " ".join(terms)
+        if self.k != 1.0:
+            body = f"{self.k:g}*({body})"
+        return f"clip({body}, {self.lo:g}, {self.hi:g})"
 
 
 #: Candidate window functions for the parameter sweep.
@@ -89,6 +137,17 @@ WINDOW_FUNCTIONS: dict[str, WindowFunction] = {
     ),
     "fixed_5m": WindowFunction(a=5.0, lo=5.0, hi=5.0, name="fixed_5m"),
     "fixed_8m": WindowFunction(a=8.0, lo=8.0, hi=8.0, name="fixed_8m"),
+}
+
+
+#: Values of the newer fields that reproduce the engine as it was before they
+#: existed. ``as_dict`` omits a field holding its neutral value.
+_NEUTRAL: dict[str, Any] = {
+    "bound_mode": "post_trim",
+    "th_cr_ref": "apex",
+    "th_seed": 0.0,
+    "min_crown_depth_m": None,
+    "max_crown_depth_m": None,
 }
 
 
@@ -115,6 +174,23 @@ class SegmentationParams:
         min_crown_area_m2: Segments smaller than this are noise.
         min_separation_m: Floor on tree-top separation, independent of height.
             Stops adjacent pixels of one flat crown top becoming two trees.
+        bound_mode: How ``th_cr`` bounds a crown. ``"flood"`` applies each
+            crown's admission test while the crowns grow, so a pixel one crown
+            rejects can still join a neighbour (:mod:`.flood`). ``"post_trim"``
+            is the earlier engine: an unconstrained watershed, then each basin
+            trimmed to its own floor. Kept to reproduce
+            ``docs/guides/crown_segmentation/optimization/``.
+        th_cr_ref: What ``th_cr`` is relative to under ``"flood"``. ``"apex"``
+            is the tree-top height. ``"mean"`` is the crown's running mean
+            height, which is lidR's ``dalponte2016`` rule and is provided for
+            comparison only.
+        th_seed: Floor relative to the tree-top height, as lidR's ``th_seed``.
+            Under the apex rule it binds only when it exceeds ``th_cr``.
+        min_crown_depth_m: Under ``"flood"`` with the apex rule, every crown
+            may extend at least this far below its apex, whatever ``th_cr``
+            says. A fixed fraction of height is a thin slice on a short tree.
+        max_crown_depth_m: The opposite bound for tall trees, the absolute
+            height difference of Dalponte and Coomes (2016). ``None`` disables.
     """
 
     min_height_m: float = 2.0
@@ -124,12 +200,41 @@ class SegmentationParams:
     max_crown_radius_m: float | None = 12.0
     min_crown_area_m2: float = 1.0
     min_separation_m: float = 1.0
+    bound_mode: str = "flood"
+    th_cr_ref: str = "apex"
+    th_seed: float = 0.0
+    min_crown_depth_m: float | None = None
+    max_crown_depth_m: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.bound_mode not in ("flood", "post_trim"):
+            raise ValueError(f"Unknown bound_mode {self.bound_mode!r}")
+        if self.th_cr_ref not in ("apex", "mean"):
+            raise ValueError(f"Unknown th_cr_ref {self.th_cr_ref!r}")
+        if self.bound_mode == "post_trim" and (
+            self.th_cr_ref != "apex"
+            or self.th_seed
+            or self.min_crown_depth_m is not None
+            or self.max_crown_depth_m is not None
+        ):
+            raise ValueError(
+                "post_trim supports th_cr only; th_cr_ref, th_seed and the crown "
+                "depth bounds need bound_mode='flood'"
+            )
 
     def as_dict(self) -> dict[str, Any]:
-        """Plain dictionary, suitable for JSON and for a sidecar manifest."""
+        """Plain dictionary, suitable for JSON and for a sidecar manifest.
+
+        Fields added after the optimization study are left out while they hold
+        the value that reproduces the earlier engine, so every key recorded
+        there still names the same crowns.
+        """
         out = asdict(self)
-        out["window"] = {k: v for k, v in asdict(self.window).items() if k != "name"}
+        out["window"] = self.window.as_dict()
         out["window_name"] = self.window.name or self.window.describe()
+        for name, neutral in _NEUTRAL.items():
+            if out[name] == neutral:
+                del out[name]
         return out
 
     @property
@@ -153,15 +258,24 @@ class SegmentationParams:
             if self.max_crown_radius_m is None
             else f"{self.max_crown_radius_m:g} m"
         )
-        return (
+        text = (
             f"smooth {self.smooth_radius_m:g} m, "
             f"ws {self.window.describe()}, "
-            f"th_cr {self.th_cr:g}, "
-            f"max radius {cap}"
+            f"th_cr {self.th_cr:g}"
         )
+        if self.th_cr_ref != "apex":
+            text += f" of {self.th_cr_ref}"
+        if self.th_seed:
+            text += f", th_seed {self.th_seed:g}"
+        if self.min_crown_depth_m is not None:
+            text += f", min depth {self.min_crown_depth_m:g} m"
+        if self.max_crown_depth_m is not None:
+            text += f", max depth {self.max_crown_depth_m:g} m"
+        return text + f", max radius {cap}, {self.bound_mode}"
 
 
-#: The parameter set this pipeline uses across the eastern United States.
+#: The parameter set chosen by the optimization study, under the earlier
+#: post-trim bound.
 #:
 #: Chosen in ``docs/guides/segmentation_optimization/``, which records how and
 #: why. One thing there is worth repeating here, because it explains a choice
@@ -178,12 +292,17 @@ class SegmentationParams:
 #: hectare below the Indiana density floor, and in exchange it holds together
 #: across three sites and two sensors at 67, 88 and 109 per hectare. For a
 #: single parameter set meant to run everywhere, that trade is the point.
+OPTIMIZED_POST_TRIM_PARAMS = SegmentationParams(bound_mode="post_trim")
+
+#: The default. Placeholder values until the before-and-after comparison
+#: chooses ``th_cr`` and the minimum crown depth under the flood bound.
 DEFAULT_PARAMS = SegmentationParams()
 
 #: The legacy window equation under the corrected semantics. Useful for asking
 #: how much of the old behaviour was the equation, as opposed to the way the
 #: equation was applied. This is **not** what the pipeline used to produce.
 LEGACY_PARAMS = SegmentationParams(
+    bound_mode="post_trim",
     smooth_radius_m=0.6,
     window=WINDOW_FUNCTIONS["legacy"],
     th_cr=0.0,
@@ -209,8 +328,73 @@ LEGACY_PARAMS = SegmentationParams(
 #: here still varies a little with height. Use the archived crowns when the
 #: exact old output is what matters.
 LEGACY_AS_SHIPPED_PARAMS = SegmentationParams(
+    bound_mode="post_trim",
     smooth_radius_m=0.6,
     window=WindowFunction(a=4.0, b=1.0, lo=6.0, hi=24.0, name="legacy_as_shipped"),
     th_cr=0.0,
     max_crown_radius_m=None,
 )
+
+
+@lru_cache(maxsize=1)
+def _tallo_window_table() -> pd.DataFrame:
+    ref = resources.files("csdv_core.segmentation").joinpath(
+        "coefs/tallo_window_coefs.csv"
+    )
+    with resources.as_file(ref) as path:
+        return pd.read_csv(path, comment="#").set_index("biome")
+
+
+#: RESOLVE biomes with a Tallo crown-width fit.
+TALLO_BIOMES: tuple[str, ...] = tuple(_tallo_window_table().index)
+
+
+def tallo_window(
+    biome: str, *, k: float = 0.5, lo: float = 3.0, hi: float = 25.0
+) -> WindowFunction:
+    """The refAGB Tallo window for one RESOLVE biome.
+
+    ``w(h) = clip(k * a * h**b, lo, hi)`` with ``a`` and ``b`` from a power-law
+    crown-width fit to the Tallo database. At ``k = 0.5`` the 3 m floor binds
+    below about 16 to 32 m depending on the biome, so for most trees the window
+    is a fixed 3 m.
+    """
+    table = _tallo_window_table()
+    if biome not in table.index:
+        raise KeyError(f"No Tallo window for biome {biome!r}; known: {TALLO_BIOMES}")
+    row = table.loc[biome]
+    return WindowFunction(
+        a=float(row["a"]),
+        b=float(row["b"]),
+        lo=lo,
+        hi=hi,
+        k=k,
+        form="power",
+        name=f"tallo:{biome}",
+    )
+
+
+def tallo_params(biome: str, **changes: Any) -> SegmentationParams:
+    """The refAGB production segmentation parameters for one biome.
+
+    refAGB (``config/site_configs/tallo_2``) runs lidR on 1 m lidar CHMs with
+    ``hmin = th_tree = 1``, ``th_seed = 0.45``, ``th_cr = 0.55``,
+    ``max_cr = 15`` pixels, ``min_area = 1`` and a 3x3 mean filter. In metres
+    that is a 1 m canopy floor, a 1 m smoothing radius (a 3 m wide filter) and
+    a 15 m crown radius cap, which this function returns so the set means the
+    same thing at 0.6 m. Note that lidR applies ``max_cr`` as a square
+    half-width, ``|dx| < max_cr``, not as a radius or diameter.
+
+    ``th_cr`` here is relative to the apex, which differs from lidR's
+    mean-relative ``th_cr``. Pass ``th_cr_ref="mean"`` for lidR's rule.
+    """
+    base = SegmentationParams(
+        min_height_m=1.0,
+        smooth_radius_m=1.0,
+        window=tallo_window(biome),
+        th_cr=0.55,
+        th_seed=0.45,
+        max_crown_radius_m=15.0,
+        min_crown_area_m2=1.0,
+    )
+    return base.replace(**changes) if changes else base

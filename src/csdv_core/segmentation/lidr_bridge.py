@@ -73,7 +73,9 @@ def run_lidr_segmentation(
     *,
     params: SegmentationParams = DEFAULT_PARAMS,
     scale_factor: float = 1.0,
-    th_seed: float = 0.45,
+    th_seed: float | None = None,
+    threads: int = 1,
+    seeds_csv: Path | str | None = None,
     out_cv_raster: Path | str | None = None,
     cv_grid_m: float = 50.0,
     cv_min_crowns: int = 3,
@@ -91,8 +93,14 @@ def run_lidr_segmentation(
         scale_factor: Multiplier applied to raw CHM values. Use ``0.01`` for
             the uint16 NAIP-CHM product and ``1.0`` for float metre CHMs.
         th_seed: ``dalponte2016`` growth rule. A pixel joins a crown only while
-            it is above ``th_seed`` times the crown's seed height. The Python
-            engine has no equivalent. The default is lidR's own.
+            it is above ``th_seed`` times the crown's seed height. None takes
+            ``params.th_seed`` when it is set and lidR's default of 0.45
+            otherwise.
+        threads: lidR threads (``set_lidr_threads``). Only ``locate_trees``
+            is parallel. ``dalponte2016`` runs on one thread regardless.
+        seeds_csv: Optional CSV of tree tops (columns ``x``, ``y``, ``z``).
+            When given, lidR skips ``locate_trees`` and grows crowns from
+            these seeds, which isolates the growth step for comparisons.
         out_cv_raster: Optional crown-diameter CV raster. Skipped when None.
         cv_grid_m: Grid size for that raster.
         cv_min_crowns: Minimum crowns per cell before a CV is written.
@@ -118,6 +126,8 @@ def run_lidr_segmentation(
         )
 
     window = params.window
+    if th_seed is None:
+        th_seed = params.th_seed if params.th_seed else 0.45
     # lidR has no "no ceiling" option, so an unbounded Python run maps to a
     # ceiling far beyond any real crown rather than to a missing argument.
     max_radius_m = (
@@ -133,6 +143,9 @@ def run_lidr_segmentation(
         f"--ws-c={window.c:g}",
         f"--ws-lo={window.lo:g}",
         f"--ws-hi={window.hi:g}",
+        f"--ws-form={window.form}",
+        f"--ws-k={window.k:g}",
+        f"--threads={int(threads)}",
         f"--smooth-radius-m={params.smooth_radius_m:g}",
         f"--min-height-m={params.min_height_m:g}",
         f"--th-seed={th_seed:g}",
@@ -141,6 +154,8 @@ def run_lidr_segmentation(
         f"--min-crown-area-m2={params.min_crown_area_m2:g}",
         f"--scale-factor={scale_factor:g}",
     ]
+    if seeds_csv is not None:
+        cmd.append(f"--seeds={Path(seeds_csv).resolve()}")
     if out_cv_raster is not None:
         out_cv = Path(out_cv_raster).resolve()
         out_cv.parent.mkdir(parents=True, exist_ok=True)

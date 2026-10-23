@@ -95,6 +95,7 @@ def chosen_params(args) -> SegmentationParams:
             return params_from_row(passing.iloc[0])
         logger.warning("No passing set in the sweep, falling back to the flags")
     return SegmentationParams(
+        bound_mode="post_trim",
         smooth_radius_m=args.smooth_radius_m,
         window=WINDOW_FUNCTIONS[args.window],
         th_cr=args.th_cr,

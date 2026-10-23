@@ -11,11 +11,14 @@ Algorithm:
     3. Locate tree tops. A pixel is a tree top when it is the highest pixel
        inside a circle whose diameter comes from that pixel's own height,
        which is what lidR's ``lmf`` does.
-    4. Watershed the inverted CHM from those tree tops.
-    5. Bound each crown's extent. Drop pixels below ``th_cr`` times the height
-       at the tree top, keep the part still joined to the tree top, then apply
-       the radius ceiling.
-    6. Vectorize, and record the tree top position and height alongside the
+    4. Grow every crown from its tree top at once, highest pixel first
+       (:func:`csdv_core.segmentation.flood.grow_crowns`). A pixel joins the
+       first crown that reaches it and whose floor it passes: at least
+       ``th_cr`` times that crown's apex height (relaxed by
+       ``min_crown_depth_m`` for short trees), within the crown radius cap.
+       ``bound_mode="post_trim"`` instead runs an unconstrained watershed and
+       trims each basin to its own floor afterwards, the earlier behaviour.
+    5. Vectorize, and record the tree top position and height alongside the
        area and diameter.
 
 Two things here were wrong before and are worth stating plainly, because both
@@ -43,12 +46,14 @@ from typing import Any
 
 import geopandas as gpd
 import numpy as np
+from numba import njit
 from rasterio.features import shapes as rio_shapes
 from scipy import ndimage as ndi
 from shapely.geometry import shape as shapely_shape
 from skimage.segmentation import watershed
 
 from csdv_core.preprocess.chm import mask_below, smooth_chm
+from csdv_core.segmentation.flood import grow_crowns
 from csdv_core.segmentation.params import (
     DEFAULT_PARAMS,
     SegmentationParams,
@@ -94,6 +99,39 @@ def _disk(radius_px: int) -> np.ndarray:
     return (x * x + y * y) <= radius_px * radius_px + 1e-9
 
 
+@njit(cache=True)
+def _confirm_tops(
+    heights: np.ndarray, rows: np.ndarray, cols: np.ndarray, radius: np.ndarray
+) -> np.ndarray:
+    """True for each candidate with no higher pixel inside its own disk."""
+    nr, nc = heights.shape
+    out = np.zeros(rows.size, dtype=np.bool_)
+    for i in range(rows.size):
+        r = rows[i]
+        c = cols[i]
+        rad = radius[i]
+        h = heights[r, c]
+        lim = rad * rad + 1e-9
+        ok = True
+        for dr in range(-rad, rad + 1):
+            rr = r + dr
+            if rr < 0 or rr >= nr:
+                continue
+            for dc in range(-rad, rad + 1):
+                if dr * dr + dc * dc > lim:
+                    continue
+                cc = c + dc
+                if cc < 0 or cc >= nc:
+                    continue
+                if heights[rr, cc] > h:
+                    ok = False
+                    break
+            if not ok:
+                break
+        out[i] = ok
+    return out
+
+
 def _label(mask: np.ndarray) -> tuple[np.ndarray, int]:
     """``scipy.ndimage.label`` with a return type the checker can follow."""
     labelled, count = ndi.label(mask)  # type: ignore[misc]
@@ -114,9 +152,9 @@ def locate_seeds(
     higher, where ``h`` is that pixel's own smoothed height. This is lidR's
     ``lmf`` rule with a circular window.
 
-    The window radius is quantized to whole pixels, which lets one maximum
-    filter per distinct radius answer the question for every pixel at once.
-    The number of distinct radii is small, so this stays cheap.
+    The window radius is quantized to whole pixels. A pixel ties with an equal
+    neighbour rather than losing to it, and a plateau of tied maxima collapses
+    to one seed at its centre.
 
     Args:
         smoothed: Smoothed CHM in metres, NaN outside the canopy.
@@ -141,18 +179,23 @@ def locate_seeds(
     radius_px = np.clip(np.rint(radius_px), floor_px, None).astype(np.int16)
     radius_px[~valid] = 0
 
+    # Any tree top is also the highest pixel of its 4-neighbourhood, because
+    # every window contains that cross. One cheap filter finds the candidates,
+    # then each candidate is checked against its own disk. This is exact, and
+    # its cost no longer grows with the number of distinct window radii.
+    cross_max = ndi.maximum_filter(
+        heights, footprint=_disk(1), mode="constant", cval=-np.inf
+    )
+    cand_r, cand_c = np.nonzero(valid & (heights >= cross_max))
     is_top = np.zeros(smoothed.shape, dtype=bool)
-    for r in np.unique(radius_px[valid]):
-        r = int(r)
-        if r < 1:
-            continue
-        band = valid & (radius_px == r)
-        if not band.any():
-            continue
-        local_max = ndi.maximum_filter(
-            heights, footprint=_disk(r), mode="constant", cval=-np.inf
+    if cand_r.size:
+        keep = _confirm_tops(
+            heights,
+            cand_r.astype(np.int64),
+            cand_c.astype(np.int64),
+            radius_px[cand_r, cand_c].astype(np.int64),
         )
-        is_top |= band & (heights >= local_max)
+        is_top[cand_r[keep], cand_c[keep]] = True
 
     if not is_top.any():
         empty = np.zeros(0, dtype=np.intp)
@@ -326,29 +369,42 @@ def segment_crowns(
         logger.warning("segment_crowns: no tree tops detected")
         return _empty_crowns(crs)
 
-    markers = np.zeros(masked.shape, dtype="int32")
-    markers[seed_rows, seed_cols] = np.arange(1, seed_rows.size + 1)
-
-    inv = np.where(valid, -masked, np.inf).astype("float32")
-    labels = watershed(inv, markers=markers, mask=valid)
-    clock.lap("grow")
-
     apex = masked[seed_rows, seed_cols].astype("float64")
     max_radius_px = (
         None
         if params.max_crown_radius_m is None
         else float(params.max_crown_radius_m) / px
     )
-    labels, capped = _bound_extent(
-        labels,
-        masked,
-        seed_rows,
-        seed_cols,
-        apex,
-        th_cr=float(params.th_cr),
-        max_radius_px=max_radius_px,
-    )
-    clock.lap("bound")
+    if params.bound_mode == "flood":
+        labels, capped = grow_crowns(
+            masked,
+            seed_rows,
+            seed_cols,
+            apex,
+            th_cr=float(params.th_cr),
+            th_seed=float(params.th_seed),
+            min_crown_depth_m=params.min_crown_depth_m,
+            max_crown_depth_m=params.max_crown_depth_m,
+            max_radius_px=max_radius_px,
+            rule=params.th_cr_ref,
+        )
+        clock.lap("grow")
+    else:
+        markers = np.zeros(masked.shape, dtype="int32")
+        markers[seed_rows, seed_cols] = np.arange(1, seed_rows.size + 1)
+        inv = np.where(valid, -masked, np.inf).astype("float32")
+        labels = watershed(inv, markers=markers, mask=valid)
+        clock.lap("grow")
+        labels, capped = _bound_extent(
+            labels,
+            masked,
+            seed_rows,
+            seed_cols,
+            apex,
+            th_cr=float(params.th_cr),
+            max_radius_px=max_radius_px,
+        )
+        clock.lap("bound")
 
     # One connected component per label, so rio_shapes emits one polygon per
     # crown and no dissolve is needed. Connectivity must match ndi.label's

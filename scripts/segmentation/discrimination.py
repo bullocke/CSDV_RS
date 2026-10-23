@@ -139,10 +139,13 @@ def main() -> int:
         chosen = (
             params_from_row(passing.iloc[0])
             if len(passing)
-            else SegmentationParams(window=WINDOW_FUNCTIONS[args.window])
+            else SegmentationParams(
+                bound_mode="post_trim", window=WINDOW_FUNCTIONS[args.window]
+            )
         )
     else:
         chosen = SegmentationParams(
+            bound_mode="post_trim",
             smooth_radius_m=args.smooth_radius_m,
             window=WINDOW_FUNCTIONS[args.window],
             th_cr=args.th_cr,

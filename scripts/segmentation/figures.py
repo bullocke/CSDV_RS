@@ -46,8 +46,8 @@ from _lib import (  # noqa: E402
 
 from csdv_core.segmentation.chm_watershed import segment_crowns  # noqa: E402
 from csdv_core.segmentation.params import (  # noqa: E402
-    DEFAULT_PARAMS,
     LEGACY_AS_SHIPPED_PARAMS,
+    OPTIMIZED_POST_TRIM_PARAMS,
     SegmentationParams,
 )
 from csdv_core.viz.style import (  # noqa: E402
@@ -66,12 +66,12 @@ logger = logging.getLogger("figures")
 #: The set the report settles on. The sweep table alone would return the
 #: rule's winner, which the transfer sites rejected, so the figures use the
 #: production default instead.
-CHOSEN_FALLBACK = DEFAULT_PARAMS
+CHOSEN_FALLBACK = OPTIMIZED_POST_TRIM_PARAMS
 
 
 def chosen_params() -> SegmentationParams:
     """The production parameter set the report settles on."""
-    return DEFAULT_PARAMS
+    return OPTIMIZED_POST_TRIM_PARAMS
 
 
 def rule_winner() -> SegmentationParams:
@@ -79,9 +79,11 @@ def rule_winner() -> SegmentationParams:
     try:
         scored = read_table("sweep_tune_scored.parquet")
     except FileNotFoundError:
-        return DEFAULT_PARAMS
+        return OPTIMIZED_POST_TRIM_PARAMS
     passing = scored[scored["passes"]]
-    return params_from_row(passing.iloc[0]) if len(passing) else DEFAULT_PARAMS
+    return (
+        params_from_row(passing.iloc[0]) if len(passing) else OPTIMIZED_POST_TRIM_PARAMS
+    )
 
 
 # ---------------------------------------------------------------------------
