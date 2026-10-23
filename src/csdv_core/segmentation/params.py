@@ -294,8 +294,19 @@ class SegmentationParams:
 #: single parameter set meant to run everywhere, that trade is the point.
 OPTIMIZED_POST_TRIM_PARAMS = SegmentationParams(bound_mode="post_trim")
 
-#: The default. Placeholder values until the before-and-after comparison
-#: chooses ``th_cr`` and the minimum crown depth under the flood bound.
+#: The default: the study's set under the flood bound.
+#:
+#: ``th_cr`` and ``min_crown_depth_m`` were chosen on the calibration units of
+#: 626 NEON field plots by a rule fixed beforehand
+#: (``scripts/segmentation/compare_lidr/before_after.py``). Its primary branch,
+#: the most canopy assigned without crowns growing larger relative to field
+#: crowns than under the post-trim bound, had no solution, because any bound
+#: that keeps more canopy also enlarges crowns. The fallback ranks sets by the
+#: calibration R² of a line on Tallo crown AGB, which barely moved across the
+#: grid (0.333 to 0.340), and its tie-break kept ``th_cr`` at 0.70 with no
+#: minimum depth. Against the post-trim bound at the same values, the median
+#: unit puts 86 rather than 77 percent of its canopy in a crown, and tree tops
+#: are unchanged. Lower ``th_cr`` (refAGB uses 0.55) assigns more canopy still.
 DEFAULT_PARAMS = SegmentationParams()
 
 #: The legacy window equation under the corrected semantics. Useful for asking
