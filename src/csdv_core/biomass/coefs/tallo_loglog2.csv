@@ -1,0 +1,9 @@
+# Tallo loglog2 tree AGB model per RESOLVE biome: ln(AGB_kg) = a + b ln(H_m) + c ln(CD_m), CD a crown
+# diameter. Point prediction S * exp(a) * H^b * CD^c with S the smearing factor. cov_* is the uncentred
+# covariance of (a, b, c). Copied from refAGB data/Tallo/Tallo_allometric_lookup_2.csv at commit 5317f5b (CONUS Tallo,
+# NEON-origin records excluded, allodb AGB as the response).
+biome,model_type,a,b,c,sigma,smearing,cov_aa,cov_ab,cov_ac,cov_bb,cov_bc,cov_cc,n,r2_log,min_height
+Deserts & Xeric Shrublands,loglog2,-0.07650311573,1.330829419,1.528611891,0.5049849159,1.079601727,0.07763141396,-0.02271388711,-0.008343300031,0.01026095403,-0.003697979254,0.01174965577,230,0.7114767623,0
+Temperate Broadleaf & Mixed Forests,loglog2,-3.002564859,2.177738462,1.244289932,0.6869320047,1.137493819,0.003635588863,-0.001381747738,0.0002051015894,0.000678955921,-0.0003254944726,0.0004266511755,9302,0.7390442608,0
+Temperate Conifer Forests,loglog2,-0.9345704472,1.7051653,1.277229607,0.5880166984,1.101986369,0.005429623667,-0.002036468488,0.0004464137886,0.001262913087,-0.001037219637,0.001633122493,1564,0.8802970028,0
+"Temperate Grasslands, Savannas & Shrublands",loglog2,-1.21990717,1.79116005,1.111345541,0.5247975957,1.081287259,0.005062569072,-0.002130306334,0.0006707473658,0.001528100986,-0.001281422772,0.001746356787,1151,0.9144167967,0

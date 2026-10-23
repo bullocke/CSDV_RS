@@ -48,3 +48,33 @@ def test_invalid_inputs_give_nan() -> None:
 def test_global_diameter_model() -> None:
     expected = 0.557 * 200.0**0.809 * math.exp(0.056**2 / 2)
     assert jucker_diameter_cm(20.0, 10.0) == pytest.approx(expected)
+
+
+def test_tallo_model_matches_hand_calculation():
+    from csdv_core.biomass.allometry import tallo_biomes, tallo_model
+
+    assert "Temperate Broadleaf & Mixed Forests" in tallo_biomes()
+    m = tallo_model("Temperate Broadleaf & Mixed Forests")
+    # refAGB Tallo_allometric_lookup_2.csv, BART row.
+    a, b, c, s = (
+        -3.002564858783528,
+        2.1777384617970745,
+        1.2442899315884226,
+        1.137493818906883,
+    )
+    expected = s * np.exp(a + b * np.log(25.0) + c * np.log(10.0))
+    np.testing.assert_allclose(m.agb_kg(25.0, 10.0), expected, rtol=1e-8)
+    assert np.isnan(m.agb_kg(0.0, 10.0))
+    assert np.allclose(m.cov, m.cov.T) and np.all(np.linalg.eigvalsh(m.cov) > 0)
+
+
+def test_tallo_draws_center_on_fit():
+    from csdv_core.biomass.allometry import tallo_model
+
+    m = tallo_model("Temperate Conifer Forests")
+    k = m.draws(4000, seed=1)
+    np.testing.assert_allclose(k.mean(axis=0), [m.a, m.b, m.c], atol=0.01)
+    agb = m.agb_kg(np.array([10.0, 20.0]), np.array([4.0, 8.0]), coefs=k[:5])
+    assert agb.shape == (5, 2)
+    with pytest.raises(KeyError):
+        tallo_model("Mediterranean Forests, Woodlands & Scrub")
