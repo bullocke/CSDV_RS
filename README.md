@@ -131,6 +131,7 @@ For detailed guides, API references, and data structures, please refer to the fo
 * [**Data layout**](docs/data_layout.md) — describes the expected layout of the `data/` and `results/` directories, including the purpose of each subdirectory and how to configure the environment variables that control their locations.
 * [**Disturbance detection guide**](docs/guides/disturbance_detection.md): how `csdv detect-disturbance` maps forest canopy loss and its onset from NAIP-CHM years, how to run it locally and on CHPC, how to change its parameters and how to sample its output for interpretation.
 * [**Disturbance detection API**](docs/disturbance_api.md): the modules, parameters and output files of the disturbance pipeline.
+* [**Crown segmentation guide**](docs/guides/crown_segmentation/README.md): the Python crown segmentation engine, its parameters and presets, a comparison with lidR `dalponte2016`, and the study that tuned it.
 * [**CHPC workflow**](docs/workflow_chpc.md): running the pipeline on the University of Utah cluster with node-local scratch, including the Slurm scripts.
 
 ## Repository layout

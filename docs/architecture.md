@@ -78,7 +78,7 @@ See [metrics.md](metrics.md) for every metric both paths produce.
 | `download/` | NAIP (GEE, Planetary Computer, USDA image service), NAIP-CHM weights and conditioning rasters, national NAIP-CHM tiles over HTTP (`naip_chm_http.py`). NEON and 3DEP/SSURGO not yet written |
 | `preprocess/` | NAIP mosaic and reprojection, CHM smoothing and masking, window tiling |
 | `chm_inference/` | NAIP-CHM model wrapper (CHPC + Colab parity) + the 5 static CONUS conditioning rasters |
-| `segmentation/` | crown segmentation: watershed (Python), `lidR` `dalponte2016` through `Rscript`. Both report per-stage timings on request. DeepForest not yet written |
+| `segmentation/` | crown segmentation: variable-window tree tops and a Numba priority flood with per-crown floors (`chm_watershed.py`, `flood.py`), `lidR` `dalponte2016` through `Rscript` as an independent check. Both report per-stage timings on request. See the [crown segmentation guide](guides/crown_segmentation/README.md). DeepForest not yet written |
 | `metrics/` | fixed-window raster path. 15 registered metrics, 4 wired in the orchestrator. Keyed to `(array, GridSpec, window_m)` |
 | `zonal/` | default path. Per-stand, per-date metrics inside a polygon. Pure `(array, mask) -> float`, no `window_m` |
 | `satellite/` | Landsat C2 L2 per-stand series from Earth Engine plus 3 annual metrics. Sensor, index and annual-metric registries. The only networked analysis module |
@@ -109,7 +109,7 @@ See [metrics.md](metrics.md) for every metric both paths produce.
 |---|---|
 | `config`, `io`, `preprocess`, `chm_inference`, `metrics`, `zonal`, `satellite`, `stratification`, `stages`, `trajectories`, `change`, `disturbance`, `viz` | implemented |
 | `download` | 4 of 6 modules. `neon.py` and `topo_soils.py` are stubs |
-| `segmentation` | 3 of 4 modules. `deepforest.py` is a stub |
+| `segmentation` | 4 of 5 modules. `deepforest.py` is a stub |
 | `examples` | 1 of 3 modules. `screen.py` works, `index.py` and `manifest.py` are stubs, `vocab/` is empty |
 | `validation` | not started. `compare.py` and `stats.py` are stubs |
 
