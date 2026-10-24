@@ -23,7 +23,7 @@ This page compares the Python engine with lidR's `lmf` tree detector and `dalpon
 
 ## Tree detection
 
-Both detectors apply the same rule: a pixel is a tree top when no pixel within `ws(h) / 2` metres is higher, where `h` is the pixel's own height. lidR's documentation describes `lmf` as "deeply inspired by Popescu & Wynne (2004)", the variable-window filter for lidar CHMs. Dalponte and Coomes (2016) themselves used a fixed window: "local maxima are located using a circular moving window" (Methods).
+Both detectors apply the same rule: a pixel is a tree top when no pixel within `ws(h) / 2` metres is higher, where `h` is the pixel's own height. lidR's documentation describes `lmf` as "deeply inspired by Popescu & Wynne (2004)", the variable-window filter for lidar CHMs. Dalponte and Coomes (2016) describe one circular window whose size the user sets: "local maxima are located using a circular moving window", and "the size of the moving window, the small-tree cut-off height and the percentage and absolute height difference thresholds all need to be set by the user" (Methods).
 
 The implementations differ:
 
@@ -31,7 +31,7 @@ The implementations differ:
 | --- | --- | --- |
 | Input | Every raster cell becomes a LAS point (`raster_as_las`) | The raster array |
 | Search | One spatial-index query per point (`GridPartition`), circle test on exact distance | 3 x 3 maximum filter for candidates, then each candidate against its own disk in compiled code |
-| Window radius | Exact, `ws(z) / 2` | Exact (`window_metric="exact"`); rounded to whole pixels in the earlier engine |
+| Window radius | Exact, `ws(z) / 2` | Exact (`window_metric="exact"`). The earlier engine rounded it to whole pixels |
 | Ties | The first point tagged wins, which depends on thread order | Tied maxima kept, each plateau collapsed to one top at its centre |
 | Threads | OpenMP, with a critical section around each write | One |
 
@@ -39,7 +39,7 @@ The implementations differ:
 
 *Share of tree tops that both engines find at the same pixel, for four windows: fixed 3, 5 and 8 m and the Tallo window of each block's biome. Green: Python with the window radius rounded to whole pixels, as the earlier engine did. Blue: exact distances.*
 
-With exact distances the two detectors agree on 99.4 to 99.9 percent of tree tops, and Python finds 1.000 to 1.001 times as many. Every remaining difference but 0 to 23 per configuration is a plateau of tied heights where lidR keeps the first pixel it tags and Python keeps the plateau's centre. The NAIP-CHM is stored in whole centimetres, so ties are more common there than in the lidar CHM.
+With exact distances the two detectors agree on 99.4 to 99.9 percent of tree tops, and Python finds 1.000 to 1.001 times as many. All but 0 to 23 of the remaining differences in each configuration are plateaus of tied heights, where lidR keeps the first pixel it tags and Python keeps the plateau's centre. The NAIP-CHM is stored in whole centimetres, so ties are more common there than in the lidar CHM.
 
 Rounding the radius to whole pixels, as the earlier engine did, was the main source of disagreement. `np.rint` rounds halves to even, so at 1 m the 3 m window (1.5 px) grew to 2 px and the 5 m window (2.5 px) shrank to 2 px, and the two windows found exactly the same 168,891 tree tops on the lidar blocks, where lidR found 184,087 and 150,047. On the NAIP-CHM, rounding gave 1.03 to 1.04 times lidR's count for 3 and 5 m windows, which is the 1.03 ratio the national feasibility study reported.
 
@@ -60,7 +60,7 @@ Python's detector ran 5.5 to 12.8 times faster than lidR's on one thread. The ga
 
 ### The rules
 
-The two growers share the idea of Dalponte and Coomes (2016) and differ in four places that change crowns. Dalponte and Coomes describe the test in prose: neighbouring pixels "are added to the region if their vertical distance from the local maximum is less than some user-defined percentage of the local maximum height, and less than some user-defined maximum difference" (Methods). That is a floor relative to the tree top. lidR's `C_dalponte2016` tests against the running mean of the crown instead (`src/C_dalponte2016.cpp`, lines 101 to 107 at commit `b3c67d6`):
+The two growers share the idea of Dalponte and Coomes (2016) and differ in the details that decide where a crown ends. Dalponte and Coomes describe the test in prose: neighbouring pixels "are added to the region if their vertical distance from the local maximum is less than some user-defined percentage of the local maximum height, and less than some user-defined maximum difference" (Methods). That is a floor relative to the tree top. lidR's `C_dalponte2016` tests against the running mean of the crown instead (`src/C_dalponte2016.cpp`, lines 101 to 107 at commit `b3c67d6`):
 
 ```cpp
 expend =
@@ -139,9 +139,9 @@ Three results follow from the table.
 
 **The rule matters.** At the same `th_cr`, the mean-relative rule assigns 5 to 11 percentage points more canopy than the apex rule and makes median crowns 0.1 to 0.6 m wider, because its floor falls as the crown grows. Neither is right in general. The apex rule is a statement about crown shape that does not depend on how a crown was grown, and `th_cr` alone controls how far down the flanks it reaches. The Tallo set, with `th_cr = 0.55` under the apex rule, assigns 0.76 of the NAIP-CHM canopy against 0.66 for the default set, close to the 0.78 lidR assigns under the default set.
 
-**lidR's implementation matters as much as its rule.** Grown under the same rule, the Python mean rule and lidR agree on a median crown IoU of only 0.68 to 0.73, close to the 0.57 to 0.66 between lidR and the apex rule. lidR also places its boundaries higher on the crown flanks (0.85 to 0.89 of the shorter apex, against 0.79 to 0.86 for the same rule in the flood), because its boundaries form where synchronous growth fronts meet rather than along the lowest path between crowns. Its square cap, the last-scanned claimant, and the double counting of contested pixels in the crown mean all push in the same direction, and the constructed scenes show each.
+**lidR's implementation matters as much as its rule.** Grown under the same rule, the Python mean rule and lidR agree on a median crown IoU of only 0.68 to 0.73, close to the 0.57 to 0.66 between lidR and the apex rule. lidR also places its boundaries higher on the crown flanks (0.85 to 0.89 of the shorter apex, against 0.79 to 0.86 for the same rule in the flood), because its boundaries form where synchronous growth fronts meet rather than along the lowest path between crowns. The square cap, the last-scanned claimant and the double counting of contested pixels in the crown mean are the other implementation differences. The constructed scenes show the first two, and this comparison does not separate their shares.
 
-**The flood fixes the earlier engine's loss.** Under the same apex rule, the flood assigns 8 to 9 percentage points more canopy than post-trim, with tree tops unchanged. Crowns that had no taller neighbour come out identical (median IoU 0.99 to 1.00), and the gain is concentrated in the saddles between crowns of unequal height.
+**The flood fixes the earlier engine's loss.** Under the same apex rule, the flood assigns 8 to 9 percentage points more canopy than post-trim, with tree tops unchanged. Most crowns come out identical (median IoU 0.99 to 1.00), and the gain sits in the saddles between crowns of unequal height.
 
 Growing crowns took 0.35 to 0.82 s per block in Python and 4.7 to 5.9 s in lidR, 7 to 13 times as long as the Python flood.
 
@@ -172,7 +172,7 @@ The Python engine itself changed during this work. It used to run an unconstrain
 
 ![Crown diameter CDFs](figures/before_after_cdf_diameter.png)
 
-*Crown diameter CDFs of all 12 strata. The current engine moves toward lidR without reaching it, because the remaining difference is the rule: an apex floor at 0.70 keeps less flank than a mean floor at 0.70.*
+*Crown diameter CDFs of all 12 strata. The current engine moves toward lidR without reaching it. Part of the remaining gap is the rule, since an apex floor at 0.70 keeps less flank than a mean floor at 0.70, and part is lidR's implementation (see Crown growth).*
 
 ## Speed and memory
 
@@ -180,7 +180,7 @@ Each engine timed each step on crops of three NAIP-CHM tiles (dense eastern hard
 
 ![Speed](figures/speed.png)
 
-*Left: time per step against block size with a 12 m crown cap, median of the three tiles. Centre: growth time against the cap on 1024 x 1024 blocks, dense hardwood tile. Right: full-image passes of `C_dalponte2016` against `max_cr`, counted with an instrumented local copy of the routine on the same block.*
+*Left: time per step against block size with a 12 m crown cap, median of the three tiles. Centre: growth time against the cap on 1024 x 1024 blocks, median of the three tiles. Right: full-image passes of `C_dalponte2016` against `max_cr`, counted with an instrumented local copy of the routine on the same block.*
 
 | 1024 x 1024 block, 12 m cap | Python | lidR | lidR / Python |
 | --- | --- | --- | --- |
@@ -191,14 +191,14 @@ Each engine timed each step on crops of three NAIP-CHM tiles (dense eastern hard
 
 At 2048 x 2048 pixels (4.2 million) lidR took 17 to 67 s to grow crowns against 0.3 to 4.6 s for the flood, and peaked at 808 to 858 MB against 632 to 742 MB. Both baselines are large: 253 MB for Python after imports, plus 47 MB for compiled kernels, and 270 MB for R with lidR, terra and sf loaded.
 
-Four properties of lidR's implementation explain the gap, each visible in the measurements.
+Four properties of lidR's implementation account for the gap. The first and third are measured here. The second and fourth come from reading the source.
 
-1. **Synchronous growth costs passes times pixels.** `C_dalponte2016` scans the whole image once per pass, adding one ring of pixels to every crown, and stops after a pass that adds nothing. The number of passes grows with `max_cr`: 9 passes at 4 pixels, 61 at 17, 111 at 20 and 221 at 67 on the dense 1024 x 1024 block, at about 80 ms per pass once crowns are large. Passes can exceed twice `max_cr` because crowns keep extending along winding lobes, and because a falling crown mean admits pixels in later passes that an earlier pass refused. Growth time therefore rose from 1.2 to 18.0 s as the cap went from 5 to 25 m, while the flood, which handles each pixel once from a heap, stayed between 0.27 and 0.59 s.
+1. **Synchronous growth costs passes times pixels.** `C_dalponte2016` scans the whole image once per pass, adding one ring of pixels to every crown, and stops after a pass that adds nothing. The number of passes grows with `max_cr`: 9 passes at 4 pixels, 61 at 17, 111 at 20 and 221 at 67 on the dense 1024 x 1024 block, at about 80 ms per pass once crowns are large. Passes exceed twice `max_cr`, which suggests that crowns keep extending along winding lobes and that a falling crown mean admits pixels an earlier pass refused. Growth time therefore rose from 1.2 to 18.0 s as the cap went from 5 to 25 m, while the flood, which handles each pixel once from a heap, stayed between 0.27 and 0.59 s.
 2. **The inner loop is expensive.** For every labelled pixel in every pass the loop looks up the crown's seed, height sum and pixel count in `std::map` containers, at logarithmic cost in the number of crowns, and it walks R's column-major matrices row by row. Each pass also copies the whole label matrix.
 3. **Most time is in the C++ routine, so calling it directly would not help.** Under `Rprof`, `C_dalponte2016` accounted for 79 to 98 percent of growth time with caps of 10 m and more, and 46 to 69 percent with a 5 m cap, where the R wrapper's raster-to-matrix conversions, flips and seed rasterization are a larger share.
-4. **Detection works on points, not pixels.** `locate_trees` converts every raster cell to a LAS point and queries a spatial index once per point with that point's own window. With a variable window lidR's shortcut for fixed windows is disabled, so the query runs for every canopy pixel. Python tests only the pixels that are 3 x 3 maxima. On six threads lidR's detection was slower than on one (1.74 to 1.83 s against 1.10 to 1.12 s on dense 1024 x 1024 blocks), because each write of the result sits in an OpenMP critical section.
+4. **Detection works on points, not pixels.** `locate_trees` converts every raster cell to a LAS point and queries a spatial index once per point with that point's own window. With a variable window lidR's shortcut for fixed windows is disabled, so the query runs for every canopy pixel. Python tests only the pixels that are 3 x 3 maxima. On six threads lidR's detection was slower than on one (1.74 to 1.83 s against 1.10 to 1.12 s on dense 1024 x 1024 blocks), probably because each write of the result sits in an OpenMP critical section.
 
-The Python flood is itself slower than scikit-image's watershed, which the post-trim engine uses (0.54 s against 0.39 s on the dense block), because its heap is written in Numba rather than C. It is still 7 to 44 times faster than `dalponte2016` at the same cap.
+The Python flood is itself slower than scikit-image's watershed, which the post-trim engine uses (0.54 s against 0.39 s on the dense block), probably because its heap is written in Numba rather than C and leaves room for optimisation. It is still 7 to 44 times faster than `dalponte2016` at the same cap.
 
 ## Crown AGB
 
@@ -217,9 +217,9 @@ Crown AGB was computed with the biome-wide Tallo models of the refAGB project, `
 | NEON lidar | Crown AGB, Python, default / Tallo set | 0.60 / 0.58 | −27 / −19 percent |
 | NEON lidar | Crown AGB, lidR, default / Tallo set | 0.60 / 0.58 | −23 / −19 percent |
 
-The two engines are interchangeable for AGB. Their held-out R² differ by at most 0.02, and under the Tallo set their mean held-out AGB density differs by 3 percent on the NAIP-CHM (111 against 114 Mg/ha) and by less than 1 percent on lidar (155.0 against 155.4 Mg/ha), inside the 95 percent coefficient interval of about plus or minus 5 percent in each case. Under the default set the difference is 5 to 6 percent, because lidR's mean-relative rule makes crowns larger there.
+The two engines are interchangeable for AGB. Their held-out R² differ by at most 0.02, and under the Tallo set their mean held-out AGB density differs by 3 percent on the NAIP-CHM (111 against 114 Mg/ha) and by less than 1 percent on lidar (155.0 against 155.4 Mg/ha), inside the 95 percent coefficient interval of about plus or minus 5 percent in each case. Under the default set the difference is 5 to 6 percent, consistent with the larger crowns lidR's mean-relative rule makes at `th_cr = 0.70`.
 
-The CHM matters far more than the engine. On lidar, crown AGB beats a line on plot mean height (R² 0.58 to 0.60 against 0.51), and with no fitting at all it explains about half the variance. On the NAIP-CHM crown AGB loses to mean height (0.38 to 0.41 against 0.50) and underestimates field AGB by 40 to 46 percent, because the NAIP-CHM shows about one crown per 3.5 canopy trees and hides the subcanopy. A multiplicative correction fitted on the calibration plots removes that bias but leaves held-out R² below zero on the NAIP-CHM: a single factor cannot repair crowns that stand for a varying number of trees.
+The CHM matters far more than the engine. On lidar, crown AGB beats a line on plot mean height (R² 0.58 to 0.60 against 0.51), and with no fitting at all it explains about half the variance. On the NAIP-CHM crown AGB loses to mean height (0.38 to 0.41 against 0.50) and underestimates field AGB by 40 to 46 percent, consistent with a CHM that shows about one crown per 3.5 canopy trees and hides the subcanopy. A multiplicative correction fitted on the calibration plots removes that bias but leaves held-out R² below zero on the NAIP-CHM, as expected when each crown stands for a varying number of trees.
 
 ## Limitations
 
