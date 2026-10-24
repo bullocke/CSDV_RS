@@ -201,8 +201,13 @@ def cmd_select() -> None:
 
 
 def chosen_params() -> SegmentationParams:
+    """The selected flood set, with exact window distances as the engine now uses.
+
+    The grid was scored with radii rounded to pixels, the detector of the
+    earlier engine, so that only the bound differed from the legacy set.
+    """
     sel = json.loads(SELECTION_JSON.read_text())
-    return grid()[sel["chosen"]]
+    return grid()[sel["chosen"]].replace(window_metric="exact")
 
 
 def cmd_units() -> None:

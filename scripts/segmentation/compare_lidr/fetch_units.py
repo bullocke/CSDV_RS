@@ -7,7 +7,10 @@ crown radius cap to resolve crowns whose tree top lies in the unit.
           nominal quarter-quad cell holds the unit centroid.
 ``neon``  the NEON AOP lidar CHM (DP3.30015.001, 1 m) from the Earth Engine
           asset ``projects/neon-prod-earthengine/assets/CHM/001``, the image
-          of the lidar year nearest the field survey.
+          of the unit's refAGB lidar year.
+``blocks`` one 1024 x 1024 m block of the same lidar CHM per NEON site,
+          centred on the site's units, the lidar counterpart of the NAIP-CHM
+          strata blocks. Listed in ``tables/lidar_blocks.csv``.
 
 Also writes ``tables/neon_units.parquet``: unit attributes from refAGB (field
 AGBD, split, biome) plus field canopy-tree counts, height and crown diameter.
@@ -17,7 +20,8 @@ Run::
     export REFAGB_METHODS_DIR=<refAGB methods-paper repo>
     P=.micromamba/envs/CSDV/bin/python
     $P scripts/segmentation/compare_lidr/fetch_units.py naip     # ~5 min
-    $P scripts/segmentation/compare_lidr/fetch_units.py neon     # Earth Engine
+    $P scripts/segmentation/compare_lidr/fetch_units.py neon     # ~1 min, Earth Engine
+    $P scripts/segmentation/compare_lidr/fetch_units.py blocks   # ~1 min, Earth Engine
 """
 
 from __future__ import annotations
@@ -261,15 +265,80 @@ def fetch_neon() -> None:
     )
 
 
+LIDAR_BLOCK_M = 1024
+
+
+def fetch_lidar_blocks() -> None:
+    """One 1024 m lidar CHM block per site, centred on the site's units."""
+    import ee
+    import geopandas as gpd
+
+    from csdv_core.download._ee import initialize_ee
+
+    initialize_ee()
+    units = L.neon_units()
+    out_dir = L.DATA_DIR / "lidar_blocks"
+    rows = []
+    for site, grp in units.groupby("site"):
+        epsg = int(grp["epsg"].iloc[0])
+        year = int(grp["lidar_year"].mode().iloc[0])
+        cx, cy = (
+            gpd.GeoSeries(grp.geometry, crs=units.crs)
+            .to_crs(epsg)
+            .union_all()
+            .centroid.coords[0]
+        )
+        x0 = float(np.floor(cx - LIDAR_BLOCK_M / 2))
+        y0 = float(np.floor(cy - LIDAR_BLOCK_M / 2))
+        bounds = (x0, y0, x0 + LIDAR_BLOCK_M, y0 + LIDAR_BLOCK_M)
+        path = out_dir / f"{site}.tif"
+        site_coll = ee.ImageCollection(NEON_CHM).filter(ee.Filter.eq("NEON_SITE", site))
+        for y in sorted(
+            {year + d for d in (0, -1, 1, -2, 2)}, key=lambda v: abs(v - year)
+        ):
+            sub = site_coll.filterDate(f"{y}-01-01", f"{y + 1}-01-01")
+            if sub.size().getInfo():
+                img, year = sub.mosaic(), y
+                break
+        else:
+            log.warning("%s: no lidar CHM within two years of %d", site, year)
+            continue
+        if not path.exists():
+            download_chip(img, bounds, epsg, path)
+        with rasterio.open(path) as src:
+            data = src.read(1)
+        rows.append(
+            {
+                "site": site,
+                "biome": grp["biome_long"].iloc[0],
+                "epsg": epsg,
+                "year": year,
+                "x0": x0,
+                "y0": y0,
+                "covered_frac": float(np.mean(data > 0)),
+                "canopy_frac": float(np.mean(data >= 2.0)),
+            }
+        )
+        log.info(
+            "%s: block %s, %.0f%% canopy",
+            site,
+            path.name,
+            100 * rows[-1]["canopy_frac"],
+        )
+    pd.DataFrame(rows).to_csv(L.TABLE_DIR / "lidar_blocks.csv", index=False)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("source", choices=["naip", "neon", "table"])
+    ap.add_argument("source", choices=["naip", "neon", "blocks", "table"])
     args = ap.parse_args()
     unit_table()
     if args.source == "naip":
         fetch_naip()
     elif args.source == "neon":
         fetch_neon()
+    elif args.source == "blocks":
+        fetch_lidar_blocks()
 
 
 if __name__ == "__main__":
