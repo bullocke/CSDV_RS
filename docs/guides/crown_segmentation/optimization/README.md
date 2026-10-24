@@ -1,5 +1,7 @@
 # Crown segmentation: what was wrong and how it was re-tuned
 
+> This study ran on the engine as it stood in mid 2026: crowns trimmed to `th_cr` after an unconstrained watershed, and window radii rounded to whole pixels. Both are still available (`bound_mode="post_trim"`, `window_metric="pixel"`), and `OPTIMIZED_POST_TRIM_PARAMS` reproduces the chosen set exactly. The engine now defaults to the flood bound and exact window distances. The [crown segmentation guide](../README.md) describes the current engine, and [Python against lidR](../lidr_comparison.md) compares it with `dalponte2016`.
+
 ## Summary and decision
 
 Crown segments used to be canopy clusters rather than trees. They averaged 33 m across at about 10 per hectare, where an eastern hardwood stand carries 200 to 600 stems, and every crown metric inherited that. `crown_cv` read about 0.33 on every stand large enough for the value to be stable.
@@ -25,6 +27,10 @@ Two results matter more than the parameter values.
 **`crown_cv` is a working measurement that this canopy height model cannot exercise.** Given synthetic canopies whose crown size variability is known, the pipeline recovers it with a slope of 0.90 and a correlation of 0.99. It is not a broken metric. But on real stands it sits between 0.28 and 0.37 everywhere, against a geometric floor near 0.22 set by tessellation alone. Three of the seven stage bands in `config/stages.yaml` lie at or below that floor and can essentially never be assigned.
 
 **Crown density and crown shape cannot both be right on this data.** The parameter sets that best match published crown-width allometry reach only 56 to 58 crowns per hectare. The only sets reaching 75 per hectare give a worse allometric fit. The achievable maximum is 76 per hectare, which is the bottom of the plausible range. That is a limit of a model-inferred canopy height model at 0.6 m, not a parameter that was set wrong.
+
+![F10](figures/f10_before_after.png)
+
+*One Indiana tile before (as shipped, 42 crowns) and after the re-tune (234 crowns), white outlines over the CHM.*
 
 ## What was wrong
 
@@ -94,7 +100,8 @@ The density band matters because density and crown width are not independent. Un
 | Crowns per hectare | Implied mean diameter |
 |---|---|
 | 10 (as shipped) | 35.2 m |
-| 76 (chosen) | 12.9 m |
+| 67 (chosen set, Indiana) | 13.8 m |
+| 76 (rule winner, the most reached) | 12.9 m |
 | 150 | 9.2 m |
 | 200 | 8.0 m |
 
@@ -147,6 +154,10 @@ Crowns per hectare. The rule winner triples between Indiana and Harvard Forest. 
 The reason is specific and worth stating. Removing the smoothing was the only way to reach 75 crowns per hectare on the NAIP-derived canopy height model, because that surface is smooth enough that the mean filter destroys the maxima before the window ever sees them. On a 1 m lidar canopy height model, which carries real crown-scale detail, the same setting has nothing to suppress and the detector fires on noise. The parameter was compensating for a property of one sensor.
 
 No parameter set passed every filter at all four splits. Three passed at three of four, and all three keep some smoothing. The set chosen here is the best of those on the tuning tiles.
+
+![F9](figures/f9_transfer.png)
+
+*Crown diameter under the chosen parameters at ElkinsvilleNE (NAIP-CHM) and at the two lidar sites. The three distributions overlap, which is what transfer means for this set.*
 
 `allo_slope` at SCBI is 0.376 under the chosen parameters, against about 1.0 elsewhere. Crown width tracks height only weakly there. SCBI is the tallest and most structurally varied of the three sites, and this is the one diagnostic that does not transfer cleanly.
 
@@ -252,6 +263,8 @@ One practical note for anyone matching the two. lidR's `max_cr` is documented as
 
 Versions: R 4.5.3, lidR 4.3.0, terra 1.9.11, sf 1.1.0. None of these are declared in `environment.yml`, so the comparison is reproducible on this machine and should be treated as a one-off elsewhere.
 
+This comparison is superseded by [Python against lidR](../lidr_comparison.md). Two findings there revise it. Most of the 8 percent excess of tree tops came from rounding the window radius to whole pixels, which the engine no longer does, and lidR's `C_dalponte2016` applies `max_cr` as a square half-width, `|dx| < max_cr`, which explains the radius-like behaviour noted above.
+
 ## What is now stale
 
 | Item | State | Recommended action |
@@ -275,10 +288,10 @@ There is no field or manual reference for crown counts at Elkinsville. Realism i
 
 28 percent of crowns under the chosen parameters exceed twice the stand-grown crown width expected for their height. Some of that is the crude ceiling, and some of it is real over-merging that survives the re-tune.
 
-The chosen density of 76 per hectare sits at the very bottom of the plausible band, and it is the maximum this canopy height model supports at any parameter setting. Individual crowns are only marginally recoverable from a 0.6 m model-inferred surface, and the crown family should be read as canopy-patch statistics rather than tree measurements.
+The chosen set's 67 crowns per hectare in Indiana sits below the bottom of the plausible band, and the most any parameter setting reached on this canopy height model is 76. Individual crowns are only marginally recoverable from a 0.6 m model-inferred surface, and the crown family should be read as canopy-patch statistics rather than tree measurements.
 
 The resolution experiment degrades a finished raster and so bounds the artefact from below. NAIP acquisition dates also vary by year and the height model takes day of year as an input, so phenology and resolution are partly aliased in the six-year series.
 
 ## Reproducing this
 
-See [`scripts/segmentation/README.md`](../../../scripts/segmentation/README.md) for the run order. Every table cited above is in `results/` next to this file, one row per tile per parameter set.
+See [`scripts/segmentation/README.md`](../../../../scripts/segmentation/README.md) for the run order. Every table cited above is in `results/` next to this file, one row per tile per parameter set.

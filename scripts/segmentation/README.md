@@ -2,9 +2,9 @@
 
 ## What this is
 
-The scripts that tested and re-tuned crown segmentation. The findings and the chosen parameters are written up in [`docs/guides/segmentation_optimization/`](../../docs/guides/segmentation_optimization/README.md). This file covers how to run them and what each one is for.
+The scripts that tested and re-tuned crown segmentation. The findings and the chosen parameters are written up in [`docs/guides/crown_segmentation/optimization/`](../../docs/guides/crown_segmentation/optimization/README.md). This file covers how to run them and what each one is for.
 
-Everything writes to `docs/guides/segmentation_optimization/results/`, one tidy table per step, so every number in the report traces back to a row.
+Everything writes to `docs/guides/crown_segmentation/optimization/results/`, one tidy table per step, so every number in the report traces back to a row.
 
 ## Order to run
 

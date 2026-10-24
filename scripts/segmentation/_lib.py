@@ -33,7 +33,7 @@ from csdv_core.segmentation.params import (
 logger = logging.getLogger(__name__)
 
 REPO = Path(__file__).resolve().parents[2]
-GUIDE_DIR = REPO / "docs" / "guides" / "segmentation_optimization"
+GUIDE_DIR = REPO / "docs" / "guides" / "crown_segmentation" / "optimization"
 FIGURE_DIR = GUIDE_DIR / "figures"
 RESULT_DIR = GUIDE_DIR / "results"
 TILE_PATH = Path(__file__).resolve().parent / "tiles.geojson"

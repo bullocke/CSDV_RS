@@ -285,7 +285,7 @@ class SegmentationParams:
 #: The parameter set chosen by the optimization study, under the earlier
 #: post-trim bound.
 #:
-#: Chosen in ``docs/guides/segmentation_optimization/``, which records how and
+#: Chosen in ``docs/guides/crown_segmentation/optimization/``, which records how and
 #: why. One thing there is worth repeating here, because it explains a choice
 #: that looks wrong in isolation.
 #:

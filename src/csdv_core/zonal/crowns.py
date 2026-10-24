@@ -32,7 +32,7 @@ DIAMETER_COLUMN = "crown_diam_m"
 #: unless its crown_cv interval is narrower than that. Bootstrapping the
 #: interval against sample size puts the crossing at 75 crowns, which at the
 #: measured density is about 1.3 ha or 3.3 acres. See
-#: ``docs/guides/segmentation_optimization/``.
+#: ``docs/guides/crown_segmentation/optimization/``.
 #:
 #: This was 3, inherited from the windowed implementation. At three crowns the
 #: 90 percent interval is 0.41 wide, four times the width of the band it is
