@@ -132,6 +132,7 @@ def main() -> int:
 
     params = SegmentationParams(
         bound_mode="post_trim",
+        window_metric="pixel",
         smooth_radius_m=args.smooth_radius_m,
         window=WINDOW_FUNCTIONS[args.window],
         th_cr=args.th_cr,
@@ -169,7 +170,9 @@ def main() -> int:
             kernel = smooth_kernel_px(params.smooth_radius_m, px)
             masked = mask_below(smooth_chm(arr, kernel=kernel), params.min_height_m)
             valid = ~np.isnan(masked)
-            py_rows, _ = locate_seeds(masked, valid, px, params.window)
+            py_rows, _ = locate_seeds(
+                masked, valid, px, params.window, window_metric=params.window_metric
+            )
 
             out_gpkg = tmpdir / f"{tile['tile_id']}_R.gpkg"
             try:

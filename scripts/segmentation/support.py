@@ -126,6 +126,7 @@ def main() -> int:
             if len(passing)
             else SegmentationParams(
                 bound_mode="post_trim",
+                window_metric="pixel",
                 smooth_radius_m=args.smooth_radius_m,
                 window=WINDOW_FUNCTIONS[args.window],
                 th_cr=args.th_cr,
@@ -134,6 +135,7 @@ def main() -> int:
     else:
         params = SegmentationParams(
             bound_mode="post_trim",
+            window_metric="pixel",
             smooth_radius_m=args.smooth_radius_m,
             window=WINDOW_FUNCTIONS[args.window],
             th_cr=args.th_cr,

@@ -96,6 +96,13 @@ logger = logging.getLogger(__name__)
     help="(watershed) flood applies th_cr during growth; post_trim is the earlier engine.",
 )
 @click.option(
+    "--window-metric",
+    type=click.Choice(["exact", "pixel"]),
+    default=DEFAULT_PARAMS.window_metric,
+    show_default=True,
+    help="exact compares true distances to the window radius, as lidR; pixel rounds it.",
+)
+@click.option(
     "--th-seed",
     type=float,
     default=DEFAULT_PARAMS.th_seed,
@@ -167,6 +174,7 @@ def cli(
     min_height_m: float,
     th_cr: float,
     bound_mode: str,
+    window_metric: str,
     th_seed: float,
     min_crown_depth_m: float | None,
     tallo_biome: str | None,
@@ -209,6 +217,7 @@ def cli(
         window=ws,
         th_cr=chosen("th_cr", th_cr),
         bound_mode=chosen("bound_mode", bound_mode),
+        window_metric=chosen("window_metric", window_metric),
         th_seed=chosen("th_seed", th_seed),
         min_crown_depth_m=chosen("min_crown_depth_m", min_crown_depth_m),
         max_crown_radius_m=None if radius is None or radius < 0 else radius,

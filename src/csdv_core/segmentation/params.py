@@ -148,6 +148,7 @@ _NEUTRAL: dict[str, Any] = {
     "th_seed": 0.0,
     "min_crown_depth_m": None,
     "max_crown_depth_m": None,
+    "window_metric": "pixel",
 }
 
 
@@ -191,6 +192,10 @@ class SegmentationParams:
             says. A fixed fraction of height is a thin slice on a short tree.
         max_crown_depth_m: The opposite bound for tall trees, the absolute
             height difference of Dalponte and Coomes (2016). ``None`` disables.
+        window_metric: ``"exact"`` tests tree tops against true distances
+            between pixel centres, as lidR's ``lmf`` does. ``"pixel"`` rounds
+            the window radius to whole pixels first, the earlier behaviour,
+            which at 1 m made a 5 m window the same as a 3 m one.
     """
 
     min_height_m: float = 2.0
@@ -205,8 +210,11 @@ class SegmentationParams:
     th_seed: float = 0.0
     min_crown_depth_m: float | None = None
     max_crown_depth_m: float | None = None
+    window_metric: str = "exact"
 
     def __post_init__(self) -> None:
+        if self.window_metric not in ("exact", "pixel"):
+            raise ValueError(f"Unknown window_metric {self.window_metric!r}")
         if self.bound_mode not in ("flood", "post_trim"):
             raise ValueError(f"Unknown bound_mode {self.bound_mode!r}")
         if self.th_cr_ref not in ("apex", "mean"):
@@ -292,7 +300,9 @@ class SegmentationParams:
 #: hectare below the Indiana density floor, and in exchange it holds together
 #: across three sites and two sensors at 67, 88 and 109 per hectare. For a
 #: single parameter set meant to run everywhere, that trade is the point.
-OPTIMIZED_POST_TRIM_PARAMS = SegmentationParams(bound_mode="post_trim")
+OPTIMIZED_POST_TRIM_PARAMS = SegmentationParams(
+    bound_mode="post_trim", window_metric="pixel"
+)
 
 #: The default: the study's set under the flood bound.
 #:
@@ -314,6 +324,7 @@ DEFAULT_PARAMS = SegmentationParams()
 #: equation was applied. This is **not** what the pipeline used to produce.
 LEGACY_PARAMS = SegmentationParams(
     bound_mode="post_trim",
+    window_metric="pixel",
     smooth_radius_m=0.6,
     window=WINDOW_FUNCTIONS["legacy"],
     th_cr=0.0,
@@ -340,6 +351,7 @@ LEGACY_PARAMS = SegmentationParams(
 #: exact old output is what matters.
 LEGACY_AS_SHIPPED_PARAMS = SegmentationParams(
     bound_mode="post_trim",
+    window_metric="pixel",
     smooth_radius_m=0.6,
     window=WindowFunction(a=4.0, b=1.0, lo=6.0, hi=24.0, name="legacy_as_shipped"),
     th_cr=0.0,

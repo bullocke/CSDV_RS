@@ -166,7 +166,9 @@ def run_tile(chm_path: Path, bounds, params: SegmentationParams, tile_id: str):
     if valid.sum() < 1000:
         return []
 
-    rows, cols = locate_seeds(masked, valid, px, params.window)
+    rows, cols = locate_seeds(
+        masked, valid, px, params.window, window_metric=params.window_metric
+    )
     n = int(rows.size)
     if n < 20:
         return []
@@ -259,6 +261,7 @@ def main() -> int:
 
     params = SegmentationParams(
         bound_mode="post_trim",
+        window_metric="pixel",
         smooth_radius_m=args.smooth_radius_m,
         window=WINDOW_FUNCTIONS[args.window],
         th_cr=args.th_cr,

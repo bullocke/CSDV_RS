@@ -103,21 +103,25 @@ def _disk(radius_px: int) -> np.ndarray:
 def _confirm_tops(
     heights: np.ndarray, rows: np.ndarray, cols: np.ndarray, radius: np.ndarray
 ) -> np.ndarray:
-    """True for each candidate with no higher pixel inside its own disk."""
+    """True for each candidate with no higher pixel inside its own disk.
+
+    ``radius`` is in pixels and need not be whole: a pixel at offset
+    ``(dr, dc)`` is inside when ``dr² + dc² <= radius²``.
+    """
     nr, nc = heights.shape
     out = np.zeros(rows.size, dtype=np.bool_)
     for i in range(rows.size):
         r = rows[i]
         c = cols[i]
-        rad = radius[i]
+        lim = radius[i] * radius[i] + 1e-9
+        reach = int(np.floor(radius[i] + 1e-9))
         h = heights[r, c]
-        lim = rad * rad + 1e-9
         ok = True
-        for dr in range(-rad, rad + 1):
+        for dr in range(-reach, reach + 1):
             rr = r + dr
             if rr < 0 or rr >= nr:
                 continue
-            for dc in range(-rad, rad + 1):
+            for dc in range(-reach, reach + 1):
                 if dr * dr + dc * dc > lim:
                     continue
                 cc = c + dc
@@ -145,6 +149,7 @@ def locate_seeds(
     window: WindowFunction,
     *,
     min_separation_m: float = 1.0,
+    window_metric: str = "exact",
 ) -> tuple[np.ndarray, np.ndarray]:
     """Find tree tops with a height-dependent search window.
 
@@ -152,9 +157,14 @@ def locate_seeds(
     higher, where ``h`` is that pixel's own smoothed height. This is lidR's
     ``lmf`` rule with a circular window.
 
-    The window radius is quantized to whole pixels. A pixel ties with an equal
-    neighbour rather than losing to it, and a plateau of tied maxima collapses
-    to one seed at its centre.
+    ``window_metric="exact"`` compares true distances between pixel centres
+    with that radius, as lidR does. ``"pixel"`` rounds the radius to whole
+    pixels first, the earlier behaviour. Rounding is not harmless: ``np.rint``
+    rounds halves to even, so at 1 m a 5 m window (radius 2.5 px) became the
+    same 2 px disk as a 3 m window.
+
+    A pixel ties with an equal neighbour rather than losing to it, and a
+    plateau of tied maxima collapses to one seed at its centre.
 
     Args:
         smoothed: Smoothed CHM in metres, NaN outside the canopy.
@@ -163,21 +173,30 @@ def locate_seeds(
         window: Search window diameter as a function of height.
         min_separation_m: Floor on separation between tree tops, so a flat
             crown top does not become several trees.
+        window_metric: ``"exact"`` or ``"pixel"``, as above.
 
     Returns:
         ``(rows, cols)`` index arrays of the tree top pixels.
     """
+    if window_metric not in ("exact", "pixel"):
+        raise ValueError(f"Unknown window_metric {window_metric!r}")
     if not valid.any():
         empty = np.zeros(0, dtype=np.intp)
         return empty, empty
 
     heights = np.where(valid, smoothed, -np.inf).astype("float32")
 
-    # Radius in whole pixels, from each pixel's own height. Diameter over two.
+    # Radius in pixels from each pixel's own height. Diameter over two. The
+    # floor keeps at least the 4-neighbourhood, which the candidate filter
+    # below relies on.
     radius_px = window(np.where(valid, smoothed, 0.0)) / 2.0 / float(pixel_size_m)
-    floor_px = max(1, int(round(float(min_separation_m) / float(pixel_size_m))))
-    radius_px = np.clip(np.rint(radius_px), floor_px, None).astype(np.int16)
-    radius_px[~valid] = 0
+    if window_metric == "pixel":
+        floor_px = max(1, int(round(float(min_separation_m) / float(pixel_size_m))))
+        radius_px = np.clip(np.rint(radius_px), floor_px, None)
+    else:
+        floor_px = max(1.0, float(min_separation_m) / float(pixel_size_m))
+        radius_px = np.clip(radius_px, floor_px, None)
+    radius_px = np.where(valid, radius_px, 0.0)
 
     # Any tree top is also the highest pixel of its 4-neighbourhood, because
     # every window contains that cross. One cheap filter finds the candidates,
@@ -193,7 +212,7 @@ def locate_seeds(
             heights,
             cand_r.astype(np.int64),
             cand_c.astype(np.int64),
-            radius_px[cand_r, cand_c].astype(np.int64),
+            radius_px[cand_r, cand_c].astype(np.float64),
         )
         is_top[cand_r[keep], cand_c[keep]] = True
 
@@ -363,6 +382,7 @@ def segment_crowns(
         px,
         params.window,
         min_separation_m=params.min_separation_m,
+        window_metric=params.window_metric,
     )
     clock.lap("seeds")
     if seed_rows.size == 0:

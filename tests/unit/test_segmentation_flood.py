@@ -128,18 +128,21 @@ def test_mean_rule_grows_further_down_the_flank_than_the_apex_rule():
     assert (mean_rule > 0).sum() > (apex_rule > 0).sum()
 
 
-def _brute_force_tops(h, valid, window):
-    floor_px = max(1, int(round(1.0 / PX)))  # locate_seeds' 1 m minimum separation
-    radius = np.clip(
-        np.rint(window(np.where(valid, h, 0.0)) / 2.0 / PX), floor_px, None
-    )
+def _brute_force_tops(h, valid, window, px, metric):
+    """Every pixel with no higher pixel in its own window, by definition."""
+    exact = window(np.where(valid, h, 0.0)) / 2.0 / px
+    if metric == "pixel":
+        radius = np.clip(np.rint(exact), max(1, int(round(1.0 / px))), None)
+    else:
+        radius = np.clip(exact, max(1.0, 1.0 / px), None)
     out = []
     nr, nc = h.shape
     hh = np.where(valid, h, -np.inf)
-    for r, c in zip(*np.nonzero(valid)):
-        rad = int(radius[r, c])
-        r0, r1 = max(0, r - rad), min(nr, r + rad + 1)
-        c0, c1 = max(0, c - rad), min(nc, c + rad + 1)
+    for r, c in zip(*np.nonzero(valid), strict=True):
+        rad = float(radius[r, c])
+        reach = int(np.floor(rad + 1e-9))
+        r0, r1 = max(0, r - reach), min(nr, r + reach + 1)
+        c0, c1 = max(0, c - reach), min(nc, c + reach + 1)
         yy, xx = np.ogrid[r0 - r : r1 - r, c0 - c : c1 - c]
         disk = yy * yy + xx * xx <= rad * rad + 1e-9
         if hh[r, c] >= hh[r0:r1, c0:c1][disk].max():
@@ -147,18 +150,38 @@ def _brute_force_tops(h, valid, window):
     return out
 
 
-def test_seed_candidates_match_the_definition():
+@pytest.mark.parametrize("metric", ["exact", "pixel"])
+@pytest.mark.parametrize("px", [0.6, 1.0])
+def test_seed_candidates_match_the_definition(metric, px):
     h = np.round(_random_canopy(11, shape=(90, 90)), 1)  # rounding makes plateaus
     valid = ~np.isnan(h)
     window = tallo_window("Temperate Broadleaf & Mixed Forests", lo=3.0, hi=12.0)
-    tops = set(_brute_force_tops(h, valid, window))
-    rows, cols = locate_seeds(h, valid, PX, window)
+    tops = set(_brute_force_tops(h, valid, window, px, metric))
+    rows, cols = locate_seeds(h, valid, px, window, window_metric=metric)
     # Plateaus collapse to one seed, which must be one of the tied tops.
-    assert all((r, c) in tops for r, c in zip(rows, cols))
+    assert all((r, c) in tops for r, c in zip(rows, cols, strict=True))
     mask = np.zeros(h.shape, dtype=bool)
     mask[tuple(np.array(sorted(tops)).T)] = True
     _, n = ndi.label(mask)
     assert rows.size == n
+
+
+def test_exact_window_separates_what_rounding_merged():
+    # At 1 m np.rint takes a 3 m window's radius (1.5 px) up to 2 and a 5 m
+    # window's (2.5 px) down to 2, so both become the same disk. The exact
+    # metric keeps them apart.
+    h = np.zeros((9, 9))
+    h[4, 2], h[4, 4] = 10.0, 9.0  # 2 m apart: two tops under a 3 m window only
+    valid = h > 0
+    w3 = WindowFunction(a=3.0, lo=3.0, hi=3.0)
+    w5 = WindowFunction(a=5.0, lo=5.0, hi=5.0)
+    n = {
+        (m, name): locate_seeds(h, valid, 1.0, w, window_metric=m)[0].size
+        for m in ("exact", "pixel")
+        for name, w in (("3m", w3), ("5m", w5))
+    }
+    assert n[("pixel", "3m")] == n[("pixel", "5m")] == 1
+    assert n[("exact", "3m")] == 2 and n[("exact", "5m")] == 1
 
 
 def test_power_window_and_neutral_keys():
@@ -171,6 +194,7 @@ def test_power_window_and_neutral_keys():
     # The study's chosen set keeps the key recorded before the new fields existed.
     assert OPTIMIZED_POST_TRIM_PARAMS.key == "68368c948c"
     assert "bound_mode" not in OPTIMIZED_POST_TRIM_PARAMS.as_dict()
+    assert "window_metric" not in OPTIMIZED_POST_TRIM_PARAMS.as_dict()
     assert SegmentationParams().as_dict()["bound_mode"] == "flood"
     with pytest.raises(ValueError):
         SegmentationParams(bound_mode="post_trim", th_seed=0.45)

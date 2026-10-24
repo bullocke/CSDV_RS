@@ -177,6 +177,7 @@ def main() -> int:
     variants = {
         "unbounded": SegmentationParams(
             bound_mode="post_trim",
+            window_metric="pixel",
             smooth_radius_m=args.smooth_radius_m,
             window=WINDOW_FUNCTIONS[args.window],
             th_cr=0.0,
@@ -184,6 +185,7 @@ def main() -> int:
         ),
         "bounded": SegmentationParams(
             bound_mode="post_trim",
+            window_metric="pixel",
             smooth_radius_m=args.smooth_radius_m,
             window=WINDOW_FUNCTIONS[args.window],
             th_cr=0.55,
