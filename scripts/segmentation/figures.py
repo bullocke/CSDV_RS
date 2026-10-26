@@ -43,13 +43,13 @@ from _lib import (  # noqa: E402
     read_window,
     segment_tile,
 )
-
-from csdv_core.segmentation.chm_watershed import segment_crowns  # noqa: E402
-from csdv_core.segmentation.params import (  # noqa: E402
+from naipcrowns.params import (  # noqa: E402
     LEGACY_AS_SHIPPED_PARAMS,
     OPTIMIZED_POST_TRIM_PARAMS,
     SegmentationParams,
 )
+from naipcrowns.segment import segment_crowns  # noqa: E402
+
 from csdv_core.viz.style import (  # noqa: E402
     ACCENT,
     GRID,
@@ -536,7 +536,7 @@ FIGURES = {
 def main() -> int:
     """Build the requested figures, skipping any whose table is missing."""
     configure_logging()
-    logging.getLogger("csdv_core.segmentation.chm_watershed").setLevel(logging.WARNING)
+    logging.getLogger("naipcrowns.segment").setLevel(logging.WARNING)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--only", nargs="*", default=None, choices=list(FIGURES))
     args = parser.parse_args()

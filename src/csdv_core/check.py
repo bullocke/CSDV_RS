@@ -85,8 +85,12 @@ _REQUIRED_IMPORTS = (
     # engine the pipeline runs to completion and then fails on the write, which
     # is the worst place to find out.
     "pyarrow",
+    # Crown segmentation runs in naipcrowns, a sibling clone installed with
+    # pip --no-deps --no-build-isolation -e ../naip-crowns. Its engine needs numba.
+    "numba",
+    "naipcrowns",
 )
-_OPTIONAL_IMPORTS = ("torch", "ee", "wxee", "rpy2", "deepforest")
+_OPTIONAL_IMPORTS = ("torch", "ee", "wxee")
 
 
 def _check_imports(rows: list[CheckRow]) -> None:

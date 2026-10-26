@@ -35,9 +35,9 @@ from matplotlib.colors import Normalize  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from naipcrowns.chm import smooth_chm  # noqa: E402
 from santaclara_riparian_map import CHM, DEM, OUT_DIR, REPO, read_to_grid  # noqa: E402
 
-from csdv_core.preprocess.chm import smooth_chm  # noqa: E402
 from csdv_core.viz.maps import (  # noqa: E402
     read_band_window,
     read_rgb_window,

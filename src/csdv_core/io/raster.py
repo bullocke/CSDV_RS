@@ -11,15 +11,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import numpy as np
 import rasterio
 from rasterio.mask import mask as rio_mask
 from shapely.geometry import box
-
-if TYPE_CHECKING:
-    from rasterio.io import DatasetReader
 
 logger = logging.getLogger(__name__)
 
@@ -193,14 +190,3 @@ def resolve_scale_factor(scale_factor: float | None, dtype: str) -> float:
     if scale_factor is not None:
         return float(scale_factor)
     return 0.01 if np.issubdtype(np.dtype(dtype), np.integer) else 1.0
-
-
-def read_chm_metres(src: DatasetReader, scale_factor: float) -> np.ndarray:
-    """Read band 1 as float32 metres with nodata as NaN.
-
-    The cast comes before the fill because an integer array cannot hold NaN.
-    """
-    chm = src.read(1, masked=True).astype("float32").filled(np.nan)
-    if scale_factor != 1.0:
-        chm *= np.float32(scale_factor)
-    return chm

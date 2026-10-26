@@ -191,7 +191,7 @@ def _current_crowns_dir(stands: Path) -> Path:
     is plotting. Falls back to the flat directory, which holds the crowns from
     before the 2026 re-tune.
     """
-    from csdv_core.segmentation.params import DEFAULT_PARAMS
+    from naipcrowns.params import DEFAULT_PARAMS
 
     keyed = stands / "crowns" / f"seg-{DEFAULT_PARAMS.key}"
     if keyed.is_dir():

@@ -31,7 +31,6 @@ from csdv_core.zonal.crowns import (
     CrownStats,
     crown_diameter_stats,
     crowns_in_stand,
-    segment_scene_crowns,
 )
 from csdv_core.zonal.deltas import add_change_metrics
 from csdv_core.zonal.mask import StandWindow, read_stand_array, stand_window
@@ -73,7 +72,6 @@ __all__ = [
     "mid_canopy_fraction",
     "read_stand_array",
     "records_to_frame",
-    "segment_scene_crowns",
     "shrub_fraction",
     "small_tree_fraction",
     "stand_edge_density",

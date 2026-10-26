@@ -41,10 +41,9 @@ dependencies:
   # Point cloud / lidar
   - laspy
 
-  # R reference crown engine (csdv_core.segmentation.lidr_bridge runs
-  # segmentation/scripts/crown_segmentation.R through Rscript). Needed on CHPC
-  # for the national crown benchmark, which compares lidR dalponte2016 with
-  # the Python watershed engine.
+  # R and lidR for the lidR reference crown engine (naipcrowns.lidr runs
+  # naipcrowns/data/crown_segmentation.R through Rscript) and the Indiana
+  # tuning study's lidR checks (scripts/segmentation/compare_r.py).
   - r-base
   - r-lidr
   - r-terra
@@ -64,6 +63,13 @@ dependencies:
 
   # Off-screen 3D renders of height surfaces (csdv_core.viz.scene3d)
   - pyvista
+
+  # Tests and formatting, from conda-forge so they run with this env's Python.
+  # scripts/chpc/create_env.sh installs the package with --no-deps, so the
+  # [dev] extra is not used there.
+  - pytest
+  - black
+  - ruff
 
   # NAIP-CHM inference dependencies (smorf-ntsg/naip-chm requirements.txt).
   # PyTorch itself is installed from the CUDA pip wheels by

@@ -61,12 +61,11 @@ from _lib import (  # noqa: E402
     tile_stats,
     write_table,
 )
-
-from csdv_core.segmentation.chm_watershed import segment_crowns  # noqa: E402
-from csdv_core.segmentation.params import (  # noqa: E402
+from naipcrowns.params import (  # noqa: E402
     WINDOW_FUNCTIONS,
     SegmentationParams,
 )
+from naipcrowns.segment import segment_crowns  # noqa: E402
 
 logger = logging.getLogger("stability")
 

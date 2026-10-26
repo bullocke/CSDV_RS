@@ -1,6 +1,6 @@
 # Crown segmentation: what was wrong and how it was re-tuned
 
-> This study ran on the engine as it stood in mid 2026: crowns trimmed to `th_cr` after an unconstrained watershed, and window radii rounded to whole pixels. Both are still available (`bound_mode="post_trim"`, `window_metric="pixel"`), and `OPTIMIZED_POST_TRIM_PARAMS` reproduces the chosen set exactly. The engine now defaults to the flood bound and exact window distances. The [crown segmentation guide](../README.md) describes the current engine, and [Python against lidR](../lidr_comparison.md) compares it with `dalponte2016`.
+> This study ran on the engine as it stood in mid 2026: crowns trimmed to `th_cr` after an unconstrained watershed, and window radii rounded to whole pixels. Both are still available (`bound_mode="post_trim"`, `window_metric="pixel"`), and `OPTIMIZED_POST_TRIM_PARAMS` reproduces the chosen set exactly. The engine now defaults to the flood bound and exact window distances. The engine now lives in the naip-crowns repository: its [crown segmentation guide](https://github.com/bullocke/naip-crowns/blob/main/docs/guide/segmentation.md) describes the current engine, and [Python against lidR](https://github.com/bullocke/naip-crowns/blob/main/docs/studies/lidr_comparison.md) compares it with `dalponte2016`.
 
 ## Summary and decision
 
@@ -263,7 +263,7 @@ One practical note for anyone matching the two. lidR's `max_cr` is documented as
 
 Versions: R 4.5.3, lidR 4.3.0, terra 1.9.11, sf 1.1.0. None of these are declared in `environment.yml`, so the comparison is reproducible on this machine and should be treated as a one-off elsewhere.
 
-This comparison is superseded by [Python against lidR](../lidr_comparison.md). Two findings there revise it. Most of the 8 percent excess of tree tops came from rounding the window radius to whole pixels, which the engine no longer does, and lidR's `C_dalponte2016` applies `max_cr` as a square half-width, `|dx| < max_cr`, which explains the radius-like behaviour noted above.
+This comparison is superseded by [Python against lidR](https://github.com/bullocke/naip-crowns/blob/main/docs/studies/lidr_comparison.md) in the naip-crowns repository. Two findings there revise it. Most of the 8 percent excess of tree tops came from rounding the window radius to whole pixels, which the engine no longer does, and lidR's `C_dalponte2016` applies `max_cr` as a square half-width, `|dx| < max_cr`, which explains the radius-like behaviour noted above.
 
 ## What is now stale
 

@@ -123,7 +123,7 @@ def main() -> int:
     """Screen the grid, then run the survivors on the tuning tiles."""
     configure_logging()
     # The engine logs one line per call, and the sweep makes thousands.
-    logging.getLogger("csdv_core.segmentation.chm_watershed").setLevel(logging.WARNING)
+    logging.getLogger("naipcrowns.segment").setLevel(logging.WARNING)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--split", default="tune", help="tune, holdout, or a site")
     parser.add_argument(

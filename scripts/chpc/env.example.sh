@@ -14,6 +14,10 @@ export CSDV_REPO
 # and copy outputs back here. Do not point this at /scratch (it is purged).
 export CSDV_STORE=/uufs/chpc.utah.edu/common/home/<group>/data/CSDV
 
+# Clone of https://github.com/bullocke/naip-crowns (crown segmentation), read by
+# scripts/chpc/create_env.sh.
+export NAIPCROWNS_DIR="$CSDV_REPO/../naip-crowns"
+
 # EDIT: clone of https://github.com/smorf-ntsg/naip-chm (code and weights).
 export NAIPCHM_REPO_DIR="$CSDV_REPO/../naip-chm"
 

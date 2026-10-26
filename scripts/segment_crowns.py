@@ -1,11 +1,12 @@
 """Thin batch runner for ``csdv segment-crowns``.
 
-Mirrors the click command in :mod:`csdv_core.segmentation.cli`.
+Runs :func:`naipcrowns.cli.segment`, the command CSDV attaches as
+``csdv segment-crowns``.
 """
 
 from __future__ import annotations
 
-from csdv_core.segmentation.cli import cli
+from naipcrowns.cli import segment
 
 if __name__ == "__main__":
-    cli()
+    segment()

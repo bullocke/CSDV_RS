@@ -1,1 +1,4 @@
-"""csdv_core.preprocess — NAIP and CHM preprocessing and analysis-window tiling."""
+"""csdv_core.preprocess — NAIP preprocessing and analysis-window tiling.
+
+CHM smoothing and masking moved to ``naipcrowns.chm``.
+"""

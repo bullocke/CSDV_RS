@@ -13,6 +13,7 @@ Login node, about 20 minutes:
 ```bash
 cd /uufs/chpc.utah.edu/common/home/dycelab/users/<you>/code
 git clone <repo-url> CSDV/CSDV_RS
+git clone https://github.com/bullocke/naip-crowns.git CSDV/naip-crowns   # crown segmentation (private: needs GitHub access)
 git clone https://github.com/smorf-ntsg/naip-chm CSDV/naip-chm   # code and model weights
 cd CSDV/CSDV_RS
 
@@ -23,7 +24,7 @@ cp scripts/chpc/env.example.sh scripts/chpc/env.sh
 scripts/chpc/create_env.sh
 ```
 
-`create_env.sh` builds the conda environment from `environment.yml`, installs `torch==2.8.0` and `torchvision==0.23.0` from the official CUDA 12.6 wheels, and installs this package in editable mode. Do not install PyTorch from conda or add `cpuonly`. The cu126 wheels bundle the CUDA runtime and run on every GPU in the general and freecycle partitions (titanx through h100). They do not support the Blackwell cards on `granite-gpu-guest`. The script prints the torch version and refuses a CPU-only build.
+`create_env.sh` builds the conda environment from `environment.yml`, installs `torch==2.8.0` and `torchvision==0.23.0` from the official CUDA 12.6 wheels, and installs naipcrowns (from `../naip-crowns`, or `NAIPCROWNS_DIR`) and this package in editable mode with `--no-deps --no-build-isolation`. Do not install PyTorch from conda or add `cpuonly`. The cu126 wheels bundle the CUDA runtime and run on every GPU in the general and freecycle partitions (titanx through h100). They do not support the Blackwell cards on `granite-gpu-guest`. The script prints the torch version and refuses a CPU-only build.
 
 Start every login session with:
 
@@ -231,6 +232,6 @@ os.environ["CSDV_RESULTS_ROOT"] = "/content/drive/MyDrive/csdv/results"
 !bash scripts/run_site_e2e.sh SCBI 2018 50
 ```
 
-Colab cannot run `lidR`-based crown segmentation. The watershed fallback in `csdv_core.segmentation` is selected automatically when `rpy2` is unavailable. Phase-4 stage classification still produces useful outputs from the Python crown set.
+Crown segmentation on Colab needs the naip-crowns repository cloned and installed next to CSDV. Its Python engine needs no R, so `csdv segment-crowns` runs there without lidR.
 
 Colab is not appropriate for long batch runs because of session lifetime limits. For anything beyond one (site, year, 50 m window) iteration, move back to CHPC.

@@ -54,15 +54,14 @@ from _lib import (  # noqa: E402
     transfer_sites,
     write_table,
 )
-
-from csdv_core.preprocess.chm import mask_below, smooth_chm  # noqa: E402
-from csdv_core.segmentation.chm_watershed import (  # noqa: E402
-    locate_seeds,
-    smooth_kernel_px,
-)
-from csdv_core.segmentation.params import (  # noqa: E402
+from naipcrowns.chm import mask_below, smooth_chm  # noqa: E402
+from naipcrowns.params import (  # noqa: E402
     WINDOW_FUNCTIONS,
     SegmentationParams,
+)
+from naipcrowns.segment import (  # noqa: E402
+    locate_seeds,
+    smooth_kernel_px,
 )
 
 logger = logging.getLogger("nulls")

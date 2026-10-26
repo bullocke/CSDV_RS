@@ -40,18 +40,15 @@ from _lib import (  # noqa: E402
     read_table,
     stands,
 )
-
-from csdv_core.io.paths import project_paths  # noqa: E402
-from csdv_core.segmentation.params import (  # noqa: E402
+from naipcrowns.params import (  # noqa: E402
     DEFAULT_PARAMS,
     WINDOW_FUNCTIONS,
     SegmentationParams,
 )
-from csdv_core.zonal.crowns import (  # noqa: E402
-    crown_diameter_stats,
-    crowns_in_stand,
-    segment_scene_crowns,
-)
+from naipcrowns.tiles import segment_raster  # noqa: E402
+
+from csdv_core.io.paths import project_paths  # noqa: E402
+from csdv_core.zonal.crowns import crown_diameter_stats, crowns_in_stand  # noqa: E402
 
 logger = logging.getLogger("apply")
 
@@ -97,7 +94,7 @@ def segment_year(year: int, params: SegmentationParams, *, force: bool = False) 
             arr[arr == src.nodata] = np.nan
         arr[arr < -100] = np.nan
         transform, crs = src.transform, src.crs
-    crowns = segment_scene_crowns(arr, transform, crs, block_px=2048, params=params)
+    crowns = segment_raster(arr, transform, crs, block_px=2048, params=params)
     crowns.to_file(out, driver="GPKG")
     sidecar.write_text(
         json.dumps(

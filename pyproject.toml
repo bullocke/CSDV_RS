@@ -26,9 +26,13 @@ dependencies = [
     "pydantic>=2",
 ]
 
+# Crown segmentation comes from naipcrowns (github.com/bullocke/naip-crowns).
+# It is not listed here, because pip would look for it on PyPI. Clone it next
+# to this repository and install it first with
+#   <env>/bin/python -m pip install --no-deps --no-build-isolation -e ../naip-crowns
+# `csdv check` reports when it is missing.
+
 [project.optional-dependencies]
-lidr = ["rpy2"]          # crown segmentation via R lidR; not available on Colab
-deepforest = ["deepforest"]
 # NAIP-CHM inference shells out to the upstream repo (no stable Python API yet),
 # so we only need torch here. Set NAIPCHM_REPO_DIR to a clone of
 # https://github.com/smorf-ntsg/naip-chm to enable the subprocess path.
@@ -66,9 +70,6 @@ where = ["src"]
 csdv_core = [
     "config/*.yaml",
     "examples/vocab/*.yaml",
-    "segmentation/scripts/*.R",
-    "segmentation/coefs/*.csv",
-    "biomass/coefs/*.csv",
 ]
 
 [tool.black]

@@ -209,7 +209,7 @@ Coefficient of variation of canopy height, a measure of vertical roughness.
 
 Source module: `zonal/crowns.py`. This is the only category whose input is a vector layer.
 
-Crowns come from a segmentation run over the whole scene, not per stand. `segment_scene_crowns` tiles the CHM in blocks with overlap so a crown near a block edge is not cut in two, and it drops anything below 2 m. Each crown carries a measured diameter in the `crown_diam_m` column.
+Crowns come from a segmentation run over the whole scene, not per stand. `naipcrowns.tiles.segment_raster` (from the naip-crowns repository, run as `csdv segment-crowns`) tiles the CHM in blocks with overlap so a crown near a block edge is not cut in two, and it drops anything below 2 m. Each crown carries a measured diameter in the `crown_diam_m` column.
 
 `crowns_in_stand` assigns a crown to a stand when the crown centroid falls inside the polygon. A crown therefore counts exactly once, and a crown overhanging the stand boundary belongs to whichever stand holds its centre.
 

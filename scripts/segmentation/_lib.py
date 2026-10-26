@@ -20,15 +20,15 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import rasterio
-from rasterio.windows import from_bounds
-
-from csdv_core.io.paths import project_paths
-from csdv_core.segmentation.chm_watershed import segment_crowns
-from csdv_core.segmentation.params import (
+from naipcrowns.params import (
     WINDOW_FUNCTIONS,
     SegmentationParams,
     WindowFunction,
 )
+from naipcrowns.segment import segment_crowns
+from rasterio.windows import from_bounds
+
+from csdv_core.io.paths import project_paths
 
 logger = logging.getLogger(__name__)
 

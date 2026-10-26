@@ -48,8 +48,7 @@ from _lib import (  # noqa: E402
     stands,
     write_table,
 )
-
-from csdv_core.segmentation.params import (  # noqa: E402
+from naipcrowns.params import (  # noqa: E402
     WINDOW_FUNCTIONS,
     SegmentationParams,
 )

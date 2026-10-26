@@ -25,6 +25,12 @@ def info() -> None:
 
     p = project_paths()
     click.echo(f"csdv_core {__version__}")
+    try:
+        import naipcrowns
+
+        click.echo(f"naipcrowns {naipcrowns.__version__} ({naipcrowns.__file__})")
+    except ImportError:
+        click.echo("naipcrowns not installed (csdv segment-crowns needs it)")
     click.echo(f"  data_root:    {p.data_root}")
     click.echo(f"  results_root: {p.results_root}")
     click.echo(f"  cache_root:   {p.cache_root}")
@@ -39,7 +45,6 @@ def _attach_download_subcommands() -> None:
     """Lazy-attach download subcommands so ``ee`` is only imported when used."""
     from csdv_core.download.chm_model import cli as _chm_cli
     from csdv_core.download.chm_model import conditioning_cli as _cond_cli
-    from csdv_core.download.naip_chm_http import cli as _chm_http_cli
     from csdv_core.download.naip_gee import cli as _naip_cli
     from csdv_core.download.naip_pc import cli as _naip_pc_cli
     from csdv_core.download.naip_rest import cli as _naip_rest_cli
@@ -49,11 +54,32 @@ def _attach_download_subcommands() -> None:
     download.add_command(_naip_rest_cli, name="naip-rest")
     download.add_command(_chm_cli, name="chm")
     download.add_command(_cond_cli, name="conditioning")
-    download.add_command(_chm_http_cli, name="naip-chm-http")
+
+
+_NAIPCROWNS_MISSING = (
+    "csdv segment-crowns runs naipcrowns, which is not installed. Clone "
+    "https://github.com/bullocke/naip-crowns next to this repository and run "
+    "<env>/bin/python -m pip install --no-deps --no-build-isolation -e ../naip-crowns"
+)
 
 
 def _attach_segmentation() -> None:
-    from csdv_core.segmentation.cli import cli as _seg_cli
+    """Attach ``naipcrowns segment`` under its CSDV name, ``segment-crowns``.
+
+    Crown segmentation moved to the naipcrowns package (a sibling clone). When
+    it is missing, the command still appears and says how to install it, so
+    ``csdv --help`` and ``csdv check`` keep working.
+    """
+    try:
+        from naipcrowns.cli import segment as _seg_cli
+    except ImportError:
+
+        @click.command(
+            context_settings={"ignore_unknown_options": True, "allow_extra_args": True}
+        )
+        def _seg_cli() -> None:
+            """Segment tree crowns (needs the naipcrowns package)."""
+            raise click.ClickException(_NAIPCROWNS_MISSING)
 
     main.add_command(_seg_cli, name="segment-crowns")
 
@@ -118,12 +144,6 @@ def _attach_disturbance() -> None:
     main.add_command(disturbance_chips, name="disturbance-chips")
 
 
-def _attach_national() -> None:
-    from csdv_core.national.cli import cli as _bench_cli
-
-    main.add_command(_bench_cli, name="benchmark-crowns")
-
-
 # Attach now: imports are cheap (click + module-level imports only); heavy
 # imports (ee, torch, rasterio in segmentation) happen inside the command
 # bodies, not at import time.
@@ -137,7 +157,6 @@ _attach_trajectories()
 _attach_satellite()
 _attach_check()
 _attach_disturbance()
-_attach_national()
 
 
 if __name__ == "__main__":

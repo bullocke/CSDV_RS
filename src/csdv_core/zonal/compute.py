@@ -261,7 +261,7 @@ def compute_module_metrics(
         dates: Imagery dates in any order; they are sorted by year, and gap
             persistence at each date compares it with the one before.
         crowns_by_year: Scene crowns per year, from
-            :func:`csdv_core.zonal.crowns.segment_scene_crowns`.
+            :func:`naipcrowns.tiles.segment_raster`.
         check_grid: Verify that every canopy height model shares one grid
             before computing anything.
         with_change_metrics: Append consecutive-date differences.

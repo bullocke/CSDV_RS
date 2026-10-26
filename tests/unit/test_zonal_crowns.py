@@ -1,18 +1,16 @@
-"""Tests for crown assignment and diameter statistics inside a stand."""
+"""Tests for crown assignment and diameter statistics inside a stand.
+
+The block-wise segmentation tests moved to naipcrowns (tests/test_tiles.py).
+"""
 
 from __future__ import annotations
 
 import geopandas as gpd
 import numpy as np
 import pytest
-from rasterio.transform import from_origin
 from shapely.geometry import Point, box
 
-from csdv_core.zonal.crowns import (
-    crown_diameter_stats,
-    crowns_in_stand,
-    segment_scene_crowns,
-)
+from csdv_core.zonal.crowns import crown_diameter_stats, crowns_in_stand
 
 
 def _crowns(centres_and_diams: list[tuple[float, float, float]]) -> gpd.GeoDataFrame:
@@ -98,68 +96,3 @@ def test_missing_diameter_column_raises():
     crowns = _crowns([(0.0, 0.0, 4.0)] * 4).drop(columns=["crown_diam_m"])
     with pytest.raises(KeyError, match="crown_diam_m"):
         crown_diameter_stats(crowns)
-
-
-@pytest.fixture()
-def cone_scene() -> tuple[np.ndarray, object]:
-    """A 240 x 240 px CHM at 0.5 m with cone-shaped trees on a regular lattice."""
-    size = 240
-    chm = np.zeros((size, size), dtype=np.float32)
-    yy, xx = np.indices((size, size))
-    for r in range(20, size, 40):
-        for c in range(20, size, 40):
-            dist = np.hypot(yy - r, xx - c)
-            chm = np.maximum(chm, np.clip(18.0 - dist * 1.2, 0.0, None))
-    return chm, from_origin(0.0, 120.0, 0.5, 0.5)
-
-
-def test_scene_segmentation_finds_the_planted_lattice(cone_scene):
-    """Every planted cone is found exactly once.
-
-    The six by six lattice holds 36 trees. This used to be asserted as a range
-    of 30 to 42, because the engine read the search window as a peak separation
-    and spread tree tops twice as far apart as intended, so the count drifted.
-    With the window read as a diameter the count is exact.
-    """
-    chm, transform = cone_scene
-    crowns = segment_scene_crowns(chm, transform, "EPSG:26916", block_px=240)
-    assert len(crowns) == 36
-    assert crowns["crown_diam_m"].min() > 0.0
-
-
-@pytest.mark.parametrize("block_px", [60, 80, 120])
-def test_block_splitting_does_not_duplicate_or_lose_crowns(cone_scene, block_px):
-    """Blocking must give the same crowns as one pass, at any block size.
-
-    Blocks used to need a scene-wide mean height threaded through them, because
-    the search window was derived from whatever array a block happened to hold.
-    The window is now evaluated per pixel, so blocks are independent and the
-    only thing the halo has to cover is competition between neighbours.
-    """
-    chm, transform = cone_scene
-    one_pass = segment_scene_crowns(chm, transform, "EPSG:26916", block_px=240)
-    blocked = segment_scene_crowns(chm, transform, "EPSG:26916", block_px=block_px)
-    assert len(blocked) == len(one_pass)
-
-
-def test_default_halo_covers_a_full_crown_diameter():
-    """The derived halo is two crown radii plus the smoothing kernel.
-
-    One radius is not enough. A crown's boundary is set by competition with its
-    neighbours, so those neighbours have to be complete too.
-    """
-    from csdv_core.segmentation.params import SegmentationParams
-    from csdv_core.zonal.crowns import default_overlap_px
-
-    params = SegmentationParams(max_crown_radius_m=8.0, smooth_radius_m=0.6)
-    halo_px = default_overlap_px(params, 0.6)
-    assert halo_px * 0.6 >= 2 * 8.0
-    # With no ceiling there is no crown size to derive from, so it falls back.
-    assert default_overlap_px(params.replace(max_crown_radius_m=None), 0.6) >= 128
-
-
-def test_scene_segmentation_returns_empty_below_the_height_threshold():
-    chm = np.full((60, 60), 0.5, dtype=np.float32)
-    crowns = segment_scene_crowns(chm, from_origin(0.0, 30.0, 0.5, 0.5), "EPSG:26916")
-    assert crowns.empty
-    assert "crown_diam_m" in crowns.columns

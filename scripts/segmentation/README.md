@@ -91,7 +91,7 @@ R is the reference implementation, not the production path. Production segmentat
 
 ## Parameters
 
-Every segmentation parameter is a field on `csdv_core.segmentation.params.SegmentationParams`, and every length is in metres. That is what lets one parameter set transfer between the 0.6 m NAIP-CHM and the 1 m lidar CHMs unchanged. A pixel-valued parameter changes physical meaning with resolution, which is the failure this design exists to prevent. lidR's own `max_cr` default is the cautionary example: 10 pixels is a 10 m crown radius on a 1 m CHM and 6 m on a 0.6 m one.
+Every segmentation parameter is a field on `naipcrowns.params.SegmentationParams`, and every length is in metres. That is what lets one parameter set transfer between the 0.6 m NAIP-CHM and the 1 m lidar CHMs unchanged. A pixel-valued parameter changes physical meaning with resolution, which is the failure this design exists to prevent. lidR's own `max_cr` default is the cautionary example: 10 pixels is a 10 m crown radius on a 1 m CHM and 6 m on a 0.6 m one.
 
 `SegmentationParams.key` is a short stable hash of the whole set. Crown artefacts are written under that key with a sidecar JSON, so a re-run after a parameter change cannot silently reuse the previous run's crowns. The previous cache keyed on filename alone and had exactly that failure mode.
 

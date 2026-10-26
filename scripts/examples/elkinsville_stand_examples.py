@@ -35,6 +35,7 @@ import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from naipcrowns.tiles import segment_raster
 
 from csdv_core.config import load_stages, load_trajectories
 from csdv_core.examples.screen import ScreenCriteria, screen_stands
@@ -48,7 +49,6 @@ from csdv_core.zonal.compute import (
     assert_common_grid,
     compute_module_metrics,
 )
-from csdv_core.zonal.crowns import segment_scene_crowns
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 setup_style()
@@ -70,7 +70,7 @@ METRICS_PARQUET = RESULTS / "stand_metrics.parquet"
 # Crowns live under a hash of the segmentation parameters, so this script
 # cannot pick up crowns produced by a different parameter set. The flat
 # `crowns/` directory holds the pre-2026 segmentation and is left alone.
-from csdv_core.segmentation.params import DEFAULT_PARAMS  # noqa: E402
+from naipcrowns.params import DEFAULT_PARAMS  # noqa: E402
 
 CROWNS_DIR = RESULTS / "crowns" / f"seg-{DEFAULT_PARAMS.key}"
 CROWNS_DIR.mkdir(parents=True, exist_ok=True)
@@ -200,7 +200,7 @@ for date in dates:
     with rasterio.open(date.chm_path) as src:
         chm = src.read(1, masked=True).filled(np.nan).astype("float32")
         transform, crs = src.transform, src.crs
-    found = segment_scene_crowns(chm, transform, crs, block_px=2048)
+    found = segment_raster(chm, transform, crs, block_px=2048)
     found.to_file(cached, driver="GPKG")
     crowns_by_year[date.year] = found
     print(

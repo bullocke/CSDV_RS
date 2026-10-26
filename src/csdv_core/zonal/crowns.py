@@ -1,7 +1,9 @@
 """csdv_core.zonal.crowns — crown statistics for one stand.
 
 Crowns are segmented over the whole scene, not stand by stand, so that a tree
-near a boundary is delineated against its real neighbours. Each crown is then
+near a boundary is delineated against its real neighbours. Segmentation runs in
+the naipcrowns package (:func:`naipcrowns.tiles.segment_raster`, or
+``csdv segment-crowns``). This module only reads the crowns it writes. Each crown is then
 assigned to the stand containing its centroid, which counts every crown exactly
 once even where crowns straddle a boundary.
 
@@ -13,8 +15,6 @@ The count and the reason travel with the result rather than leaving a blank.
 from __future__ import annotations
 
 import logging
-import math
-from collections.abc import Iterable
 from dataclasses import dataclass
 
 import geopandas as gpd
@@ -47,11 +47,8 @@ __all__ = [
     "DIAMETER_COLUMN",
     "MIN_CROWNS",
     "CrownStats",
-    "clip_to_cell",
     "crown_diameter_stats",
     "crowns_in_stand",
-    "default_overlap_px",
-    "segment_scene_crowns",
 ]
 
 
@@ -168,191 +165,3 @@ def crown_diameter_stats(
         std=std,
         min_crowns=min_crowns,
     )
-
-
-def clip_to_cell(
-    crowns: gpd.GeoDataFrame,
-    bounds: tuple[float, float, float, float],
-    *,
-    bounds_crs: str = "EPSG:4269",
-) -> gpd.GeoDataFrame:
-    """Keep the crowns whose tree top falls inside a tile's nominal cell.
-
-    Adjacent NAIP-CHM tiles overlap by a few hundred metres, so a crown near a
-    tile edge is segmented twice, once from each tile. Assigning it by tree top
-    to the one nominal quarter-quad cell that holds it keeps it exactly once.
-    The cell is half-open (west and south edges in, east and north edges out),
-    so a tree top on a shared edge belongs to one cell, never to both and never
-    to neither.
-
-    The tree top is used rather than the polygon centroid because it always
-    lies inside its own crown and is the position the height was read at.
-
-    Args:
-        crowns: Crown frame with ``seed_x`` and ``seed_y`` in ``crowns.crs``.
-        bounds: ``(west, south, east, north)`` of the cell in ``bounds_crs``.
-        bounds_crs: CRS of ``bounds``. NAIP quarter quads are cut on NAD83.
-
-    Returns:
-        The rows of ``crowns`` inside the cell.
-    """
-    if crowns.empty:
-        return crowns
-    from pyproj import Transformer
-
-    to_cell = Transformer.from_crs(crowns.crs, bounds_crs, always_xy=True)
-    lon, lat = to_cell.transform(
-        crowns["seed_x"].to_numpy(dtype="float64"),
-        crowns["seed_y"].to_numpy(dtype="float64"),
-    )
-    west, south, east, north = bounds
-    inside = (lon >= west) & (lon < east) & (lat >= south) & (lat < north)
-    return crowns.loc[inside]
-
-
-def default_overlap_px(params: object, pixel_size_m: float) -> int:
-    """Block halo wide enough that seam crowns match interior crowns.
-
-    A halo of one crown radius is not enough. A crown's boundary is set by
-    competition with its neighbours, so those neighbours must be complete too,
-    which takes a full crown diameter. Add the smoothing kernel on top, because
-    the mean filter reflects at a block edge and manufactures tree tops there.
-
-    Falls back to a generous fixed halo when the parameters carry no radius
-    ceiling, since an unbounded watershed gives no crown size to derive from.
-    """
-    from csdv_core.segmentation.chm_watershed import smooth_kernel_px
-
-    smooth_px = smooth_kernel_px(getattr(params, "smooth_radius_m", 0.0), pixel_size_m)
-    max_radius_m = getattr(params, "max_crown_radius_m", None)
-    if max_radius_m is None:
-        return 128 + smooth_px
-    return int(math.ceil(2.0 * float(max_radius_m) / float(pixel_size_m))) + smooth_px
-
-
-def segment_scene_crowns(
-    chm: np.ndarray,
-    transform: object,
-    crs: object,
-    *,
-    block_px: int = 2048,
-    overlap_px: int | None = None,
-    params: object | None = None,
-) -> gpd.GeoDataFrame:
-    """Segment crowns over a whole scene in overlapping blocks.
-
-    A module-sized canopy height model is too large to watershed in one pass.
-    Splitting it used to change the answer, because the search window was
-    derived from the mean height of whatever array was passed in, so the scene
-    mean had to be threaded through every block. The window is now evaluated
-    per pixel from that pixel's own height, so blocks are independent and no
-    shared scene statistic is needed.
-
-    Blocks overlap so a crown spanning a seam is segmented whole in at least
-    one block. Crowns whose centroid falls in another block's interior are
-    dropped, which keeps each crown exactly once.
-
-    Args:
-        chm: 2-D canopy height array in metres, NaN for nodata.
-        transform: Affine transform of ``chm``.
-        crs: Output CRS.
-        block_px: Interior block side length in pixels.
-        overlap_px: Halo added on every side. Derived from the crown radius
-            ceiling when omitted, which is the only value that is safe.
-        params: :class:`~csdv_core.segmentation.params.SegmentationParams`.
-
-    Returns:
-        A GeoDataFrame of crowns carrying the full crown schema.
-    """
-    import rasterio
-    from rasterio.windows import Window
-
-    from csdv_core.segmentation.chm_watershed import CROWN_COLUMNS, segment_crowns
-    from csdv_core.segmentation.params import DEFAULT_PARAMS
-
-    if params is None:
-        params = DEFAULT_PARAMS
-    pixel_size_m = float(abs(transform.a))  # type: ignore[attr-defined]
-    if overlap_px is None:
-        overlap_px = default_overlap_px(params, pixel_size_m)
-
-    arr = np.asarray(chm, dtype=np.float32)
-    min_height_m = float(getattr(params, "min_height_m", 2.0))
-    if not np.any(np.isfinite(arr) & (arr >= min_height_m)):
-        logger.warning(
-            "segment_scene_crowns: no canopy pixels above %.1f m", min_height_m
-        )
-        return gpd.GeoDataFrame({c: [] for c in CROWN_COLUMNS}, geometry=[], crs=crs)
-    rows, cols = arr.shape
-    parts: list[gpd.GeoDataFrame] = []
-    next_id = 0
-
-    for r0 in range(0, rows, block_px):
-        for c0 in range(0, cols, block_px):
-            r1 = min(rows, r0 + block_px)
-            c1 = min(cols, c0 + block_px)
-            er0, ec0 = max(0, r0 - overlap_px), max(0, c0 - overlap_px)
-            er1, ec1 = min(rows, r1 + overlap_px), min(cols, c1 + overlap_px)
-            block = arr[er0:er1, ec0:ec1]
-            if not np.isfinite(block).any():
-                continue
-            block_transform = rasterio.windows.transform(
-                Window(col_off=ec0, row_off=er0, width=ec1 - ec0, height=er1 - er0),
-                transform,
-            )
-            found = segment_crowns(block, block_transform, crs, params=params)
-            if found.empty:
-                continue
-            # Keep only crowns centred in this block's interior, so the overlap
-            # supplies context without duplicating crowns.
-            interior = rasterio.windows.bounds(
-                Window(col_off=c0, row_off=r0, width=c1 - c0, height=r1 - r0),
-                transform,
-            )
-            centroids = found.geometry.centroid
-            keep = (
-                (centroids.x >= interior[0])
-                & (centroids.x < interior[2])
-                & (centroids.y >= interior[1])
-                & (centroids.y < interior[3])
-            )
-            found = found.loc[keep].copy()
-            if found.empty:
-                continue
-            found["segment_id"] = np.arange(next_id, next_id + len(found))
-            next_id += len(found)
-            # Distance from the nearest seam, so a later QA pass can check that
-            # seam crowns look like interior crowns. A step at the seam means
-            # the halo is too narrow.
-            found["seam_dist_m"] = _seam_distance_m(found, interior)
-            parts.append(found)
-
-    if not parts:
-        return gpd.GeoDataFrame({c: [] for c in CROWN_COLUMNS}, geometry=[], crs=crs)
-    out = gpd.GeoDataFrame(_concat(parts), crs=crs).reset_index(drop=True)
-    logger.info(
-        "segment_scene_crowns: %d crowns over %d x %d px, %d px halo",
-        len(out),
-        rows,
-        cols,
-        overlap_px,
-    )
-    return out
-
-
-def _seam_distance_m(
-    crowns: gpd.GeoDataFrame, interior: tuple[float, float, float, float]
-) -> np.ndarray:
-    """Distance from each crown centroid to the nearest block seam."""
-    cx = crowns.geometry.centroid.x.to_numpy()
-    cy = crowns.geometry.centroid.y.to_numpy()
-    return np.minimum(
-        np.minimum(cx - interior[0], interior[2] - cx),
-        np.minimum(cy - interior[1], interior[3] - cy),
-    )
-
-
-def _concat(frames: Iterable[gpd.GeoDataFrame]) -> gpd.GeoDataFrame:
-    import pandas as pd
-
-    return pd.concat(list(frames), ignore_index=True)
