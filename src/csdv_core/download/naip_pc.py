@@ -43,7 +43,9 @@ __all__ = [
     "NAIP_BANDS",
     "SNAP_M",
     "aoi_bbox_from_center",
+    "available_years",
     "download_naip_year",
+    "footprint_coverage",
     "naip_output_path",
     "resolution_tag",
     "NAIP_COLLECTION",
@@ -177,6 +179,54 @@ def search_naip_items(
         sorted(r for r in resolutions if r is not None),
     )
     return items
+
+
+def footprint_coverage(
+    bbox_4326: tuple[float, float, float, float], footprints: Sequence[Any]
+) -> float:
+    """Fraction of ``bbox_4326`` covered by the union of ``footprints``.
+
+    Areas are taken in degrees, which is close enough for a box a few
+    kilometres across.
+    """
+    from shapely.geometry import box
+    from shapely.ops import unary_union
+
+    aoi = box(*bbox_4326)
+    if not footprints or aoi.area == 0:
+        return 0.0
+    covered = unary_union(list(footprints)).intersection(aoi)
+    return float(covered.area / aoi.area)
+
+
+def available_years(
+    bbox_4326: tuple[float, float, float, float],
+    *,
+    catalog: Any | None = None,
+) -> dict[int, float]:
+    """Planetary Computer NAIP years over ``bbox_4326`` and the share they cover.
+
+    One search without a date filter lists every quad that touches the box.
+    Quads that only touch an edge add nothing to the coverage, so a year whose
+    quads fall outside the box reports a share near zero.
+
+    Returns:
+        ``{year: covered fraction of the box}``, sorted by year.
+    """
+    import pystac_client
+    from shapely.geometry import shape
+
+    if catalog is None:
+        catalog = pystac_client.Client.open(PC_STAC_URL)
+    search = catalog.search(collections=[NAIP_COLLECTION], bbox=list(bbox_4326))
+    by_year: dict[int, list[Any]] = {}
+    for item in search.items():
+        year = item.properties.get("naip:year") or item.datetime.year
+        by_year.setdefault(int(year), []).append(shape(item.geometry))
+    return {
+        year: footprint_coverage(bbox_4326, geoms)
+        for year, geoms in sorted(by_year.items())
+    }
 
 
 def naip_mosaic(

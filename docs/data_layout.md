@@ -68,6 +68,21 @@ results/disturbance/<site_code>/
 
 The rasters are on the run's cell grid (19.2 m by default), and band descriptions hold the year. [disturbance_api.md](disturbance_api.md) specifies every file, and `--from-run` reloads `layers/` and `z/` to repeat the decision with other settings, copying them into the new run folder.
 
+## Grid runs
+
+`csdv grid` (see [guides/grid_processing.md](guides/grid_processing.md)) uses a unit ID (`q4407159` for a 7.5 minute quad cell, `p_<label>` for a box around a point) as the site name, so its inputs follow the layout above (`naip/<unit>/`, `naip_chm/<unit>/`) and its runs go to `results/disturbance/<unit>/<run_tag>/`. Its records and exports live in two more folders, `$CSDV_GRID_DIR` and `$CSDV_EXPORT_DIR` (default `results/grid` and `results/exports`, on CHPC `$CSDV_STORE/grid` and `$CSDV_STORE/exports`):
+
+```
+grid/
+├── units/<unit>/unit.json           # Box, label, notes, planned NAIP years with source and coverage
+├── submissions.csv                  # Ledger: one row per submission, with job IDs and options
+└── status.csv                       # Last `csdv grid status` table
+exports/                             # Small files for download (scripts/chpc/pull_exports.sh)
+├── status.csv
+├── runs/<run_tag>/<unit>/           # 8-bit onset and probability COGs, vectors, report, figures, chips
+└── quicklooks/<unit>/               # 3 m CHM (uint8) and NAIP RGB (JPEG) COGs, one per year
+```
+
 ## Viewer cache
 
 The interactive viewer writes Cloud Optimized GeoTIFFs to `<CSDV_CACHE_ROOT>/viewer/<site>/` (default `<repo>/.cache/viewer/<site>/`, gitignored): `naip/` and `chm/` hold the 0.6 m images with overviews (about 4 GB for six dates), `di/<grain>/` the DI onset, outcome, probability, agreement and forest layers, and `step1/` the step 1 cell changes and rule flags. Every file can be deleted and is rebuilt from the analysis outputs when next needed.

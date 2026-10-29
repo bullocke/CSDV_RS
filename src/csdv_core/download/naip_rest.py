@@ -35,6 +35,7 @@ from csdv_core.download.naip_pc import (
     _dominant,
     _resolve_aoi,
     _resolve_years,
+    footprint_coverage,
     grid_from_bounds,
     median_date_tag,
     naip_output_path,
@@ -60,6 +61,7 @@ __all__ = [
     "NAD83_UTM_EPSG_BASE",
     "NAIP_REST_URL",
     "QuadName",
+    "available_years",
     "download_naip_rest_year",
     "export_naip_to_grid",
     "find_quads",
@@ -135,6 +137,50 @@ def find_quads(
     response = requests.get(f"{NAIP_REST_URL}/query", params=params, timeout=120)
     response.raise_for_status()
     return [feature["attributes"] for feature in response.json().get("features", [])]
+
+
+def available_years(bbox_4326: tuple[float, float, float, float]) -> dict[int, float]:
+    """Years the service holds over ``bbox_4326`` and the share of the box covered.
+
+    The service keeps only the newest collection for each area, so this is
+    usually one year. Catalogue rows that are not quarter quads (overviews,
+    which carry no year) are ignored.
+
+    Returns:
+        ``{year: covered fraction of the box}``, sorted by year.
+    """
+    import requests
+    from shapely.geometry import Polygon
+
+    params = {
+        "where": "1=1",
+        "geometry": ",".join(f"{v:.6f}" for v in bbox_4326),
+        "geometryType": "esriGeometryEnvelope",
+        "inSR": "4326",
+        "spatialRel": "esriSpatialRelIntersects",
+        "outFields": "Name,year_ts",
+        "returnGeometry": "true",
+        "outSR": "4326",
+        "f": "json",
+    }
+    response = requests.get(f"{NAIP_REST_URL}/query", params=params, timeout=120)
+    response.raise_for_status()
+    payload = response.json()
+    if payload.get("exceededTransferLimit"):
+        logger.warning("USDA catalogue query was truncated; coverage may be low")
+    by_year: dict[int, list[Any]] = {}
+    for feature in payload.get("features", []):
+        attrs = feature["attributes"]
+        if attrs.get("year_ts") is None or not _QUAD_NAME_RE.match(attrs["Name"]):
+            continue
+        rings = feature.get("geometry", {}).get("rings") or []
+        if rings:
+            footprint = Polygon(rings[0], rings[1:])
+            by_year.setdefault(int(attrs["year_ts"]), []).append(footprint)
+    return {
+        year: footprint_coverage(bbox_4326, geoms)
+        for year, geoms in sorted(by_year.items())
+    }
 
 
 def _export_tile(params: dict[str, str], attempts: int, label: str) -> Any:

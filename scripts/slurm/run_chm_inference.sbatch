@@ -20,6 +20,7 @@
 #       scripts/slurm/run_chm_inference.sbatch MANIFEST.csv
 #
 # Manifest columns (header on line 1): site,year,naip_path,crowns_name
+# naip_path may be a year folder holding exactly one NAIP tif.
 #
 # Freecycle fallback when notchpeak-gpu is busy (preemptable, so requeue):
 #   --partition=granite-gpu --qos=granite-gpu-freecycle --account=wangj --requeue
@@ -40,6 +41,16 @@ source "$CSDV_REPO/scripts/chpc/scratch.sh"
 ROW=$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "$MANIFEST")
 IFS=',' read -r SITE YEAR NAIP_PATH _CROWNS_NAME <<<"$ROW"
 : "${NAIP_PATH:?empty manifest row $SLURM_ARRAY_TASK_ID in $MANIFEST}"
+# A year folder (written by `csdv grid submit` before the download has run)
+# stands for the single NAIP tif in it.
+if [[ -d "$NAIP_PATH" ]]; then
+    mapfile -t _tifs < <(find "$NAIP_PATH" -maxdepth 1 -name '*.tif' | sort)
+    if [[ ${#_tifs[@]} -ne 1 ]]; then
+        echo "ERROR: expected one NAIP tif in $NAIP_PATH, found ${#_tifs[@]}" >&2
+        exit 1
+    fi
+    NAIP_PATH="${_tifs[0]}"
+fi
 STEM="$(basename "$NAIP_PATH" .tif)"
 CHM_DEST="$CSDV_DATA_ROOT/naip_chm/$SITE/$YEAR"
 

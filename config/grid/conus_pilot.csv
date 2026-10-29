@@ -1,0 +1,28 @@
+# Pilot batch of grid units for testing NAIP disturbance detection across CONUS.
+# DRAFT: locations are approximate and were chosen for their disturbance
+# dynamics; check each one (csdv grid locate --lonlat LON LAT) before submitting.
+#
+# Columns: label, lon, lat, buffer_km, cell, notes. A row with `cell` uses that
+# 7.5' quad cell. A row with only lon/lat uses the cell that contains the point.
+# A row with buffer_km (at most 8 km) becomes a point unit p_<label>.
+label,lon,lat,buffer_km,cell,notes
+NorthMaine,-69.4457,45.7070,,,Industrial spruce-fir forest; clearcut and partial harvest (existing site)
+LincolnNH,-71.5512,44.1560,,,White Mountain NF northern hardwoods; little harvest (existing site)
+ElkinsvilleNE,,,,q3908654,Hoosier NF oak-hickory; small harvests (existing site)
+GA_PinePlantation,-82.60,31.50,,,Coastal plain loblolly and slash pine plantations; short rotations
+AL_PinePlantation,-88.00,32.50,,,Black Belt and lower Piedmont loblolly plantations
+FL_HurricaneMichael,-85.25,30.45,,,2018 Hurricane Michael windthrow; salvage logging
+LA_HurricaneLaura,-93.20,30.75,,,2020 Hurricane Laura pine damage; industrial pine
+NC_HurricaneHelene,-82.25,35.90,,,2024 Hurricane Helene wind and landslides; needs 2024+ NAIP
+WV_SurfaceMining,-81.55,37.95,,,Mountaintop removal mining and reclamation
+RI_SpongyMoth,-71.65,41.60,,,2016-2018 spongy moth defoliation and oak mortality
+NJ_PinelandsSPB,-74.55,39.75,,,Southern pine beetle outbreak in pitch pine (2010s)
+MN_AspenHarvest,-94.30,47.40,,,Chippewa NF aspen clearcut rotations
+MO_OzarkOak,-91.30,37.15,,,Mark Twain NF oak harvest and oak decline
+OR_CoastRange,-123.60,44.60,,,Industrial Douglas-fir clearcuts on short rotations
+WA_IndustrialCascades,-122.45,46.35,,,Industrial Douglas-fir near Mount St Helens
+CA_CampFire,-121.55,39.80,,,2018 Camp Fire; high-severity mixed conifer
+CO_EastTroublesome,-105.95,40.25,,,2020 East Troublesome Fire after mountain pine beetle
+AZ_FlagstaffThinning,-111.75,35.15,,,Ponderosa pine restoration thinning (4FRI) and prescribed fire
+TN_SmokiesControl,-83.45,35.65,,,Control: Great Smoky Mountains NP; little stand-replacing disturbance
+NY_AdirondackControl,-74.35,44.05,,,Control: Adirondack Forest Preserve interior; no harvest

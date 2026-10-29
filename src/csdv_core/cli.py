@@ -45,6 +45,7 @@ def _attach_download_subcommands() -> None:
     """Lazy-attach download subcommands so ``ee`` is only imported when used."""
     from csdv_core.download.chm_model import cli as _chm_cli
     from csdv_core.download.chm_model import conditioning_cli as _cond_cli
+    from csdv_core.download.naip_auto import cli as _naip_auto_cli
     from csdv_core.download.naip_gee import cli as _naip_cli
     from csdv_core.download.naip_pc import cli as _naip_pc_cli
     from csdv_core.download.naip_rest import cli as _naip_rest_cli
@@ -52,6 +53,7 @@ def _attach_download_subcommands() -> None:
     download.add_command(_naip_cli, name="naip")
     download.add_command(_naip_pc_cli, name="naip-pc")
     download.add_command(_naip_rest_cli, name="naip-rest")
+    download.add_command(_naip_auto_cli, name="naip-auto")
     download.add_command(_chm_cli, name="chm")
     download.add_command(_cond_cli, name="conditioning")
 
@@ -144,6 +146,12 @@ def _attach_disturbance() -> None:
     main.add_command(disturbance_chips, name="disturbance-chips")
 
 
+def _attach_grid() -> None:
+    from csdv_core.grid.cli import grid as _grid_cli
+
+    main.add_command(_grid_cli, name="grid")
+
+
 # Attach now: imports are cheap (click + module-level imports only); heavy
 # imports (ee, torch, rasterio in segmentation) happen inside the command
 # bodies, not at import time.
@@ -157,6 +165,7 @@ _attach_trajectories()
 _attach_satellite()
 _attach_check()
 _attach_disturbance()
+_attach_grid()
 
 
 if __name__ == "__main__":

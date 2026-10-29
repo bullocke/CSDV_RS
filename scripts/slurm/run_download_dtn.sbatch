@@ -17,17 +17,22 @@
 #
 # Submit from a login node after `source scripts/chpc/env.sh`:
 #   sbatch --output="$CSDV_LOG_DIR/%x-%j.out" scripts/slurm/run_download_dtn.sbatch \
-#       naip-pc --site SantaClara --bbox -86.3125 39.0625 -86.25 39.125 \
-#       --years 2016,2018,2020,2022
+#       naip-auto --site NorthMaine --bbox -69.5656 45.6636 -69.3253 45.7501 \
+#       --start-year 2010
 #   sbatch --output="$CSDV_LOG_DIR/%x-%j.out" scripts/slurm/run_download_dtn.sbatch \
 #       conditioning
+#
+# `naip-auto` takes each year from the Planetary Computer when it has it and
+# from the USDA image service otherwise (2024 and later), and skips years that
+# cover less than 90% of the box. `naip-pc` and `naip-rest` force one source.
+# `csdv grid submit` submits this script for grid units.
 #
 # Arguments are passed to `csdv download` unchanged.
 
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
-    echo "usage: sbatch $0 SUBCOMMAND [ARGS...]   (e.g. naip-pc, conditioning)" >&2
+    echo "usage: sbatch $0 SUBCOMMAND [ARGS...]   (e.g. naip-auto, conditioning)" >&2
     exit 2
 fi
 

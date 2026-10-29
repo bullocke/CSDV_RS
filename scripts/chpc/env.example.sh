@@ -28,6 +28,10 @@ export CSDV_CACHE_ROOT="$CSDV_STORE/cache"
 export CSDV_CONDITIONING_DIR="$CSDV_DATA_ROOT/chm_model/conditioning"
 export CSDV_LOG_DIR="$CSDV_STORE/logs/slurm"
 export CSDV_MANIFEST_DIR="$CSDV_STORE/manifests"
+# Grid runs (`csdv grid`): unit records, submission ledger and status.csv, and
+# the small download set pulled to a local machine by scripts/chpc/pull_exports.sh.
+export CSDV_GRID_DIR="$CSDV_STORE/grid"
+export CSDV_EXPORT_DIR="$CSDV_STORE/exports"
 
 # Keep GDAL's block cache bounded (MB).
 export GDAL_CACHEMAX=2048

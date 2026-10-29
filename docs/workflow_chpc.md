@@ -62,6 +62,13 @@ sbatch --output="$CSDV_LOG_DIR/%x-%j.out" scripts/slurm/run_download_dtn.sbatch 
     naip-rest --site NorthMaine --bbox -69.5656 45.6636 -69.3253 45.7501 --years 2025
 ```
 
+`naip-auto` takes the same options plus `--start-year` and picks the source of each year by itself, the Planetary Computer when it has the year and the USDA service otherwise. It skips years that cover less than 90% of the box (`--min-coverage`), so a state year that USDA did not finish is left out:
+
+```bash
+sbatch --output="$CSDV_LOG_DIR/%x-%j.out" scripts/slurm/run_download_dtn.sbatch \
+    naip-auto --site NorthMaine --bbox -69.5656 45.6636 -69.3253 45.7501 --start-year 2010
+```
+
 A state is not always flown completely in its scheduled year (USDA did not finish Maine, Montana or Idaho in 2023), so check the coverage warning in the log. Both downloaders write area without imagery as zero in every band and flag it in an internal mask, and `csdv chm-inference` sets those CHM pixels, plus a 50 m band around them (`chm_inference.gap_edge_m` in `metrics.yaml`), to nodata. CHMs predicted before that fix can be repaired in place with `scripts/slurm/run_mask_chm_naip_gaps.sbatch SITE YEAR`.
 
 ### 1b. Landsat observations (per site, on a data transfer node)
@@ -193,6 +200,19 @@ To inspect a run before an accuracy assessment, `run_disturbance_chips.sbatch` s
 sbatch --output="$CSDV_LOG_DIR/%x-%j.out" \
     scripts/slurm/run_disturbance_chips.sbatch "$CSDV_RESULTS_ROOT/disturbance/LincolnNH"
 ```
+
+### Many locations: grid runs
+
+`csdv grid submit` runs this section and step 1a for whole batches of locations. It plans the NAIP years of each unit (a 7.5 minute quad cell, or a box around a point), takes each year from the Planetary Computer or the USDA image service, and submits the download, CHM, detection, chips and export jobs as one dependent chain. `csdv grid status` shows what is done and what failed, and `scripts/chpc/pull_exports.sh` copies the small outputs to a local machine. See [docs/guides/grid_processing.md](guides/grid_processing.md).
+
+```bash
+source scripts/chpc/env.sh
+csdv grid submit --batch config/grid/conus_pilot.csv --dry-run
+csdv grid submit --batch config/grid/conus_pilot.csv
+csdv grid status
+```
+
+`env.sh` files made before the grid commands lack `CSDV_GRID_DIR` and `CSDV_EXPORT_DIR`. Copy those two lines from `env.example.sh`, or the commands fall back to `$CSDV_RESULTS_ROOT/grid` and `$CSDV_RESULTS_ROOT/exports`.
 
 ## 7. Troubleshooting
 
