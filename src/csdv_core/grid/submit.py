@@ -52,16 +52,39 @@ from csdv_core.grid.units import GridPaths, Unit, load_unit, save_unit
 
 logger = logging.getLogger(__name__)
 
-#: Preemptable GPU partition used with ``granite=True`` (as in
-#: ``scripts/slurm/submit_chm_crowns.sh --granite``).
-GRANITE_GPU_OPTS = (
-    "--partition=granite-gpu",
-    "--qos=granite-gpu-freecycle",
-    "--account=wangj",
-    "--requeue",
-)
+#: Where the CHM array can run, as sbatch options added to the script's own.
+#: ``notchpeak`` keeps the script's ``notchpeak-gpu`` lines. The general
+#: kingspeak (titanx) and lonepeak (1080ti) GPUs are older but run the cu126
+#: build, and the preemptable routes requeue a task that is cancelled. Not
+#: ``granite-gpu-guest``: its Blackwell cards are too new for cu126.
+GPU_ROUTES: dict[str, tuple[str, ...]] = {
+    "notchpeak": (),
+    "kingspeak": (
+        "--partition=kingspeak-gpu",
+        "--qos=kingspeak-gpu",
+        "--account=kingspeak-gpu",
+    ),
+    "lonepeak": (
+        "--partition=lonepeak-gpu",
+        "--qos=lonepeak-gpu",
+        "--account=lonepeak-gpu",
+    ),
+    "notchpeak-guest": (
+        "--partition=notchpeak-gpu-guest",
+        "--qos=notchpeak-gpu-guest",
+        "--account=owner-gpu-guest",
+        "--requeue",
+    ),
+    "granite": (
+        "--partition=granite-gpu",
+        "--qos=granite-gpu-freecycle",
+        "--account=wangj",
+        "--requeue",
+    ),
+}
 
 __all__ = [
+    "GPU_ROUTES",
     "Job",
     "SubmitError",
     "SubmitOptions",
@@ -90,7 +113,7 @@ class SubmitOptions:
         config: ``--config`` YAML for ``detect-disturbance``.
         detect_args: Further ``detect-disturbance`` options.
         quicklooks: Write NAIP and CHM quicklooks in the export step.
-        granite: Run CHM inference on the preemptable granite GPUs.
+        gpu: Key of :data:`GPU_ROUTES` naming where CHM inference runs.
         dry_run: Print the jobs without submitting or writing anything.
     """
 
@@ -103,7 +126,7 @@ class SubmitOptions:
     config: Path | None = None
     detect_args: tuple[str, ...] = ()
     quicklooks: bool = True
-    granite: bool = False
+    gpu: str = "notchpeak"
     dry_run: bool = False
 
 
@@ -306,7 +329,7 @@ def submit_unit(paths: GridPaths, unit: Unit, opts: SubmitOptions) -> UnitSubmis
             f"grid_{uid}_{stamp}.csv"
         )
         cmd = ["sbatch", "--parsable", f"--array=1-{len(need_chm)}", name("chm")]
-        cmd += [log(array=True), *(GRANITE_GPU_OPTS if opts.granite else ())]
+        cmd += [log(array=True), *GPU_ROUTES[opts.gpu]]
         cmd += ["@download", f"{slurm}/run_chm_inference.sbatch", str(sub.manifest)]
         sub.jobs.append(Job("chm", cmd))
 

@@ -92,7 +92,15 @@ def locate(lonlat: tuple[float, float] | None, cell: str | None) -> None:
     help="detect-disturbance --config YAML.",
 )
 @click.option("--no-quicklooks", is_flag=True, help="Export without quicklooks.")
-@click.option("--granite", is_flag=True, help="CHM on preemptable granite GPUs.")
+@click.option(
+    "--gpu",
+    type=click.Choice(
+        ["notchpeak", "kingspeak", "lonepeak", "notchpeak-guest", "granite"]
+    ),
+    default="notchpeak",
+    show_default=True,
+    help="GPU partition for CHM inference (guest and granite are preemptable).",
+)
 @click.option("--dry-run", is_flag=True, help="Print the jobs; submit nothing.")
 @click.argument("detect_args", nargs=-1, type=click.UNPROCESSED)
 def submit(
@@ -111,7 +119,7 @@ def submit(
     no_chips: bool,
     config: Path | None,
     no_quicklooks: bool,
-    granite: bool,
+    gpu: str,
     dry_run: bool,
     detect_args: tuple[str, ...],
 ) -> None:
@@ -149,7 +157,7 @@ def submit(
         config=config.resolve() if config else None,
         detect_args=tuple(detect_args),
         quicklooks=not no_quicklooks,
-        granite=granite,
+        gpu=gpu,
         dry_run=dry_run,
     )
     paths = grid_paths()

@@ -156,3 +156,18 @@ def test_sacct_array_specs_are_counted(monkeypatch):
         "77": ["COMPLETED", "PENDING", "PENDING", "PENDING"],
         "78": ["CANCELLED"],
     }
+
+
+def test_gpu_route_sets_chm_partition(env):
+    paths, _ = env
+    sub = submit_unit(paths, Unit.cell(UNIT), SubmitOptions(gpu="kingspeak"))
+    chm = next(j.command for j in sub.jobs if j.step == "chm")
+    assert "--partition=kingspeak-gpu" in chm and "--account=kingspeak-gpu" in chm
+    detect = next(j.command for j in sub.jobs if j.step == "detect")
+    assert not any(a.startswith("--partition") for a in detect)
+
+    sub = submit_unit(
+        paths, Unit.cell(UNIT), SubmitOptions(gpu="notchpeak-guest", run_tag="g")
+    )
+    chm = next(j.command for j in sub.jobs if j.step == "chm")
+    assert "--requeue" in chm and "--account=owner-gpu-guest" in chm

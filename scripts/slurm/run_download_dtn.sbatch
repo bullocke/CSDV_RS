@@ -6,7 +6,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
-#SBATCH --mem=128G
+#SBATCH --mem=32G
 #SBATCH --time=04:00:00
 #SBATCH --output=%x-%j.out
 #
@@ -28,6 +28,12 @@
 # `csdv grid submit` submits this script for grid units.
 #
 # Arguments are passed to `csdv download` unchanged.
+#
+# Memory: `naip-pc` and `naip-auto` hold one year's mosaic in memory, about
+# 5 bytes per output pixel. A 7.5' grid cell is about 2 GB at 0.6 m and 8 GB
+# at 0.3 m, and NorthMaine at 0.3 m about 11 GB, so 32G leaves a margin.
+# A 128G request was refused on notchpeak-dtn ("Memory specification can
+# not be satisfied"). `naip-rest` writes tile by tile and needs little.
 
 set -euo pipefail
 

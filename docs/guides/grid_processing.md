@@ -40,13 +40,15 @@ For each unit the command submits up to five jobs, each waiting for the one befo
 
 | Step | Script | Resources | Skipped when |
 |---|---|---|---|
-| `download` | `run_download_dtn.sbatch naip-auto` | DTN, 2 CPUs, 4 h | every planned year has a NAIP mosaic |
+| `download` | `run_download_dtn.sbatch naip-auto` | DTN, 2 CPUs, 32 GB, 4 h | every planned year has a NAIP mosaic |
 | `chm` | `run_chm_inference.sbatch`, one array task per year | 1 GPU, 48 GB, 2 h per year | every planned year has a CHM |
 | `detect` | `run_detect_disturbance.sbatch` | 4 CPUs, 24 GB, 3 h | never (a new run tag is required) |
 | `chips` | `run_disturbance_chips.sbatch` | 2 CPUs, 8 GB, 1 h | `--no-chips` |
 | `export` | `run_grid_export.sbatch` | 2 CPUs, 8 GB, 1 h | never |
 
-If a job fails, Slurm cancels the jobs that wait on it. The export waits for detection to succeed and for the chips to end, so a chips failure does not hold back the export. `--granite` sends the CHM tasks to the preemptable granite GPUs. `--steps` limits the chain, for example `--steps download,chm` to prepare data only.
+If a job fails, Slurm cancels the jobs that wait on it. The export waits for detection to succeed and for the chips to end, so a chips failure does not hold back the export. `--gpu` chooses where the CHM tasks run (see below). `--steps` limits the chain, for example `--steps download,chm` to prepare data only.
+
+The CHM step is the only one that waits for scarce hardware, so `--gpu` chooses its partition. `notchpeak` (the default) is the general notchpeak GPU pool. `kingspeak` and `lonepeak` are the general pools on the older clusters (Titan X and 1080 Ti cards). They are slower per task, but often idle, and a CHM needs only about 4 GB of GPU memory. `notchpeak-guest` (other groups' idle notchpeak GPUs) and `granite` (granite freecycle, L40S and H100) are preemptable, so their tasks are requeued when cancelled. A requeued task starts over, and a task whose CHM already exists skips itself. Run `mychpc batch` on a login node to see how idle each pool is before a large submission. `granite-gpu-guest` is not offered because its Blackwell cards need a newer CUDA build than the environment has.
 
 Each submission appends a row to the ledger, `$CSDV_GRID_DIR/submissions.csv`, with the time, unit, run tag, years, job IDs, the detection options and the git commit.
 

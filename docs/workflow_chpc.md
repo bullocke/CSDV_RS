@@ -207,12 +207,26 @@ sbatch --output="$CSDV_LOG_DIR/%x-%j.out" \
 
 ```bash
 source scripts/chpc/env.sh
+activate_csdv # If it does not activate on its own
 csdv grid submit --batch config/grid/conus_pilot.csv --dry-run
 csdv grid submit --batch config/grid/conus_pilot.csv
 csdv grid status
 ```
 
-`env.sh` files made before the grid commands lack `CSDV_GRID_DIR` and `CSDV_EXPORT_DIR`. Copy those two lines from `env.example.sh`, or the commands fall back to `$CSDV_RESULTS_ROOT/grid` and `$CSDV_RESULTS_ROOT/exports`.
+`env.sh` files made before the grid commands lack `CSDV_GRID_DIR` and `CSDV_EXPORT_DIR`. Copy those two lines from `env.example.sh`, or the commands fall back to `$CSDV_RESULTS_ROOT/grid` and `$CSDV_RESULTS_ROOT/exports`. 
+
+Some more options and pulling locally:
+
+```bash
+source scripts/chpc/env.sh
+activate_csdv # If it does not activate on its own
+csdv grid submit --batch config/grid/conus_pilot.csv --dry-run   # shows years, sources and jobs
+csdv grid submit --cell q4407152                                 # one unit
+csdv grid submit --lonlat -71.55 44.16 --buffer-km 6 --label LincolnNH
+csdv grid submit --batch config/grid/conus_pilot.csv --run-tag D6s_1ha -- --rule D6s --mmu-ha 1.0
+csdv grid status            # or --problems
+scripts/chpc/pull_exports.sh [runs/<tag>]                        # run locally
+```
 
 ## 7. Troubleshooting
 
