@@ -103,6 +103,17 @@ export CSDV_CHPC_EXPORTS=/uufs/chpc.utah.edu/common/home/dycelab/data/CSDV/expor
 
 Then `scripts/chpc/pull_exports.sh` copies everything new to `results/chpc_exports/` (or `$CSDV_LOCAL_EXPORTS`), and `scripts/chpc/pull_exports.sh runs/D6s_1ha` copies one run tag. Only new or changed files are transferred, and nothing is deleted locally.
 
+## Checking a run
+
+`csdv grid check` reads an export folder and checks each exported run for completeness and internal agreement, so it works on a laptop after the export has been copied as well as on CHPC. It compares the years of the unit record, the parameters, the summary and the quicklooks, checks that the byte rasters sit on the run's grid with the onset areas of the summary, that the objects agree in number and area with `objects.csv` and the summary, and that every chip of the inspection sample exists. It also warns about things to look at that are not errors: image pairs more than six weeks of season apart, a CHM year whose median height departs from the others by more than 0.5 m, year-to-year changes of forest area larger than all detections, invalid polygons, and log warnings.
+
+```bash
+csdv grid check                                  # every run under $CSDV_EXPORT_DIR, else results/chpc_exports
+csdv grid check --unit q4407152 --run-tag default --verbose
+```
+
+Each run gets `check.md` and `check.json` in its export folder. The command exits with an error when any check fails.
+
 ## Cost
 
-Each cell needs one GPU task per NAIP year (six to eight years for most of CONUS since 2010), plus about ten minutes of CPU time for detection, chips and export. The pilot batch of 20 cells is about 140 GPU tasks. Submit one cell first and check its run time and peak memory with `sacct -j <job ids> -X --format=JobID,JobName,State,Elapsed,MaxRSS` before submitting the batch.
+Each cell needs one GPU task per NAIP year (six to eight years for most of CONUS since 2010), plus about ten minutes of CPU time for detection, chips and export. The pilot batch of 20 cells is about 140 GPU tasks. Submit one cell first and check its run time and peak memory with `sacct -j <job ids> --format=JobID,JobName,State,Elapsed,MaxRSS,ReqMem` before submitting the batch. Leave out `-X`, because MaxRSS is reported on the `.batch` step and not on the job line. CHPC gathers job accounting from cgroups, so MaxRSS includes the page cache of the files a job reads. A step that reads many GB of imagery can therefore report a MaxRSS at its memory request without being short of memory. The export of the test cell q4407152 reported 8.0 of 8 GB, although the quicklook reads, measured outside Slurm on a smaller site, need only the GDAL block cache (`GDAL_CACHEMAX`) plus about 120 MB. On q4407152 (eight years, 2011 to 2025) the download took 37 minutes, each CHM task 5 to 6 minutes, detection 3 minutes (12.8 GB), chips 2 minutes and the export 6 minutes.

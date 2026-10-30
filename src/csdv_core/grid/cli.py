@@ -1,4 +1,4 @@
-"""csdv_core.grid.cli — ``csdv grid``: locate, submit, status, export."""
+"""csdv_core.grid.cli — ``csdv grid``: locate, submit, status, export, check."""
 
 from __future__ import annotations
 
@@ -275,3 +275,55 @@ def export(
     except FileNotFoundError as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"{result.export_dir} ({result.size_mb:.1f} MB)")
+
+
+@grid.command("check")
+@click.option(
+    "--export-dir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Export folder. Default: $CSDV_EXPORT_DIR, else results/chpc_exports.",
+)
+@click.option("--unit", "unit_id", default=None, help="Only this unit.")
+@click.option("--run-tag", default=None, help="Only this run tag.")
+@click.option("--no-write", is_flag=True, help="Do not write check.md/check.json.")
+@click.option("--verbose", is_flag=True, help="Print the detail of passed checks.")
+def check(
+    export_dir: Path | None,
+    unit_id: str | None,
+    run_tag: str | None,
+    no_write: bool,
+    verbose: bool,
+) -> None:
+    """Check exported runs for completeness and internal agreement.
+
+    Writes check.md and check.json into each run's export folder and exits
+    with an error when any check fails.
+    """
+    import os
+
+    from csdv_core.grid.check import FAIL, PASS, check_run, find_runs, write_check
+    from csdv_core.io.paths import project_paths
+
+    _setup_logging()
+    if export_dir is None:
+        env = os.environ.get("CSDV_EXPORT_DIR")
+        export_dir = Path(env) if env else project_paths().results_root / "chpc_exports"
+    runs = find_runs(export_dir, unit_id, run_tag)
+    if not runs:
+        raise click.ClickException(f"No exported runs under {export_dir / 'runs'}")
+    failed = []
+    for unit, tag in runs:
+        result = check_run(export_dir, unit, tag)
+        click.echo(f"\n== {unit} {tag}: {result.status.upper()}")
+        for r in result.results:
+            if verbose or r.status != PASS:
+                click.echo(f"   {r.status:<4}  {r.name}: {r.detail}")
+            else:
+                click.echo(f"   {r.status:<4}  {r.name}")
+        if not no_write:
+            write_check(result)
+        if result.status == FAIL:
+            failed.append(f"{unit} {tag}")
+    if failed:
+        raise click.ClickException(f"Checks failed: {', '.join(failed)}")
