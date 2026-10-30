@@ -284,3 +284,19 @@ def test_refine_objects_reads_windows(monkeypatch: pytest.MonkeyPatch) -> None:
     assert list(result.outlines.columns) == list(outlines.REFINED_COLUMNS)
     assert list(result.openings.columns) == list(outlines.OPENING_COLUMNS)
     assert read_years == [2013, 2015, 2013, 2015]
+
+
+def test_label_polygons_are_valid_when_cells_touch_at_corners():
+    # A ring of cells around a hole whose corners touch: with 8-connectivity
+    # rasterio returns a self-touching ring, which is invalid unless repaired.
+    labels = np.zeros((6, 6), dtype=np.int32)
+    labels[1, 1] = labels[2, 2] = labels[1, 3] = labels[3, 1] = labels[3, 3] = 1
+    labels[4, 4] = 2
+    labels[0, 5] = labels[1, 4] = 2
+    transform = Affine(19.2, 0.0, 0.0, 0.0, -19.2, 115.2)
+    geometries = outlines._label_polygons(labels, transform)
+    assert set(geometries) == {1, 2}
+    for label, geometry in geometries.items():
+        assert geometry.is_valid
+        n_cells = int((labels == label).sum())
+        assert geometry.area == pytest.approx(n_cells * 19.2**2)

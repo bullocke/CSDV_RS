@@ -31,6 +31,7 @@ import pandas as pd
 import rasterio.features
 from affine import Affine
 from scipy import ndimage
+from shapely import make_valid
 from shapely.geometry import shape
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
@@ -175,6 +176,10 @@ def _frame(
 def _label_polygons(labels: np.ndarray, transform: Affine) -> dict[int, BaseGeometry]:
     """Polygonize a label raster and dissolve the polygons of each label.
 
+    With 8-connectivity, cells that touch only at a corner give rings that
+    touch themselves, which are invalid. Each part is repaired with
+    ``make_valid`` before the dissolve, so every geometry returned is valid.
+
     Args:
         labels: int32 label raster, 0 = background.
         transform: Affine transform of the raster.
@@ -189,11 +194,11 @@ def _label_polygons(labels: np.ndarray, transform: Affine) -> dict[int, BaseGeom
     )
     for geojson, value in polygon_iter:
         label = int(value)
-        polygon = shape(geojson)
+        polygon = make_valid(shape(geojson))
         parts_by_label.setdefault(label, []).append(polygon)
     geometry_by_label = {}
     for label, parts in parts_by_label.items():
-        geometry_by_label[label] = unary_union(parts)
+        geometry_by_label[label] = make_valid(unary_union(parts))
     return geometry_by_label
 
 
