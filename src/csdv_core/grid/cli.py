@@ -101,6 +101,11 @@ def locate(lonlat: tuple[float, float] | None, cell: str | None) -> None:
     show_default=True,
     help="GPU partition for CHM inference (guest and granite are preemptable).",
 )
+@click.option(
+    "--exclude-nodes",
+    default="",
+    help="Comma-separated nodes the CHM tasks must avoid (e.g. a faulty GPU).",
+)
 @click.option("--dry-run", is_flag=True, help="Print the jobs; submit nothing.")
 @click.argument("detect_args", nargs=-1, type=click.UNPROCESSED)
 def submit(
@@ -120,6 +125,7 @@ def submit(
     config: Path | None,
     no_quicklooks: bool,
     gpu: str,
+    exclude_nodes: str,
     dry_run: bool,
     detect_args: tuple[str, ...],
 ) -> None:
@@ -158,6 +164,7 @@ def submit(
         detect_args=tuple(detect_args),
         quicklooks=not no_quicklooks,
         gpu=gpu,
+        exclude_nodes=tuple(n.strip() for n in exclude_nodes.split(",") if n.strip()),
         dry_run=dry_run,
     )
     paths = grid_paths()

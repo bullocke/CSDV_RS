@@ -63,9 +63,16 @@ if compgen -G "$CHM_DEST/${STEM}*chm*.tif" >/dev/null; then
 fi
 
 activate_csdv
-nvidia-smi -L
-python -c "import torch; assert torch.cuda.is_available(), 'no CUDA device'; \
-print('torch', torch.__version__, 'on', torch.cuda.get_device_name(0))"
+# A faulty card (seen on guest node notch089: "Unable to determine the device
+# handle") fails the job here, before any work. Resubmit without that node:
+# --exclude=<node>, or `csdv grid submit --exclude-nodes <node>`.
+nvidia-smi -L || echo "WARNING: nvidia-smi failed on $(hostname -s)" >&2
+if ! python -c "import torch; assert torch.cuda.is_available(), 'no CUDA device'; \
+torch.zeros(1, device='cuda'); \
+print('torch', torch.__version__, 'on', torch.cuda.get_device_name(0))"; then
+    echo "ERROR: no usable GPU on $(hostname -s); resubmit with --exclude=$(hostname -s)" >&2
+    exit 1
+fi
 
 scratch_init
 stage_in "$NAIP_PATH" "$NODE_SCRATCH/naip"

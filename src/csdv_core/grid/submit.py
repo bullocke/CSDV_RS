@@ -114,6 +114,8 @@ class SubmitOptions:
         detect_args: Further ``detect-disturbance`` options.
         quicklooks: Write NAIP and CHM quicklooks in the export step.
         gpu: Key of :data:`GPU_ROUTES` naming where CHM inference runs.
+        exclude_nodes: Nodes the CHM tasks must not run on, for example a
+            node with a faulty GPU.
         dry_run: Print the jobs without submitting or writing anything.
     """
 
@@ -127,6 +129,7 @@ class SubmitOptions:
     detect_args: tuple[str, ...] = ()
     quicklooks: bool = True
     gpu: str = "notchpeak"
+    exclude_nodes: tuple[str, ...] = ()
     dry_run: bool = False
 
 
@@ -330,6 +333,8 @@ def submit_unit(paths: GridPaths, unit: Unit, opts: SubmitOptions) -> UnitSubmis
         )
         cmd = ["sbatch", "--parsable", f"--array=1-{len(need_chm)}", name("chm")]
         cmd += [log(array=True), *GPU_ROUTES[opts.gpu]]
+        if opts.exclude_nodes:
+            cmd.append(f"--exclude={','.join(opts.exclude_nodes)}")
         cmd += ["@download", f"{slurm}/run_chm_inference.sbatch", str(sub.manifest)]
         sub.jobs.append(Job("chm", cmd))
 

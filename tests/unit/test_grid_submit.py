@@ -171,3 +171,14 @@ def test_gpu_route_sets_chm_partition(env):
     )
     chm = next(j.command for j in sub.jobs if j.step == "chm")
     assert "--requeue" in chm and "--account=owner-gpu-guest" in chm
+    assert not any(a.startswith("--exclude") for a in chm)
+
+
+def test_excluded_nodes_reach_only_the_chm_tasks(env):
+    paths, _ = env
+    opts = SubmitOptions(gpu="notchpeak-guest", exclude_nodes=("notch089", "notch090"))
+    sub = submit_unit(paths, Unit.cell(UNIT), opts)
+    chm = next(j.command for j in sub.jobs if j.step == "chm")
+    assert "--exclude=notch089,notch090" in chm
+    detect = next(j.command for j in sub.jobs if j.step == "detect")
+    assert not any(a.startswith("--exclude") for a in detect)
