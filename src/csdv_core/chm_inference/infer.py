@@ -13,10 +13,16 @@ five conditioning rasters are present. After inference, CHM pixels where the
 NAIP has no imagery, and a band around them, are set to nodata
 (:mod:`csdv_core.chm_inference.naip_gaps`), because the upstream model
 predicts heights over black fill.
+
+With ``chip_lattice`` on (the default), the upstream script runs through
+:mod:`csdv_core.chm_inference.tiling`, which places the chips on a fixed map
+lattice so that a location gets the same CHM in every processing unit. Each
+CHM gets a ``<naip stem>_tiling.json`` sidecar recording the tiling.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -62,6 +68,58 @@ def _mask_chm_outputs(naip_quad: Path, output_dir: Path, edge_m: float) -> None:
     mask_naip_gaps(naip_quad, outputs[0], edge_m=edge_m)
 
 
+def _upstream_commit(repo: Path) -> str:
+    """Short commit of the upstream clone, read from its ``.git`` files."""
+    git = repo / ".git"
+    try:
+        head = (git / "HEAD").read_text(encoding="utf-8").strip()
+        if not head.startswith("ref: "):
+            return head[:7]
+        ref = head[len("ref: ") :]
+        if (git / ref).is_file():
+            return (git / ref).read_text(encoding="utf-8").strip()[:7]
+        for line in (git / "packed-refs").read_text(encoding="utf-8").splitlines():
+            if line.endswith(" " + ref):
+                return line.split()[0][:7]
+    except OSError:
+        pass
+    return ""
+
+
+def _write_tiling_sidecar(
+    naip_quad: Path,
+    output_dir: Path,
+    *,
+    repo: Path,
+    chip_size: int,
+    chip_overlap: float,
+    chip_lattice: bool,
+) -> Path:
+    """Record how the CHM of ``naip_quad`` was tiled, next to the CHM."""
+    import rasterio
+
+    from csdv_core.chm_inference.tiling import TARGET_RES_M, global_pixel_origin
+
+    record: dict[str, object] = {
+        "naip": naip_quad.name,
+        "chip_size": chip_size,
+        "chip_overlap": chip_overlap,
+        "chip_lattice": chip_lattice,
+        "upstream_commit": _upstream_commit(repo),
+    }
+    if chip_lattice:
+        with rasterio.open(naip_quad) as src:
+            col0, row0 = global_pixel_origin(src.transform)
+        record |= {
+            "lattice_res_m": TARGET_RES_M,
+            "origin_col": col0,
+            "origin_row": row0,
+        }
+    path = output_dir / f"{naip_quad.stem}_tiling.json"
+    path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    return path
+
+
 def _resolve_repo_dir(repo_dir: Path | None) -> Path:
     if repo_dir is not None:
         return Path(repo_dir).resolve()
@@ -81,6 +139,7 @@ def predict_chm(
     conditioning_dir: Path | None = None,
     chip_size: int | None = None,
     chip_overlap: float | None = None,
+    chip_lattice: bool | None = None,
     dry_run: bool = False,
     download_conditioning: bool = False,
     mask_gaps: bool = True,
@@ -100,6 +159,9 @@ def predict_chm(
             None, resolves via :mod:`csdv_core.chm_inference.conditioning`.
         chip_size: Tile size in pixels. Default from ``metrics.yaml``.
         chip_overlap: Tile overlap fraction. Default from ``metrics.yaml``.
+        chip_lattice: Place the chips on a fixed map lattice
+            (:mod:`csdv_core.chm_inference.tiling`) instead of from the
+            mosaic's top-left pixel. Default from ``metrics.yaml``.
         dry_run: If True, pass ``--dry-run`` to the upstream CLI.
         download_conditioning: If True, fetch any missing conditioning
             rasters (~1.65 GB) before validating. Off by default so inference
@@ -121,6 +183,7 @@ def predict_chm(
     chip_size = chip_size if chip_size is not None else defaults.chip_size
     chip_overlap = chip_overlap if chip_overlap is not None else defaults.chip_overlap
     gap_edge_m = gap_edge_m if gap_edge_m is not None else defaults.gap_edge_m
+    chip_lattice = chip_lattice if chip_lattice is not None else defaults.chip_lattice
 
     repo = _resolve_repo_dir(repo_dir)
     inference_script = repo / "scripts" / "inference.py"
@@ -142,8 +205,11 @@ def predict_chm(
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    runner = [sys.executable]
+    if chip_lattice:
+        runner += ["-m", "csdv_core.chm_inference.tiling"]
     cmd = [
-        sys.executable,
+        *runner,
         str(inference_script),
         "--naip-quad",
         str(naip_quad),
@@ -170,6 +236,15 @@ def predict_chm(
         raise RuntimeError(f"NAIP-CHM inference exited with code {result.returncode}")
     if mask_gaps and not dry_run:
         _mask_chm_outputs(naip_quad, output_dir, gap_edge_m)
+    if not dry_run:
+        _write_tiling_sidecar(
+            naip_quad,
+            output_dir,
+            repo=repo,
+            chip_size=chip_size,
+            chip_overlap=chip_overlap,
+            chip_lattice=chip_lattice,
+        )
     logger.info("Inference complete; outputs in %s", output_dir)
     return output_dir
 
@@ -199,6 +274,11 @@ def predict_chm(
 )
 @click.option("--chip-size", default=None, type=int)
 @click.option("--chip-overlap", default=None, type=float)
+@click.option(
+    "--chip-lattice/--no-chip-lattice",
+    default=None,
+    help="Place chips on a fixed map lattice. Default: metrics.yaml (on).",
+)
 @click.option("--dry-run", is_flag=True, default=False)
 @click.option(
     "--download-conditioning",
@@ -225,6 +305,7 @@ def cli(
     conditioning_dir: Path | None,
     chip_size: int | None,
     chip_overlap: float | None,
+    chip_lattice: bool | None,
     dry_run: bool,
     download_conditioning: bool,
     mask_gaps: bool,
@@ -241,6 +322,7 @@ def cli(
         conditioning_dir=conditioning_dir,
         chip_size=chip_size,
         chip_overlap=chip_overlap,
+        chip_lattice=chip_lattice,
         dry_run=dry_run,
         download_conditioning=download_conditioning,
         mask_gaps=mask_gaps,

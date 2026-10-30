@@ -7,6 +7,10 @@
 #     min_crowns_per_window Minimum crown count required to compute crown metrics.
 #   metrics.<name>.params   Per-metric parameter overrides.
 #   chm_inference           Defaults for NAIP-CHM inference AOIs and tiling.
+#     chip_lattice          Place chips on a fixed 0.6 m map lattice, so a location
+#                           gets the same CHM in every processing unit (see
+#                           csdv_core.chm_inference.tiling). false lays chips out
+#                           from the mosaic's top-left pixel, as upstream does.
 #     gap_edge_m            Width (m) of the band of CHM set to nodata around
 #                           NAIP gaps (no imagery), where the model saw black
 #                           fill as context. 0 masks the gaps only.
@@ -19,6 +23,7 @@ chm_inference:
   aoi_half_km: 2.5
   chip_size: 432
   chip_overlap: 0.2
+  chip_lattice: true
   gap_edge_m: 50.0
 
 metrics:
