@@ -14,6 +14,8 @@ import pytest
 from csdv_core.download.naip_pc import (
     grid_from_bounds,
     median_date_tag,
+    program_year,
+    search_naip_items,
     snap_bounds,
 )
 
@@ -106,3 +108,48 @@ def test_median_date_tag_is_eight_digits_for_the_model_filename():
 def test_median_date_tag_rejects_an_empty_set():
     with pytest.raises(ValueError, match="No acquisition dates"):
         median_date_tag([])
+
+
+class _Item:
+    def __init__(self, naip_year: str | None, date: str) -> None:
+        self.properties = {"naip:year": naip_year} if naip_year else {}
+        self.datetime = datetime.fromisoformat(date).replace(tzinfo=timezone.utc)
+
+
+class _Catalog:
+    """Returns its items whatever the search, like a box with all the years."""
+
+    def __init__(self, items: list[_Item]) -> None:
+        self.items_ = items
+        self.kwargs: dict = {}
+
+    def search(self, **kwargs):
+        self.kwargs = kwargs
+        return self
+
+    def items(self):
+        return iter(self.items_)
+
+
+def test_program_year_reads_the_label_before_the_date():
+    assert program_year(_Item("2021", "2022-01-23")) == 2021
+    assert program_year(_Item(None, "2022-01-23")) == 2022
+
+
+def test_search_selects_a_program_year_flown_in_the_next_calendar_year():
+    # Florida 2021: flown 2022-01-23. A calendar-year search finds nothing.
+    flown_late, next_year = _Item("2021", "2022-01-23"), _Item("2023", "2023-02-04")
+    catalog = _Catalog([_Item("2019", "2019-11-28"), flown_late, next_year])
+
+    items = search_naip_items(
+        (-85.25, 30.375, -85.125, 30.5), year=2021, catalog=catalog
+    )
+
+    assert items == [flown_late]
+    assert catalog.kwargs["datetime"] == "2020-01-01/2022-12-31"
+
+
+def test_search_still_fails_for_a_year_without_imagery():
+    catalog = _Catalog([_Item("2019", "2019-11-28")])
+    with pytest.raises(ValueError, match="No NAIP imagery for 2021"):
+        search_naip_items((0, 0, 1, 1), year=2021, catalog=catalog)

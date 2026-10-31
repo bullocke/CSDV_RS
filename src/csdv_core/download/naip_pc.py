@@ -54,6 +54,7 @@ __all__ = [
     "grid_from_bounds",
     "median_date_tag",
     "naip_mosaic",
+    "program_year",
     "search_naip_items",
     "snap_bounds",
 ]
@@ -141,13 +142,23 @@ def median_date_tag(datetimes: Sequence[str | datetime]) -> str:
     return parsed[len(parsed) // 2].strftime("%Y%m%d")
 
 
+def program_year(item: Any) -> int:
+    """NAIP program year of a STAC item: ``naip:year``, else the acquisition year."""
+    return int(item.properties.get("naip:year") or item.datetime.year)
+
+
 def search_naip_items(
     bbox_4326: tuple[float, float, float, float],
     *,
     year: int,
     catalog: Any | None = None,
 ) -> list[Any]:
-    """Find every NAIP quad intersecting ``bbox_4326`` in ``year``.
+    """Find every NAIP quad intersecting ``bbox_4326`` of program year ``year``.
+
+    Quads are selected by their ``naip:year`` label, as in
+    :func:`available_years`, not by acquisition date: a program year can be
+    flown into the next calendar year (Florida's 2021 imagery is dated
+    January 2022). The date window only narrows the search.
 
     A catalogue opened with the signing modifier returns items whose asset
     links already carry a token. Open it inside the per-year loop rather than
@@ -166,9 +177,9 @@ def search_naip_items(
     search = catalog.search(
         collections=[NAIP_COLLECTION],
         bbox=list(bbox_4326),
-        datetime=f"{year}-01-01/{year}-12-31",
+        datetime=f"{year - 1}-01-01/{year + 1}-12-31",
     )
-    items = list(search.items())
+    items = [item for item in search.items() if program_year(item) == year]
     if not items:
         raise ValueError(f"No NAIP imagery for {year} over {bbox_4326}")
     resolutions = {item.properties.get("gsd") for item in items}
@@ -221,8 +232,7 @@ def available_years(
     search = catalog.search(collections=[NAIP_COLLECTION], bbox=list(bbox_4326))
     by_year: dict[int, list[Any]] = {}
     for item in search.items():
-        year = item.properties.get("naip:year") or item.datetime.year
-        by_year.setdefault(int(year), []).append(shape(item.geometry))
+        by_year.setdefault(program_year(item), []).append(shape(item.geometry))
     return {
         year: footprint_coverage(bbox_4326, geoms)
         for year, geoms in sorted(by_year.items())
