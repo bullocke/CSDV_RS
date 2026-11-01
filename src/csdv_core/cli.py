@@ -152,6 +152,12 @@ def _attach_grid() -> None:
     main.add_command(_grid_cli, name="grid")
 
 
+def _attach_review() -> None:
+    from csdv_core.review.cli import review as _review_cli
+
+    main.add_command(_review_cli, name="review")
+
+
 # Attach now: imports are cheap (click + module-level imports only); heavy
 # imports (ee, torch, rasterio in segmentation) happen inside the command
 # bodies, not at import time.
@@ -166,6 +172,7 @@ _attach_satellite()
 _attach_check()
 _attach_disturbance()
 _attach_grid()
+_attach_review()
 
 
 if __name__ == "__main__":

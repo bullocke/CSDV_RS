@@ -52,6 +52,8 @@ viewer = [
     "xyzservices",
     "rio-cogeo",
     "geemap",
+    # csdv review app (src/csdv_core/review)
+    "solara",
 ]
 dev = [
     "pytest",
@@ -70,6 +72,7 @@ where = ["src"]
 csdv_core = [
     "config/*.yaml",
     "examples/vocab/*.yaml",
+    "review/*.vue",
 ]
 
 [tool.black]

@@ -86,6 +86,10 @@ dependencies:
   - plotly
   - anywidget
   - xyzservices
+  # Browser app for interpreting detected disturbances (csdv review app,
+  # src/csdv_core/review). Installed locally with pip because the micromamba
+  # solver ran out of memory; the wheels touch no compiled geospatial library.
+  - solara
 
   # Nice extras for this kind of project
   - requests
