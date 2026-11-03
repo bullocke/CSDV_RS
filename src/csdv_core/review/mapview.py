@@ -38,6 +38,11 @@ ESRI_URL = (
     "MapServer/tile/{z}/{y}/{x}"
 )
 DRAW_COLOUR = "#ff2bd6"
+BASEMAP_OPACITY = 0.4
+_LABEL_STYLE = (
+    "background:rgba(255,255,255,0.88);padding:3px 8px;border-radius:4px;"
+    "font:600 14px sans-serif;line-height:1.35;color:#222"
+)
 #: Attributes sent with each outline (for the click readout).
 POPUP_COLUMNS = ["object_id", "onset_year", "interval", "area_ha", "geom_src", "growth"]
 
@@ -101,7 +106,12 @@ class ReviewMap:
             attribution_control=False,
             layout=w.Layout(height=height, width="100%"),
         )
-        self.map.layers = (_tile_layer(ESRI_URL, 19, name="Esri World Imagery"),)
+        # Dimmed, so that it is plain when NAIP has not loaded (yet).
+        self.map.layers = (
+            _tile_layer(
+                ESRI_URL, 19, name="Esri World Imagery", opacity=BASEMAP_OPACITY
+            ),
+        )
         self.imagery = _tile_layer("", 19, name="NAIP")
         self.overlay = _tile_layer(
             "", LOCAL_MAX_NATIVE_ZOOM, name="Overlay", opacity=0.6
@@ -162,6 +172,19 @@ class ReviewMap:
         self.map.add(self.focus)
         self.map.add(self.draw)
         self.map.add(ipyleaflet.ScaleControl(position="bottomleft", imperial=False))
+        self.label = w.HTML()
+        self._imagery_text = "Esri basemap (dimmed), no NAIP"
+        self._overlay_text = ""
+        self.map.add(ipyleaflet.WidgetControl(widget=self.label, position="topright"))
+        self._refresh_label()
+
+    def _refresh_label(self) -> None:
+        lines = [self._imagery_text] + (
+            [self._overlay_text] if self._overlay_text else []
+        )
+        self.label.value = (
+            f'<div style="{_LABEL_STYLE}">' + "<br>".join(lines) + "</div>"
+        )
 
     # ---- view -----------------------------------------------------------
 
@@ -180,6 +203,8 @@ class ReviewMap:
         self.clear_split()
         self.imagery.max_native_zoom = source.max_native_zoom
         self.imagery.url = source.url
+        self._imagery_text = f"NAIP {source.label}"
+        self._refresh_label()
 
     def set_split(self, left: ImagerySource, right: ImagerySource) -> None:
         """Swipe between two years (left before, right after)."""
@@ -191,6 +216,8 @@ class ReviewMap:
             right_layer=_tile_layer(right.url, right.max_native_zoom),
         )
         self.map.add(self._split)
+        self._imagery_text = f"NAIP ◀ {left.label} | {right.label} ▶"
+        self._refresh_label()
 
     def clear_split(self) -> None:
         if self._split is not None:
@@ -199,8 +226,12 @@ class ReviewMap:
         if self.imagery not in self.map.layers:
             self.map.add(self.imagery, index=1)
 
-    def set_overlay(self, url: str | None, opacity: float = 0.6) -> None:
+    def set_overlay(
+        self, url: str | None, opacity: float = 0.6, label: str = ""
+    ) -> None:
         """Show a local raster overlay above the imagery, or remove it."""
+        self._overlay_text = f"Overlay: {label}" if url is not None and label else ""
+        self._refresh_label()
         if url is None:
             if self._overlay_on:
                 self.map.remove(self.overlay)

@@ -7,8 +7,11 @@ Each NAIP year of a unit is shown from the source the run downloaded it from
     A mosaic of the exact quads of that program year, found with
     :func:`csdv_core.download.naip_pc.search_naip_items` and registered with
     the Planetary Computer data API. The quad IDs are cached on disk, so the
-    STAC search runs once per unit and year. Registration is a single request
-    and is repeated once per process.
+    STAC search runs once per unit and year. A registered mosaic expires after
+    about a day (its ID carries the expiry time, and later requests get 410),
+    so the browser never sees it: the review server fetches the tiles
+    (:func:`pc_tile`) and registers the mosaic again when it is about to
+    expire or has expired.
 ``rest`` (USDA FPAC ImageServer)
     The service has no WMS or tile cache, so the review server turns each map
     tile into an ``exportImage`` request (:func:`usda_tile`). The service keeps
@@ -24,6 +27,8 @@ from __future__ import annotations
 import json
 import logging
 import math
+import threading
+import time
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -37,9 +42,14 @@ PC_DATA_API = "https://planetarycomputer.microsoft.com/api/data/v1"
 NAIP_MAX_NATIVE_ZOOM = 19
 TIMEOUT_S = 30
 
+#: Re-register a mosaic this long before its stated expiry.
+EXPIRY_MARGIN_S = 600
+
 __all__ = [
     "ImagerySource",
+    "default_pc_cache",
     "naip_sources",
+    "pc_tile",
     "quicklook_source",
     "usda_tile",
 ]
@@ -90,21 +100,79 @@ class _PcItemCache:
         return ids
 
 
-@lru_cache(maxsize=512)
-def _register_mosaic(ids: tuple[str, ...]) -> str:
-    """Register a mosaic of the given NAIP items and return its tile URL."""
-    body = {
-        "collections": ["naip"],
-        "filter-lang": "cql2-json",
-        "filter": {"op": "in", "args": [{"property": "id"}, list(ids)]},
-    }
-    r = requests.post(f"{PC_DATA_API}/mosaic/register", json=body, timeout=TIMEOUT_S)
-    r.raise_for_status()
-    search_id = r.json()["searchid"]
-    return (
-        f"{PC_DATA_API}/mosaic/{search_id}/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}"
-        "?assets=image&asset_bidx=image%7C1,2,3&collection=naip"
+def default_pc_cache() -> Path:
+    """``<cache_root>/review/pc_items.json``."""
+    from csdv_core.io.paths import project_paths
+
+    return project_paths().cache_root / "review" / "pc_items.json"
+
+
+class _Mosaics:
+    """Registered mosaics by item IDs, renewed before they expire."""
+
+    def __init__(self) -> None:
+        self._ids: dict[tuple[str, ...], tuple[str, float]] = {}
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _expiry(search_id: str) -> float:
+        # IDs look like pc1.<expiry epoch seconds>.<hash>.
+        try:
+            return float(search_id.split(".")[1])
+        except (IndexError, ValueError):
+            return time.time() + 3600
+
+    def search_id(self, ids: tuple[str, ...], *, renew: bool = False) -> str:
+        with self._lock:
+            known = self._ids.get(ids)
+            if known and not renew and known[1] - EXPIRY_MARGIN_S > time.time():
+                return known[0]
+            body = {
+                "collections": ["naip"],
+                "filter-lang": "cql2-json",
+                "filter": {"op": "in", "args": [{"property": "id"}, list(ids)]},
+            }
+            r = requests.post(
+                f"{PC_DATA_API}/mosaic/register", json=body, timeout=TIMEOUT_S
+            )
+            r.raise_for_status()
+            search_id = r.json()["searchid"]
+            self._ids[ids] = (search_id, self._expiry(search_id))
+            logger.info("Registered NAIP mosaic %s (%d quads)", search_id, len(ids))
+            return search_id
+
+
+_MOSAICS = _Mosaics()
+
+
+def _pc_item_ids(unit: str, year: int, cache_path: Path | None = None) -> tuple:
+    ids = (
+        _PcItemCache(cache_path or default_pc_cache()).data.get(unit, {}).get(str(year))
     )
+    if not ids:
+        raise KeyError(f"no Planetary Computer quads cached for {unit} {year}")
+    return tuple(ids)
+
+
+@lru_cache(maxsize=2048)
+def pc_tile(unit: str, year: int, z: int, x: int, y: int) -> tuple[bytes, str] | None:
+    """One tile of a unit's NAIP mosaic for a year, or None outside the quads.
+
+    The quad IDs come from the item cache written by :func:`naip_sources`.
+    """
+    ids = _pc_item_ids(unit, year)
+    for attempt in range(2):
+        search_id = _MOSAICS.search_id(ids, renew=attempt > 0)
+        url = f"{PC_DATA_API}/mosaic/{search_id}/tiles/WebMercatorQuad/{z}/{x}/{y}"
+        params = {"assets": "image", "asset_bidx": "image|1,2,3", "collection": "naip"}
+        r = requests.get(url, params=params, timeout=TIMEOUT_S)
+        if r.status_code == 410:  # expired after all: register again
+            continue
+        if r.status_code in (204, 404):
+            return None
+        r.raise_for_status()
+        return r.content, r.headers.get("content-type", "image/jpeg")
+    raise RuntimeError(f"NAIP mosaic for {unit} {year} keeps expiring")
 
 
 def naip_sources(
@@ -132,8 +200,9 @@ def naip_sources(
             if source == "rest":
                 out[year] = ImagerySource(year, "usda", "/tiles/usda/{z}/{x}/{y}")
             elif bbox is not None:
-                ids = cache.get(unit, year, tuple(bbox))
-                out[year] = ImagerySource(year, "pc", _register_mosaic(tuple(ids)))
+                cache.get(unit, year, tuple(bbox))
+                url = f"/tiles/pc/{unit}/{year}/{{z}}/{{x}}/{{y}}"
+                out[year] = ImagerySource(year, "pc", url)
             else:
                 out[year] = quicklook_source(unit, year)
         except (requests.RequestException, ValueError, KeyError) as exc:

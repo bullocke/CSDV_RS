@@ -39,7 +39,7 @@ from shapely.geometry.base import BaseGeometry
 
 from csdv_core.review.config import review_config
 from csdv_core.review.context import nearby_objects, onset_colours, year_strip
-from csdv_core.review.imagery import ImagerySource, naip_sources
+from csdv_core.review.imagery import ImagerySource, default_pc_cache, naip_sources
 from csdv_core.review.mapview import ReviewMap
 from csdv_core.review.sample import (
     STRATUM_DETECTED,
@@ -86,8 +86,6 @@ _locks_guard = threading.Lock()
 
 def sources_for(unit: str) -> dict[int, ImagerySource]:
     """NAIP tile sources of a unit (cached for the life of the process)."""
-    from csdv_core.io.paths import project_paths
-
     with _locks_guard:
         lock = _locks.setdefault(unit, threading.Lock())
     with lock:
@@ -97,8 +95,7 @@ def sources_for(unit: str) -> dict[int, ImagerySource]:
                 record = json.loads((run.run_dir / "unit.json").read_text())
             except (OSError, ValueError):
                 record = {}
-            cache = project_paths().cache_root / "review" / "pc_items.json"
-            _sources[unit] = naip_sources(unit, run.years, record, cache)
+            _sources[unit] = naip_sources(unit, run.years, record, default_pc_cache())
         return _sources[unit]
 
 
@@ -146,6 +143,19 @@ def overlay_url(kind: str, unit: str, year: int, prev: int | None) -> str | None
     if kind == "probability":
         return f"/tiles/run/{unit}/maxprob/{xyz}"
     return None
+
+
+def overlay_label(kind: str, year: int, prev: int | None) -> str:
+    """What an overlay shows, for the map label."""
+    if kind == "CHM":
+        return f"CHM {year} (3 m)"
+    if kind == "CHM change" and prev is not None:
+        return f"CHM change {prev} to {year}"
+    if kind == "onset":
+        return "onset year"
+    if kind == "probability":
+        return "max loss probability"
+    return ""
 
 
 @dataclass
@@ -308,7 +318,11 @@ def MapPanel(
             ctrl.set_imagery(sources[year_now])
 
     def apply_overlay() -> None:
-        ctrl.set_overlay(overlay_url(overlay, unit, year_now, prev), opacity)
+        ctrl.set_overlay(
+            overlay_url(overlay, unit, year_now, prev),
+            opacity,
+            overlay_label(overlay, year_now, prev),
+        )
 
     def apply_outlines() -> None:
         ctrl.show_outlines(outlines_on)

@@ -7,6 +7,8 @@ catch-all route:
   ``naip_<year>_3m_rgb`` or ``chm_<year>_3m``
 - ``/tiles/dchm/<unit>/<year0>/<year1>/<z>/<x>/<y>.png``: CHM change
 - ``/tiles/run/<unit>/<onset|maxprob>/<z>/<x>/<y>.png``: run rasters
+- ``/tiles/pc/<unit>/<year>/<z>/<x>/<y>``: the unit's Planetary Computer
+  NAIP mosaic of a year, re-registered when it expires
 - ``/tiles/usda/<z>/<x>/<y>``: the USDA NAIP ImageServer
 
 A tile outside a raster is answered with 204 and no content, which Leaflet
@@ -102,6 +104,20 @@ def tile_routes(cfg: ReviewConfig | None = None) -> list[Route]:
             return _png(tiles.probability_tile(path, *_xyz(request)))
         raise ValueError(name)
 
+    def planetary(request: Request) -> Response:
+        unit = request.path_params["unit"]
+        _safe(unit)
+        try:
+            tile = imagery.pc_tile(
+                unit, int(request.path_params["year"]), *_xyz(request)
+            )
+        except KeyError as exc:
+            raise FileNotFoundError(str(exc)) from exc
+        if tile is None:
+            return Response(status_code=204)
+        content, media = tile
+        return Response(content, media_type=media, headers=_CACHE_HEADERS)
+
     def usda(request: Request) -> Response:
         content, media = imagery.usda_tile(*_xyz(request))
         return Response(content, media_type=media, headers=_CACHE_HEADERS)
@@ -114,6 +130,7 @@ def tile_routes(cfg: ReviewConfig | None = None) -> list[Route]:
             _endpoint(chm_change),
         ),
         Route(f"/tiles/run/{{unit}}/{{name}}/{xyz}.png", _endpoint(run_raster)),
+        Route(f"/tiles/pc/{{unit}}/{{year:int}}/{xyz}", _endpoint(planetary)),
         Route(f"/tiles/usda/{xyz}", _endpoint(usda)),
     ]
 
