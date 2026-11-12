@@ -533,8 +533,8 @@ class LabelRouting(_Base):
     """How two verdicts are combined."""
 
     reject_confidence: int = Field(default=3, ge=1, le=3)
-    guard_flagged_interval: bool = False
-    consecutive_loss: Literal["label", "ignore"] = "label"
+    guard_flagged_interval: bool = True
+    consecutive_loss: Literal["label", "ignore"] = "ignore"
 
 
 class LabelOutlines(_Base):
@@ -547,7 +547,7 @@ class LabelOutlines(_Base):
     polygon_min_cover: float = Field(default=0.5, ge=0, le=1)
     polygon_max_ratio: float = Field(default=10.0, gt=1)
     polygon_min_ha: float = Field(default=0.1, ge=0)
-    polygon_oversize: Literal["drop", "ignore"] = "drop"
+    polygon_oversize: Literal["drop", "ignore"] = "ignore"
 
 
 class LabelRules(_Base):
@@ -556,12 +556,12 @@ class LabelRules(_Base):
     band_precise_m: float = Field(default=4.8, ge=0)
     band_envelope_m: float = Field(default=9.6, ge=0)
     band_inside_precise_m: float = Field(default=4.8, ge=0)
-    band_inside_envelope_m: float = Field(default=9.6, ge=0)
+    band_inside_envelope_m: float = Field(default=0.0, ge=0)
     margin_m: float = Field(default=19.2, ge=0)
-    margin_precise_m: float = Field(default=19.2, ge=0)
+    margin_precise_m: float = Field(default=0.0, ge=0)
     margin_wide_m: float = Field(default=38.4, ge=0)
     raised_prob: float = Field(default=0.2, ge=0, le=1)
-    sparse_cover: float = Field(default=0.2, ge=0, le=1)
+    sparse_cover: float = Field(default=0.05, ge=0, le=1)
     sparse_height_m: float = Field(default=2.0, ge=0)
     unstable_change: float = Field(default=0.15, ge=0)
     fill_dips: bool = True

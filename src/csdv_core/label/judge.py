@@ -29,7 +29,12 @@ from csdv_core.label.outlines import (
     needs_polygon,
     parse_polygon,
 )
-from csdv_core.label.requests import Request, polygon_request, verdict_request
+from csdv_core.label.requests import (
+    VERDICT_PROMPT,
+    Request,
+    polygon_request,
+    verdict_request,
+)
 from csdv_core.label.routing import Routed, route, unjudged
 from csdv_core.label.stacks import WindowStack
 from csdv_core.label.verdicts import Verdict, parse_verdict
@@ -42,6 +47,7 @@ __all__ = [
     "judged_candidates",
     "polygon_requests",
     "read_records",
+    "record_key",
     "route_candidates",
     "send",
     "verdict_requests",
@@ -108,17 +114,30 @@ def read_records(path: Path) -> list[dict[str, Any]]:
     for line in path.read_text().splitlines():
         if line:
             rec = json.loads(line)
-            latest[rec["window_id"], rec["cand_id"], rec["kind"], rec["model"]] = rec
+            latest[record_key(rec)] = rec
     return list(latest.values())
 
 
+def record_key(rec: dict[str, Any]) -> tuple:
+    """What identifies a call: window, candidate, kind, model and its variant.
+
+    The variant is the prompt version and, for a polygon, the pair of dates.
+    Answers to an older prompt stay in the file and are never mistaken for
+    answers to the current one.
+    """
+    variant = json.dumps(rec.get("extra") or {}, sort_keys=True)
+    return (rec["window_id"], rec["cand_id"], rec["kind"], rec["model"], variant)
+
+
 def verdicts_of(
-    records: list[dict[str, Any]], window_id: str
+    records: list[dict[str, Any]], window_id: str, prompt: str = VERDICT_PROMPT
 ) -> dict[str, dict[str, Verdict]]:
-    """Verdicts of a window: candidate ID, then model."""
+    """Verdicts of a window under one prompt version: candidate ID, then model."""
     out: dict[str, dict[str, Verdict]] = {}
     for rec in records:
         if rec["window_id"] != window_id or rec["kind"] != "verdict":
+            continue
+        if (rec.get("extra") or {}).get("prompt") != prompt or rec.get("error"):
             continue
         verdict = parse_verdict(
             rec["model"], rec["answer"], len(rec["dates"]), rec.get("cost", 0.0)
@@ -192,11 +211,17 @@ def judged_candidates(
     """Candidates with their outcome and, where there is loss, their outline."""
     polygons = {}
     for rec in records:
-        if rec["window_id"] == window_id and rec["kind"] == "polygon":
-            *bounds, px = rec["view"]
-            polygons[rec["cand_id"]] = parse_polygon(
-                rec["answer"], View(tuple(bounds), int(px))
-            )
+        if rec["window_id"] != window_id or rec["kind"] != "polygon":
+            continue
+        # A polygon belongs to the interval it was drawn for. One drawn for
+        # another interval (under an older prompt) is not used.
+        result = routed.get(rec["cand_id"])
+        if result is None or (rec.get("extra") or {}).get("pre") != result.first_loss:
+            continue
+        *bounds, px = rec["view"]
+        polygons[rec["cand_id"]] = parse_polygon(
+            rec["answer"], View(tuple(bounds), int(px))
+        )
     out = []
     for row in candidates.itertuples():
         result = routed[row.cand_id]

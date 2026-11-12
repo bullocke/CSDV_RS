@@ -31,6 +31,7 @@ REJECTED_FLAGGED = "rejected_flagged"  # confident joint rejection, flagged inte
 REJECTED_WEAK = "rejected_weak"  # joint rejection below the confidence bar
 FLAGGED_UNCONFIRMED = "flagged_unconfirmed"  # flagged here, loss placed elsewhere
 LOSS_REPEATED = "loss_repeated"  # loss again right after an agreed loss
+STRESSED = "stressed"  # a model sees a leafless or thin canopy, not a loss
 FAILED = "failed"  # a verdict is missing or unusable
 UNJUDGED = "unjudged"  # large enough, never sent to the models
 UNDER_MIN = "under_min"  # too small to judge
@@ -96,7 +97,13 @@ def unjudged(n_intervals: int, flagged: int | None, small: bool) -> Routed:
 
 
 def _quiet(a: Verdict, b: Verdict, date: int) -> str:
-    return INTACT if a.states[date] == b.states[date] == "forest" else OPEN
+    """Outcome of an interval in which neither model reports loss."""
+    states = (a.states[date], b.states[date])
+    if "stressed" in states:
+        # Defoliated, or dead and standing: the pair of images differs, and
+        # the models cannot say that the canopy is intact.
+        return STRESSED
+    return INTACT if states == ("forest", "forest") else OPEN
 
 
 def route(a: Verdict, b: Verdict, flagged: int | None, cfg: LabelRouting) -> Routed:

@@ -359,11 +359,7 @@ def verdict_cmd(windows, kind, cap, workers, dry_run, **where) -> None:
     ledger = Ledger(run.root, cap=cap)
     models = run.models if kind == "verdict" else (run.models[1],)
     name = "requests.jsonl" if kind == "verdict" else "polygons.jsonl"
-    done = {
-        (r["window_id"], r["cand_id"], r["kind"], r["model"])
-        for r in J.read_records(run.answers)
-        if not r["error"]
-    }
+    done = {J.record_key(r) for r in J.read_records(run.answers) if not r["error"]}
     calls, upper = 0, 0.0
     for row in _selected(run, windows, None).itertuples():
         requests = load_requests(run.root / "requests" / row.window_id, name)
@@ -371,7 +367,16 @@ def verdict_cmd(windows, kind, cap, workers, dry_run, **where) -> None:
             todo = [
                 q
                 for q in requests
-                if (row.window_id, q.cand_id, kind, model) not in done
+                if J.record_key(
+                    {
+                        "window_id": row.window_id,
+                        "cand_id": q.cand_id,
+                        "kind": kind,
+                        "model": model,
+                        "extra": q.extra,
+                    }
+                )
+                not in done
             ]
             calls += len(todo)
             upper += sum(estimate_cost(model, len(q.images)) for q in todo)
@@ -505,7 +510,13 @@ def sheets_cmd(windows, max_pairs, **where) -> None:
             f"{LOCATIONS.get(unit.unit, '')}   [{note}]"
         )
         view = S.WindowView(
-            window.window_id, title, window.bounds, stack, built.labels, built.judged
+            window.window_id,
+            title,
+            window.bounds,
+            stack,
+            built.labels,
+            built.judged,
+            single_loss=2 not in run.cfg.policy.values(),
         )
         S.overview_sheet(view).save(out / f"{window.window_id}_overview.png")
         for chip, k, loss_px, ignore in S.choose_pairs(built.labels, window, max_pairs):

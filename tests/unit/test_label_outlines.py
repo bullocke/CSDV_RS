@@ -149,16 +149,13 @@ def test_without_a_usable_polygon() -> None:
 def test_oversize_polygon_can_be_kept_as_unlabelled_ground() -> None:
     huge = box(-400, -400, 500, 500)  # 81 times the candidate
     small = routed(fits=("too_small", "too_small"))
+    drop = CFG.outlines.model_copy(update={"polygon_oversize": "drop"})
     dropped = choose_outline(
-        CAND,
-        source="di",
-        geom_src="cells",
-        routed=small,
-        polygon=huge,
-        cfg=CFG.outlines,
+        CAND, source="di", geom_src="cells", routed=small, polygon=huge, cfg=drop
     )
     assert dropped.extension.is_empty and dropped.wide_margin
-    keep = CFG.outlines.model_copy(update={"polygon_oversize": "ignore"})
+    keep = CFG.outlines
+    assert keep.polygon_oversize == "ignore"
     kept = choose_outline(
         CAND, source="di", geom_src="cells", routed=small, polygon=huge, cfg=keep
     )

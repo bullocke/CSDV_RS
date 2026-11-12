@@ -84,15 +84,25 @@ The two renders start from the same quads, but the CHPC mosaics were resampled o
 
 ## Verdicts and cost
 
-`csdv label verdict` sends the rendered requests to Gemini 3.7 Flash and GPT-6.1 Terra (the frozen prompt is `label/prompts/verdict_v2.txt`). The keys `GEMINI_API_KEY` and `OpenRouter_API_KEY` are read from the environment or from `~/.bashrc`. `--cap` is required and has no default. A call is refused when its estimated cost would take the run past the cap, and the ledger survives between sessions, so the cap holds for the whole label run. Every answer is cached on a hash of the prompt and the images, so repeating a finished run costs nothing. Two verdicts on one candidate cost $0.016 in the example run, which is more than the pilot's $0.012 because many candidates needed the larger image. A polygon costs $0.004.
+`csdv label verdict` sends the rendered requests to Gemini 3.7 Flash and GPT-6.1 Terra (the prompt is `label/prompts/verdict_v3.txt`). The keys `GEMINI_API_KEY` and `OpenRouter_API_KEY` are read from the environment or from `~/.bashrc`. `--cap` is required and has no default. A call is refused when its estimated cost would take the run past the cap, and the ledger survives between sessions, so the cap holds for the whole label run. Every answer is cached on a hash of the prompt and the images, so repeating a finished run costs nothing. Answers are stored with their prompt version, and only answers to the current version are used, so a run can be re-judged after a prompt change while the old answers stay in `answers.jsonl` for comparison. Two verdicts on one candidate cost $0.016 in the example run, which is more than the pilot's $0.012 because many candidates needed the larger image. A polygon costs $0.004.
+
+## What counts as loss
+
+Canopy loss means that live trees were removed or died between two dates. Two things that change the image are not loss, and the prompt names both.
+
+Defoliation is not loss. A canopy that is leafless, brown or thin in one growing-season image and green again later was defoliated. The models record such a date as `stressed`, a fifth state beside forest, partial loss, full loss and open. They use the same state when they cannot tell from the images whether standing trees are dead. An interval that ends on a stressed date is left unlabelled.
+
+The removal or fall of trees that were already dead is not a second loss. Once the trees have died the ground is no longer forest, so the loss belongs to the interval in which they died, and later intervals are `open`.
+
+The first version of the prompt had neither rule. In the example run it dated an oak stand's loss to the July image in which spongy moth had stripped it, called every later date open, and so labelled the interval in which the trees were removed as background.
 
 ## Routing and outlines
 
 No person takes part in routing. A candidate is accepted when both models report canopy loss beginning on the same date, and rejected when neither reports loss on any date. When both report loss but name different first dates, the intervals from the earlier to the later date stay unlabelled and the rest is labelled. In every case an interval is labelled only where the two models agree about it.
 
-The models date the first visible damage to the crowns. The detection dates the loss of height. The two differ often: in the example run about a third of the accepted candidates were dated one to three intervals before the interval that flagged them. The label follows the models, because the classifier reads NAIP only. It has a cost: when the models date an event to an early sign (a defoliated canopy in a July image), they tend to call the later intervals "open", and the interval in which the trees actually went becomes background. With `routing.guard_flagged_interval: true` the interval that flagged a candidate is left unlabelled unless both models report loss in it. The default leaves it to the models. In the same spirit, `routing.consecutive_loss: ignore` labels only the first of two losses in consecutive intervals. The second was ground already cleared in the three cases checked in the example run.
+The models date the first visible damage to the crowns. The detection dates the loss of height. The two differ often: in the example run about a third of the accepted candidates were dated one to three intervals before the interval that flagged them. The label follows the models, because the classifier reads NAIP only, with two safeguards. The interval that flagged a candidate is left unlabelled unless both models report loss in it (`routing.guard_flagged_interval`), so that a height loss the detection saw is never background on the models' say-so. Loss reported again in the interval right after an agreed loss is also left unlabelled (`routing.consecutive_loss`): in the three example cases that were checked, the second interval showed ground already cleared. A later loss after a quiet interval is a new event and is labelled.
 
-The candidate outline is the labelled core whenever both models call it about right. Otherwise Terra draws a polygon, which is used only if it covers at least half of the candidate and is at most ten times its area. In the example run 27 of 51 polygons covered their candidate but were larger than that, which is the model saying that the candidate is a fragment of a larger event. With `outlines.polygon_oversize: ignore` such a polygon is kept as unlabelled ground, never as loss. The default discards it. For types with sharp edges (clearcut, clearing, mining, and fire with full loss) the polygon beyond the candidate is labelled as loss. For diffuse types it is left unlabelled, so that an unflagged part of a damaged stand cannot become background.
+The candidate outline is the labelled core whenever both models call it about right. Otherwise Terra draws a polygon. It replaces or extends the outline only if it covers at least half of the candidate and is at most ten times its area. For types with sharp edges (clearcut, clearing, mining, and fire with full loss) the polygon beyond the candidate is labelled as loss. For diffuse types it is left unlabelled, so that an unflagged part of a damaged stand cannot become background. A polygon that covers its candidate but is more than ten times its area says that the candidate is a fragment of a larger event. In the example run 27 of 51 polygons were of this kind. Such a polygon is kept as unlabelled ground, never as loss (`outlines.polygon_oversize`).
 
 ## Label rules and reasons
 
@@ -100,20 +110,25 @@ Each pixel of each interval gets a reason, and the change label is a lookup of t
 
 | Reason | Meaning | Default label |
 |---|---|---|
-| `accepted_full`, `accepted_partial`, `accepted_severity_disputed` | Inside an accepted candidate, both models report loss in this interval | 2, 1, 1 |
-| `extension_full`, `extension_partial` | Model polygon beyond a crisp candidate | 2, 1 |
-| `boundary_inside`, `boundary_outside` | Band along the outline of the labelled loss (4.8 m precise, 9.6 m envelope) | ignore |
+| `accepted_full`, `accepted_partial`, `accepted_severity_disputed` | Inside an accepted candidate, both models report loss in this interval | 1 |
+| `extension_full`, `extension_partial` | Model polygon beyond a crisp candidate | 1 |
+| `boundary_inside`, `boundary_outside` | Band along the outline of the labelled loss: 4.8 m on both sides of a precise outline, 9.6 m outside an envelope | ignore |
 | `extension_ignored`, `outline_trimmed` | Model polygon beyond a diffuse candidate, and candidate the polygon leaves out | ignore |
-| `disagree`, `date_disputed`, `verdict_failed`, `unjudged`, `flagged_unconfirmed`, `loss_repeated` | The models split, there is no usable pair of verdicts, or (with the options on) they place the loss in another interval than the one that flagged the candidate, or report loss again right after an agreed loss | ignore |
+| `disagree`, `date_disputed`, `verdict_failed`, `unjudged` | The models split, or there is no usable pair of verdicts | ignore |
+| `flagged_unconfirmed`, `loss_repeated`, `canopy_stressed` | The models place the loss in another interval than the one that flagged the candidate, report loss again right after an agreed loss, or see a leafless or thin canopy that is not a loss | ignore |
 | `rejected_flagged`, `rejected_weak` | Jointly rejected candidate, in the interval that flagged it | ignore |
-| `margin` | Ring of 19.2 m around a candidate that is loss or unlabelled | ignore |
+| `margin` | Ring of 19.2 m around a candidate that is loss or unlabelled. None around an accepted candidate with a precise outline | ignore |
 | `under_min`, `raised_prob`, `forest_lost_unjudged` | Candidate under 0.3 ha, probability of 0.2 or more, or a cell that left the forest mask, none of them judged | ignore |
-| `sparse_woody`, `unstable_forest`, `no_data` | Low woody cover below the forest rule, forest in an interval where the unit's forest mask moves by more than 15%, missing imagery or canopy height | ignore |
+| `sparse_woody`, `unstable_forest`, `no_data` | Trees below the forest rule (canopy cover from 0.05, about one crown in a cell, or mean height from 2 m), forest in an interval where the unit's forest mask moves by more than 15%, missing imagery or canopy height | ignore |
 | `judged_intact`, `post_event_open` | Inside a candidate, both models report no loss in this interval | 0 |
-| `nonforest` | Not forest at the earlier date | 0 |
+| `nonforest` | Not forest at the earlier date, and no trees to speak of | 0 |
 | `stable_forest` | Forest on both dates, outside every candidate | 0 |
 
-Where several rules claim a pixel, loss wins over ignore and ignore wins over background. The band is measured from the edge of the whole event, so a core that runs into an unlabelled extension has no band on that side. The band inside an outline (`band_inside_precise_m`, `band_inside_envelope_m`) and the ring around a precise outline (`margin_precise_m`) have their own widths. The inner band is costly: at 9.6 m an envelope event kept a median of 48% of its area in the example run. `csdv label build --config FILE` builds the labels under other values without touching the packaged ones.
+Where several rules claim a pixel, loss wins over ignore and ignore wins over background. The band is measured from the edge of the whole event, so a core that runs into an unlabelled extension has no band on that side.
+
+An envelope has no band on its inside and a precise outline has no ring. Both were in the first plan and both were dropped after the example run. A 9.6 m band inside an envelope left a median of 48% of its area as labelled loss, and the uncertainty of an envelope lies outside it, where the ring already is. The ring around a precise outline hid the forest edge next to a clearcut, which is the contrast the model most needs. The widths are in `label.yaml` (`band_inside_envelope_m`, `margin_precise_m`), and `csdv label build --config FILE` builds the labels under other values without touching the packaged ones.
+
+There is one loss class. The models judge severity for the whole outline, so cleared ground inside an envelope is often called partial, and the example run found bare ground labelled partial in a mine bench, a clearcut and a log landing. The reason raster keeps what the models said (`accepted_full` against `accepted_partial`), and the policy table can map stand-replacing loss to 2 again once severity is reliable at cell scale. The `events` layer keeps the severity of each event.
 
 Labels are stored at 0.6 m and pooled to the model's output cells by `csdv_core.label.pooling.pool_change`. A cell is ignore when half of it is ignore. Otherwise it is loss when at least half of its labelled pixels are loss, background when at most 10% are, and ignore in between.
 
@@ -124,7 +139,7 @@ A chip is 512 by 512 px (307.2 m) on the global 0.6 m lattice, so it is the same
 | File | Bands |
 |---|---|
 | `<chip>_naip.tif` | Dates by four bands, named `YYYY-MM-DD_R` and so on |
-| `<chip>_change.tif` | One per interval: 0 background, 1 partial, 2 stand-replacing, 255 ignore |
+| `<chip>_change.tif` | One per interval: 0 background, 1 loss, 255 ignore (2 is reserved for stand-replacing loss) |
 | `<chip>_agent.tif` | One per interval: 1 harvest, 2 wind, 3 fire, 4 biotic mortality, 5 conversion, 6 other, 255 where there is no agreed loss or the models named different agents |
 | `<chip>_reason.tif` | One per interval: the reason codes of `csdv_core.label.rules.Reason` |
 | `<chip>_aux.tif` | Disturbance probability per interval (percent) and the forest mask per date. Not model inputs |
@@ -139,7 +154,7 @@ The label rasters need only the candidates, the answers and the cell layers, so 
 
 ## Notes
 
-The label of an interval describes loss that became visible in it. Ground that was cleared earlier, or dead trees that are removed later, counts as background when both models report no new loss, even though the two images differ.
+The label of an interval describes live trees that were removed or died in it. Ground that was cleared earlier, or dead trees that are removed later, counts as background when both models report no new loss, even though the two images differ. The classifier may still respond to a defoliated canopy or to the removal of dead trees, because both change the image strongly. The labels leave the first unlabelled and call the second background where the models are sure.
 
 Jointly rejected candidates are unlabelled only in the interval that flagged them. About one joint rejection in twelve was a real disturbance in the pilot.
 

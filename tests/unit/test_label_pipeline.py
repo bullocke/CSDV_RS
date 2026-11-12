@@ -103,7 +103,7 @@ def _write_answers(run: LabelRun, fit: str = "about_right") -> None:
                     "model": model,
                     "dates": q.dates,
                     "view": [*q.view.bounds, q.view.px],
-                    "extra": {},
+                    "extra": q.extra,
                     "answer": answer,
                     "cost": 0.0,
                     "cached": False,
@@ -142,6 +142,24 @@ def test_render_then_build(run: LabelRun, tmp_path: Path) -> None:
     blind = build_window(run, ROW, records, with_stack=False)
     assert (blind.labels.reason == reason).all()
     assert blind.labels.intervals == built.labels.intervals
+
+
+def test_answers_to_an_older_prompt_are_not_used(run: LabelRun, tmp_path: Path) -> None:
+    render_window(run, ROW, source="local", data_root=tmp_path / "data")
+    _write_answers(run)
+    records = J.read_records(run.answers)
+    assert len(J.verdicts_of(records, "w1")) == 3
+    assert J.verdicts_of(records, "w1", prompt="verdict_v2") == {}
+    old = [{**r, "extra": {"prompt": "verdict_v2"}} for r in records]
+    run.answers.unlink()
+    J.append_records(run.answers, old)
+    kept = J.read_records(run.answers)
+    assert len(kept) == 6 and J.verdicts_of(kept, "w1") == {}
+    built = build_window(run, ROW, kept)
+    assert {c.routed.status for c in built.judged} == {"unjudged"}
+    # Old and new answers to the same call live side by side.
+    J.append_records(run.answers, records)
+    assert len(J.read_records(run.answers)) == 12
 
 
 def test_polygon_requests_follow_the_verdicts(run: LabelRun, tmp_path: Path) -> None:

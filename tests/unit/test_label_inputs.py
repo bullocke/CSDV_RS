@@ -242,7 +242,7 @@ def test_window_labels_and_chips(unit, tmp_path: Path) -> None:
     assert at(1, 31.5, 26.5) == Reason.STABLE_FOREST
     assert at(0, 36, 32) == Reason.NONFOREST and at(0, 36, 36) == Reason.SPARSE_WOODY
     assert at(0, 20, 20) == Reason.STABLE_FOREST
-    assert labels.change[0][labels.reason[0] == Reason.ACCEPTED_FULL].max() == 2
+    assert labels.change[0][labels.reason[0] == Reason.ACCEPTED_FULL].max() == 1
     assert labels.prob.max() <= 100 or labels.prob.max() == 255
     assert labels.forest.shape == (3, 1024, 1024)
 

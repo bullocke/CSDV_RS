@@ -126,6 +126,9 @@ def interval_rows(
             pooled = pool_change(labels.change[k], round(cell_m / GSD), cfg.pooling)
             for value, name in _CLASS.items():
                 row[f"cell{cell_m:g}_{name}"] = float((pooled == value).mean())
+            # Loss of either severity. With one loss class in the policy the
+            # "partial" column holds all of it.
+            row[f"cell{cell_m:g}_loss"] = float(np.isin(pooled, (1, 2)).mean())
         z = greenness_z(stack, window, labels, k)
         if z is not None:
             majority = _majority_group(reason, 16)

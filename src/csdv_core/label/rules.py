@@ -63,6 +63,7 @@ class Reason(IntEnum):
     UNJUDGED = 29
     FLAGGED_UNCONFIRMED = 36
     LOSS_REPEATED = 37
+    CANOPY_STRESSED = 38
     # Unlabelled as a precaution, without a verdict.
     MARGIN = 30
     UNDER_MIN = 31
@@ -100,6 +101,7 @@ REASON_GROUPS: dict[str, tuple[Reason, ...]] = {
         Reason.UNJUDGED,
         Reason.FLAGGED_UNCONFIRMED,
         Reason.LOSS_REPEATED,
+        Reason.CANOPY_STRESSED,
     ),
     "ignore_guard": (
         Reason.MARGIN,
@@ -124,6 +126,7 @@ _OUTCOME_REASON = {
     R.UNJUDGED: Reason.UNJUDGED,
     R.FLAGGED_UNCONFIRMED: Reason.FLAGGED_UNCONFIRMED,
     R.LOSS_REPEATED: Reason.LOSS_REPEATED,
+    R.STRESSED: Reason.CANOPY_STRESSED,
 }
 _LOSS_REASON = {
     R.LOSS_FULL: (Reason.ACCEPTED_FULL, Reason.EXTENSION_FULL),

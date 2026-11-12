@@ -6,8 +6,9 @@ label of each interval. A pair sheet shows one training sample as the model
 will see it: the two dates, the label at 0.6 m and the target pooled to
 output cells.
 
-Colours follow one scheme everywhere. Loss is red (stand-replacing) or amber
-(partial). Background is green (forest), light green (inside a candidate the
+Colours follow one scheme everywhere. Loss is red. Where the change mask keeps
+two severities, partial loss is amber, and the map of reasons always shows
+which severity the models gave. Background is green (forest), light green (inside a candidate the
 models judged) or blue (non-forest). Unlabelled ground is grey and hatched,
 darker for precautions without a verdict. The hues pass a colour-blindness
 check as a set, and the hatching and the outlines carry the same information
@@ -102,7 +103,9 @@ def _hatch(shape: tuple[int, int], step: int = 8) -> np.ndarray:
     return (rows + cols) % step == 0
 
 
-def label_overlay(rgb: np.ndarray, reason: np.ndarray) -> np.ndarray:
+def label_overlay(
+    rgb: np.ndarray, reason: np.ndarray, single_loss: bool = False
+) -> np.ndarray:
     """An image with its label drawn over it.
 
     Loss is tinted red or amber and non-forest background blue. Unlabelled
@@ -112,6 +115,8 @@ def label_overlay(rgb: np.ndarray, reason: np.ndarray) -> np.ndarray:
     Args:
         rgb: ``(rows, cols, 3)`` uint8 image.
         reason: ``(rows, cols)`` reason codes on the same grid.
+        single_loss: The label has one loss class, so all loss is tinted red
+            whatever severity the models gave.
     """
     out = rgb.astype(np.float32)
     group = reason_group(reason)
@@ -127,7 +132,8 @@ def label_overlay(rgb: np.ndarray, reason: np.ndarray) -> np.ndarray:
     for name, alpha in tints.items():
         mask = group == names.index(name)
         if mask.any():
-            colour = np.array(GROUP_COLOURS[name], dtype=np.float32)
+            fill = "loss_full" if single_loss and name == "loss_partial" else name
+            colour = np.array(GROUP_COLOURS[fill], dtype=np.float32)
             out[mask] = (1 - alpha) * out[mask] + alpha * colour
     ignored = np.isin(group, [names.index(n) for n in names if n.startswith("ignore")])
     out[ignored & _hatch(reason.shape)] = 245.0
@@ -147,11 +153,17 @@ def reason_image(reason: np.ndarray) -> np.ndarray:
     return out
 
 
-def cell_image(pooled: np.ndarray, size: int) -> Image.Image:
-    """A pooled change mask as flat colours, enlarged to ``size`` pixels."""
+def cell_image(pooled: np.ndarray, size: int, single_loss: bool = False) -> Image.Image:
+    """A pooled change mask as flat colours, enlarged to ``size`` pixels.
+
+    With ``single_loss`` the value 1 means loss of any severity and is drawn
+    in the loss colour, not the partial one.
+    """
     table = np.zeros((256, 3), dtype=np.uint8)
     for value, colour in CHANGE_COLOURS.items():
         table[value] = colour
+    if single_loss:
+        table[1] = CHANGE_COLOURS[2]
     img = Image.fromarray(table[pooled]).resize((size, size), Image.NEAREST)
     cells = pooled.shape[0]
     if size // cells >= 8:
@@ -163,14 +175,23 @@ def cell_image(pooled: np.ndarray, size: int) -> Image.Image:
     return img
 
 
-def legend(width: int, pooled: bool = False) -> Image.Image:
+def legend(width: int, pooled: bool = False, single_loss: bool = False) -> Image.Image:
     """A legend strip: every fill with its meaning, text in ink."""
     f = font(15)
+    labels = dict(GROUP_LABELS)
+    if single_loss:
+        labels["loss_full"] = "loss (models said stand-replacing)"
+        labels["loss_partial"] = "loss (models said partial)"
     entries = [
-        (GROUP_COLOURS[n], GROUP_LABELS[n], n.startswith("ignore"))
-        for n in REASON_GROUPS
+        (GROUP_COLOURS[n], labels[n], n.startswith("ignore")) for n in REASON_GROUPS
     ]
-    if pooled:
+    if pooled and single_loss:
+        entries = [
+            (CHANGE_COLOURS[2], "cell: loss", False),
+            (CHANGE_COLOURS[0], "cell: background", False),
+            (CHANGE_COLOURS[IGNORE], "cell: ignore", False),
+        ]
+    elif pooled:
         entries = [
             (CHANGE_COLOURS[2], "cell: stand-replacing", False),
             (CHANGE_COLOURS[1], "cell: partial", False),
@@ -317,6 +338,7 @@ _SHORT = {
     "rejected_weak": "rej?",
     "flagged_unconfirmed": "flag?",
     "loss_repeated": "again?",
+    "stressed": "stress",
     "failed": "fail",
     "unjudged": "-",
     "under_min": "small",
@@ -373,6 +395,8 @@ class WindowView:
     stack: WindowStack
     labels: WindowLabels
     candidates: list[JudgedCandidate]
+    #: The change mask has one loss class (the policy maps no reason to 2).
+    single_loss: bool = False
 
 
 def overview_sheet(win: WindowView, panel_px: int = 384) -> Image.Image:
@@ -410,9 +434,9 @@ def overview_sheet(win: WindowView, panel_px: int = 384) -> Image.Image:
     panels.append(caption(first, "all candidates"))
     for k in range(len(labels.intervals)):
         rgb = date_image(stack, k + 1, win.bounds, "rgb")
-        img = Image.fromarray(label_overlay(rgb, labels.reason[k])).resize(
-            size, Image.LANCZOS
-        )
+        img = Image.fromarray(
+            label_overlay(rgb, labels.reason[k], win.single_loss)
+        ).resize(size, Image.LANCZOS)
         draw_candidates(img, view, win.candidates, k)
         note = " (forest mask unreliable)" if labels.unstable[k] else ""
         panels.append(
@@ -421,7 +445,7 @@ def overview_sheet(win: WindowView, panel_px: int = 384) -> Image.Image:
     rows.append(row_of(panels))
     body = stack_rows(rows)
     head = header([win.title, *candidate_lines(win.candidates)], body.width)
-    return stack_rows([head, body, legend(body.width)])
+    return stack_rows([head, body, legend(body.width, single_loss=win.single_loss)])
 
 
 def pair_sheet(
@@ -446,15 +470,19 @@ def pair_sheet(
     view = View(chip_bounds, px)
     pre = Image.fromarray(date_image(stack, k, chip_bounds, "rgb"))
     post = Image.fromarray(date_image(stack, k + 1, chip_bounds, "rgb"))
-    over = Image.fromarray(label_overlay(np.asarray(post), reason))
+    over = Image.fromarray(label_overlay(np.asarray(post), reason, win.single_loss))
     draw_candidates(over, view, win.candidates, k)
     flat = Image.fromarray(reason_image(reason))
     cells = sorted(pooling.cells_m)
     coarse = pool_change(change, round(cells[-1] / GSD), pooling)
-    target = cell_image(coarse, px)
+    target = cell_image(coarse, px, win.single_loss)
     small = [
         caption(
-            cell_image(pool_change(change, round(c / GSD), pooling), px // 2 - 2),
+            cell_image(
+                pool_change(change, round(c / GSD), pooling),
+                px // 2 - 2,
+                win.single_loss,
+            ),
             f"{c:g} m cells",
         )
         for c in cells[:-1]
@@ -481,4 +509,11 @@ def pair_sheet(
         ],
         body.width,
     )
-    return stack_rows([head, body, legend(body.width), legend(body.width, pooled=True)])
+    return stack_rows(
+        [
+            head,
+            body,
+            legend(body.width, single_loss=win.single_loss),
+            legend(body.width, pooled=True, single_loss=win.single_loss),
+        ]
+    )

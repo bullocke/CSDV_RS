@@ -26,7 +26,7 @@ from csdv_core.label.stacks import WindowStack
 from csdv_core.label.views import View, _inside, _snap, hybrid_view
 
 #: Frozen prompt versions. A new wording gets a new file and a new version.
-VERDICT_PROMPT = "verdict_v2"
+VERDICT_PROMPT = "verdict_v3"
 POLYGON_PROMPT = "polygon_v1"
 
 #: Location text given to the models: state and physiographic region. Site

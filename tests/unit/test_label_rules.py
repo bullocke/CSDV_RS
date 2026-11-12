@@ -91,42 +91,51 @@ def test_unstable_interval_has_no_unverified_forest_background() -> None:
     assert (to_change(reason, CFG.policy) == IGNORE).all()
 
 
-@pytest.mark.parametrize("precise,band", [(True, BAND_PRECISE), (False, BAND_ENVELOPE)])
-def test_accepted_candidate_band_and_ring(precise: bool, band: int) -> None:
+def test_precise_outline_has_a_band_on_both_sides_and_no_ring() -> None:
     mask = square(60, 140, 60, 140)
-    cand = CandidateLayer(R.LOSS_FULL, mask, core=mask, precise=precise, agent=1)
+    cand = CandidateLayer(R.LOSS_FULL, mask, core=mask, precise=True, agent=1)
     reason, agent = interval_reason(base(), [cand], RULES)
     row = reason[100]
     assert row[100] == Reason.ACCEPTED_FULL and agent[100, 100] == 1
-    # Inside the outline: a band, then loss.
-    assert (row[60 : 60 + band] == Reason.BOUNDARY_INSIDE).all()
-    assert row[60 + band] == Reason.ACCEPTED_FULL
+    assert (row[60 : 60 + BAND_PRECISE] == Reason.BOUNDARY_INSIDE).all()
+    assert row[60 + BAND_PRECISE] == Reason.ACCEPTED_FULL
     assert agent[100, 60] == IGNORE
-    # Outside: a band, then the ring, then forest.
-    assert (row[60 - band : 60] == Reason.BOUNDARY_OUTSIDE).all()
-    assert (row[60 - MARGIN : 60 - band] == Reason.MARGIN).all()
-    assert row[60 - MARGIN - 1] == Reason.STABLE_FOREST
+    assert (row[60 - BAND_PRECISE : 60] == Reason.BOUNDARY_OUTSIDE).all()
+    # No ring beyond the band: the forest edge of a clearcut is background.
+    assert row[60 - BAND_PRECISE - 1] == Reason.STABLE_FOREST
     change = to_change(reason, CFG.policy)
-    assert change[100, 100] == 2 and change[100, 60] == IGNORE
+    assert change[100, 100] == 1 and change[100, 60] == IGNORE
     assert change[100, 10] == 0
 
 
-def test_inner_band_and_precise_ring_can_be_switched_off() -> None:
+def test_envelope_is_labelled_to_its_outline_and_keeps_its_ring() -> None:
     mask = square(60, 140, 60, 140)
-    rules = RULES.model_copy(
-        update={"band_inside_precise_m": 0.0, "margin_precise_m": 0.0}
-    )
-    cand = CandidateLayer(R.LOSS_FULL, mask, core=mask, precise=True, agent=1)
-    reason, agent = interval_reason(base(), [cand], rules)
+    cand = CandidateLayer(R.LOSS_PARTIAL, mask, core=mask, precise=False, agent=1)
+    reason, agent = interval_reason(base(), [cand], RULES)
     row = reason[100]
-    assert row[60] == Reason.ACCEPTED_FULL and agent[100, 60] == 1  # up to the outline
-    assert (row[60 - BAND_PRECISE : 60] == Reason.BOUNDARY_OUTSIDE).all()
-    assert row[60 - BAND_PRECISE - 1] == Reason.STABLE_FOREST  # no ring beyond the band
-    # An envelope keeps its ring, and its own inner band setting.
-    loose = CandidateLayer(R.LOSS_PARTIAL, mask, core=mask, precise=False)
-    reason, _ = interval_reason(base(), [loose], rules)
-    assert reason[100, 60] == Reason.BOUNDARY_INSIDE
+    assert row[60] == Reason.ACCEPTED_PARTIAL and agent[100, 60] == 1
+    assert not (reason == Reason.BOUNDARY_INSIDE).any()
+    assert (row[60 - BAND_ENVELOPE : 60] == Reason.BOUNDARY_OUTSIDE).all()
+    assert (row[60 - MARGIN : 60 - BAND_ENVELOPE] == Reason.MARGIN).all()
+    assert row[60 - MARGIN - 1] == Reason.STABLE_FOREST
+
+
+#: The widths of the first plan: a band inside envelopes, a ring around
+#: precise outlines. Still available through the configuration.
+FIRST_PLAN = RULES.model_copy(
+    update={"band_inside_envelope_m": 9.6, "margin_precise_m": 19.2}
+)
+
+
+def test_inner_band_and_precise_ring_can_be_restored() -> None:
+    mask = square(60, 140, 60, 140)
+    sharp = CandidateLayer(R.LOSS_FULL, mask, core=mask, precise=True)
+    reason, _ = interval_reason(base(), [sharp], FIRST_PLAN)
     assert reason[100, 60 - MARGIN + 1] == Reason.MARGIN
+    loose = CandidateLayer(R.LOSS_PARTIAL, mask, core=mask, precise=False)
+    reason, _ = interval_reason(base(), [loose], FIRST_PLAN)
+    assert (reason[100, 60 : 60 + BAND_ENVELOPE] == Reason.BOUNDARY_INSIDE).all()
+    assert reason[100, 60 + BAND_ENVELOPE] == Reason.ACCEPTED_PARTIAL
 
 
 def test_diffuse_extension_is_unlabelled_and_has_no_inner_band() -> None:
@@ -135,11 +144,11 @@ def test_diffuse_extension_is_unlabelled_and_has_no_inner_band() -> None:
     cand = CandidateLayer(
         R.LOSS_PARTIAL, mask, core=mask, extension=extension, crisp=False, agent=1
     )
-    reason, _ = interval_reason(base(), [cand], RULES)
+    reason, _ = interval_reason(base(), [cand], FIRST_PLAN)
     assert reason[100, 120] == Reason.EXTENSION_IGNORED
     # The core runs up to the extension without a band: the event continues.
     assert reason[100, 99] == Reason.ACCEPTED_PARTIAL
-    # The other sides of the core still have one.
+    # The other sides of the core still have one, when an inner band is set.
     assert reason[100, 60] == Reason.BOUNDARY_INSIDE
     # The ring is measured from the extension.
     assert reason[100, 150 + MARGIN - 1] == Reason.MARGIN
@@ -152,11 +161,14 @@ def test_crisp_extension_is_loss() -> None:
     cand = CandidateLayer(
         R.LOSS_FULL, mask, core=mask, extension=extension, crisp=True, agent=5
     )
-    reason, agent = interval_reason(base(), [cand], RULES)
+    reason, agent = interval_reason(base(), [cand], FIRST_PLAN)
     assert reason[100, 120] == Reason.EXTENSION_FULL and agent[100, 120] == 5
     assert reason[100, 100] == Reason.EXTENSION_FULL
     assert reason[100, 149] == Reason.BOUNDARY_INSIDE
-    assert to_change(reason, CFG.policy)[100, 120] == 2
+    assert to_change(reason, CFG.policy)[100, 120] == 1
+    # Two severities can be brought back through the policy.
+    two = {**CFG.policy, "extension_full": 2, "accepted_full": 2}
+    assert to_change(reason, two)[100, 120] == 2
 
 
 def test_trimmed_part_and_unusable_outline() -> None:
@@ -189,17 +201,44 @@ def test_loss_beats_ignore_beats_background() -> None:
 
 
 def test_judged_intact_beats_a_neighbours_ring() -> None:
-    loss = CandidateLayer(R.LOSS_FULL, square(40, 100, 40, 100), precise=True)
+    loss = CandidateLayer(R.LOSS_PARTIAL, square(40, 100, 40, 100), precise=False)
     loss.core = loss.mask
-    intact = CandidateLayer(R.INTACT, square(40, 100, 115, 170))
+    intact = CandidateLayer(R.INTACT, square(40, 100, 125, 180))
     reason, _ = interval_reason(base(), [loss, intact], RULES)
     assert reason[70, 105] == Reason.BOUNDARY_OUTSIDE
-    assert reason[70, 112] == Reason.MARGIN
-    assert reason[70, 120] == Reason.JUDGED_INTACT  # inside the ring of `loss`
-    open_after = CandidateLayer(R.OPEN, square(40, 100, 115, 170))
+    assert reason[70, 120] == Reason.MARGIN
+    assert reason[70, 127] == Reason.JUDGED_INTACT  # inside the ring of `loss`
+    open_after = CandidateLayer(R.OPEN, square(40, 100, 125, 180))
     reason, _ = interval_reason(base(), [open_after], RULES)
-    assert reason[70, 120] == Reason.POST_EVENT_OPEN
+    assert reason[70, 127] == Reason.POST_EVENT_OPEN
     assert reason[70, 110] == Reason.STABLE_FOREST  # no ring around background
+
+
+def test_stressed_canopy_is_unlabelled() -> None:
+    stressed = CandidateLayer(R.STRESSED, square(60, 140, 60, 140))
+    reason, _ = interval_reason(base(), [stressed], RULES)
+    assert reason[100, 100] == Reason.CANOPY_STRESSED
+    assert to_change(reason, CFG.policy)[100, 100] == IGNORE
+    assert reason[100, 50] == Reason.MARGIN  # and it keeps a ring
+
+
+def test_scattered_trees_below_the_forest_rule_are_unlabelled() -> None:
+    before = np.zeros((N, N), bool)
+    cover = np.zeros((N, N), "float32")
+    cover[:, 100:] = 0.06  # about one crown in a cell
+    height = np.full((N, N), 0.4, "float32")
+    reason, _ = interval_reason(
+        base(
+            forest_before=before,
+            forest_after=before,
+            cover_before=cover,
+            height_before=height,
+        ),
+        [],
+        RULES,
+    )
+    assert reason[50, 50] == Reason.NONFOREST
+    assert reason[50, 150] == Reason.SPARSE_WOODY
 
 
 def test_small_candidate_is_unlabelled_without_a_ring() -> None:

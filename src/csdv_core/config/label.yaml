@@ -45,15 +45,17 @@ routing:
   reject_confidence: 3
   # Whether the interval in which a candidate was flagged can be background
   # when the models place its loss in another interval. The models date the
-  # first visible damage (a defoliated canopy, say), and the detection dates
-  # the loss of height. With `true`, the flagged interval is left unlabelled
-  # unless both models report loss in it.
-  guard_flagged_interval: false
+  # first visible damage, and the detection dates the loss of height. With
+  # `true`, the flagged interval is left unlabelled unless both models report
+  # loss in it. Adopted 2026-11-11: under `false`, 21 of 133 example
+  # candidates had the interval of their height loss as background.
+  guard_flagged_interval: true
   # What to do when both models report loss again in the interval right
   # after an agreed loss. "label" labels both. "ignore" labels the first and
-  # leaves the second unlabelled: in the example run the second was ground
-  # already cleared in three of the three cases that were checked.
-  consecutive_loss: label
+  # leaves the second unlabelled. Adopted 2026-11-11: the second was ground
+  # already cleared in three of the three example cases that were checked,
+  # and removal of trees that are already dead is not a second disturbance.
+  consecutive_loss: ignore
 
 outlines:
   # Types whose edges are sharp enough to trust a model polygon as a label.
@@ -68,30 +70,34 @@ outlines:
   # What to do with a polygon that covers the candidate but is larger than
   # `polygon_max_ratio` times it. Such a polygon says the candidate is a
   # fragment of a much larger event. "drop" discards it. "ignore" keeps it as
-  # ground that is left unlabelled, never as loss.
-  polygon_oversize: drop
+  # ground that is left unlabelled, never as loss. Adopted 2026-11-11: 27 of
+  # 51 example polygons were of this kind.
+  polygon_oversize: ignore
 
 rules:
   # Ignore band outside an accepted outline.
   band_precise_m: 4.8
   band_envelope_m: 9.6
-  # Ignore band inside an accepted outline. It costs labelled loss: at 9.6 m
-  # a 1 ha envelope keeps under half of its area.
+  # Ignore band inside an accepted outline. An envelope has none: a 9.6 m
+  # band left a 1 ha envelope under half of its area, and the uncertainty of
+  # an envelope lies outside it, where the ring already is.
   band_inside_precise_m: 4.8
-  band_inside_envelope_m: 9.6
+  band_inside_envelope_m: 0.0
   # Ignore ring around a candidate whose interior is loss or ignore.
   margin_m: 19.2
-  # Ring around an accepted candidate with a precise outline. The band
+  # Ring around an accepted candidate with a precise outline. None: the band
   # already covers the uncertainty of such an outline, and a wide ring hides
   # the forest edge that the model most needs to see as background.
-  margin_precise_m: 19.2
+  margin_precise_m: 0.0
   # Ring used when a model calls the outline too small and no polygon is usable.
   margin_wide_m: 38.4
   # Unjudged cells at or above this DI probability are never background.
   raised_prob: 0.2
   # A cell below the forest rule still counts as woody (ignore, not
-  # non-forest) with this canopy cover or this mean height.
-  sparse_cover: 0.2
+  # non-forest) with this canopy cover or this mean height. A cover of 0.05
+  # is about one crown in a 19.2 m cell, so scattered trees are left
+  # unlabelled and their loss is never background.
+  sparse_cover: 0.05
   sparse_height_m: 2.0
   # A unit interval whose forest area changes by more than this share has an
   # unreliable forest mask. Unverified forest background becomes ignore there.
@@ -108,14 +114,20 @@ pooling:
   background_share: 0.1
   cells_m: [2.4, 4.8, 9.6]
 
-# Label of each reason: 0 background, 1 partial loss, 2 stand-replacing loss,
-# 255 ignore. Reasons not listed are ignore. A loader can apply another table
-# to the stored reason raster without new labels.
+# Label of each reason: 0 background, 1 loss, 255 ignore. Reasons not listed
+# are ignore. A loader can apply another table to the stored reason raster
+# without new labels.
+#
+# There is one loss class for now. The models judge severity for the whole
+# outline, so cleared ground inside an envelope is often called partial.
+# The reason raster keeps what they said (accepted_full, accepted_partial),
+# and a value of 2 for stand-replacing loss can be brought back here once
+# severity is reliable at cell scale.
 policy:
-  accepted_full: 2
+  accepted_full: 1
   accepted_partial: 1
   accepted_severity_disputed: 1
-  extension_full: 2
+  extension_full: 1
   extension_partial: 1
   judged_intact: 0
   post_event_open: 0

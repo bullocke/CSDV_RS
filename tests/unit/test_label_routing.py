@@ -23,7 +23,13 @@ def verdict(
     fit: str | None = None,
     share: str | None = None,
 ) -> Verdict:
-    names = {"f": "forest", "p": "partial_loss", "x": "full_loss", "o": "open"}
+    names = {
+        "f": "forest",
+        "p": "partial_loss",
+        "x": "full_loss",
+        "o": "open",
+        "s": "stressed",
+    }
     return Verdict(
         model="m",
         states=[names[c] for c in states],
@@ -76,9 +82,11 @@ def test_flagged_interval_guard() -> None:
     """Loss dated two intervals before the flagged one: defoliation, then removal."""
     a = verdict("fpooo", change_type="insect_disease")
     b = verdict("fpooo", change_type="insect_disease")
-    plain = R.route(a, b, 2, CFG)
+    off = CFG.model_copy(update={"guard_flagged_interval": False})
+    plain = R.route(a, b, 2, off)
     assert plain.outcomes == [R.LOSS_PARTIAL, R.OPEN, R.OPEN, R.OPEN]
-    guard = CFG.model_copy(update={"guard_flagged_interval": True})
+    guard = CFG
+    assert guard.guard_flagged_interval
     guarded = R.route(a, b, 2, guard)
     assert guarded.outcomes == [R.LOSS_PARTIAL, R.OPEN, R.FLAGGED_UNCONFIRMED, R.OPEN]
     assert guarded.status == "accepted" and guarded.first_loss == 0
@@ -93,9 +101,11 @@ def test_flagged_interval_guard() -> None:
 def test_loss_right_after_a_loss_can_be_left_unlabelled() -> None:
     a = verdict("ffppo", change_type="thinning")
     b = verdict("ffppo", change_type="thinning")
-    both = R.route(a, b, 1, CFG)
+    label = CFG.model_copy(update={"consecutive_loss": "label"})
+    both = R.route(a, b, 1, label)
     assert both.outcomes == [R.INTACT, R.LOSS_PARTIAL, R.LOSS_PARTIAL, R.OPEN]
-    first = CFG.model_copy(update={"consecutive_loss": "ignore"})
+    first = CFG
+    assert first.consecutive_loss == "ignore"
     once = R.route(a, b, 1, first)
     assert once.outcomes == [R.INTACT, R.LOSS_PARTIAL, R.LOSS_REPEATED, R.OPEN]
     assert once.first_loss == 1 and once.status == "accepted"
@@ -105,6 +115,25 @@ def test_loss_right_after_a_loss_can_be_left_unlabelled() -> None:
     # A later loss after a quiet interval is a new event and stays.
     later = R.route(verdict("fpoox"), verdict("fpoox"), 0, first)
     assert later.outcomes == [R.LOSS_PARTIAL, R.OPEN, R.OPEN, R.LOSS_FULL]
+
+
+def test_defoliation_is_not_loss() -> None:
+    """Leafless in one summer image, then the trees die: loss from the death."""
+    a = verdict("fspoo", change_type="insect_disease")
+    b = verdict("fspoo", change_type="insect_disease")
+    out = R.route(a, b, 2, CFG)
+    assert out.status == "accepted" and out.first_loss == 1
+    assert out.outcomes == [R.STRESSED, R.LOSS_PARTIAL, R.FLAGGED_UNCONFIRMED, R.OPEN]
+    # Defoliated and recovered: no loss anywhere, and the leafless date is
+    # unlabelled, not background.
+    recovered = R.route(verdict("fsff"), verdict("fsff"), 2, CFG)
+    assert recovered.status == "rejected"
+    assert recovered.outcomes == [R.STRESSED, R.INTACT, R.REJECTED_FLAGGED]
+    # One model is enough to withhold the background label.
+    one = R.route(verdict("fsff"), verdict("ffff"), None, CFG)
+    assert one.outcomes == [R.STRESSED, R.INTACT, R.INTACT]
+    assert not recovered.has_loss
+    assert parse_verdict("m", {"states": ["forest", "stressed"]}, 2).valid
 
 
 def test_rejection_is_unlabelled_only_where_flagged() -> None:

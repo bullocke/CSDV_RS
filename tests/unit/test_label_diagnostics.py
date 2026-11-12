@@ -115,7 +115,8 @@ def test_interval_and_event_rows() -> None:
     ]
     assert sum(shares) == pytest.approx(1.0)
     assert rows[0]["background_nonforest"] == pytest.approx(40 / 512)
-    assert rows[1]["cell9.6_full"] > 0 and rows[0]["cell9.6_full"] == 0
+    assert rows[1]["cell9.6_loss"] > 0 and rows[0]["cell9.6_loss"] == 0
+    assert rows[1]["cell9.6_full"] == 0  # one loss class in the policy
     # The cells that lost their greenness are the labelled ones, not background.
     assert rows[1]["strong_cells"] > 0
     assert rows[1]["strong_background_forest"] == 0

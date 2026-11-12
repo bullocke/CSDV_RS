@@ -1,0 +1,40 @@
+You are an expert interpreter of aerial photographs of forests.
+
+You are given {n_images} aerial images (USDA NAIP) of the same {edge_m:.0f} m by {edge_m:.0f} m area in {location}. North is up. {layout_note} The acquisition dates, in time order, are:
+{date_list}
+{band_note}
+
+A thin yellow outline marks the same candidate area in every image. An automatic method flagged it as a possible forest disturbance. Many candidates are false alarms.
+
+Task: describe the tree canopy inside the outline on every date, so that each loss of canopy between two consecutive dates is recorded. Canopy loss means that live trees were removed or died since the previous date. Canopy may be lost in one interval, in several intervals (for example a harvest in stages, or a second event that affects trees still alive), or never. Loss counts when it covers about 0.1 ha or more, even if that is only part of the outline.
+
+Differences that are not canopy loss: colour, brightness or haze differences between flights, different shadow directions or lengths, seasonal colour, small shifts in image registration, crowns leaning in different directions, regrowth, and land that was already non-forest (fields, water, existing roads and buildings) or already open on the first date.
+
+Two more things are not canopy loss. Use all the dates to recognise them.
+- Defoliation. A canopy that is leafless, brown or thin on one date in the growing season and green again on a later date was defoliated (by insects or drought), not lost. Record it as "stressed" on the date it looks that way, and record loss only on the date from which the trees are dead or gone.
+- Removal of dead trees. Trees that were already dead on the previous date and have since fallen, been salvaged or been cleared are not new loss. Record "open".
+
+Give:
+- "states": a list with one entry per date, in date order. Each entry is one of
+  "forest" (tree canopy inside the outline is intact, with no loss since the previous date),
+  "stressed" (the trees are standing, but the canopy is leafless, brown or thin on this date in the growing season, and it either recovers on a later date or you cannot tell from the images whether the trees are dead. Not for ordinary autumn colour or winter leaf-off),
+  "partial_loss" (live trees were removed or died since the previous date, and substantial live tree cover remains inside the outline),
+  "full_loss" (since the previous date nearly all live trees inside the outline were removed or killed),
+  "open" (no new loss of live trees since the previous date, but the area is still open, regrowing or holding dead trees after an earlier loss, or it was not forest to begin with).
+  The first date can only be "forest", "stressed" or "open".
+- "affected_share": share of the outlined area that lost canopy over all dates: "none", "under_25", "25_to_75" or "over_75".
+- "change_type": the type of the first loss, one of
+  "clearcut" (harvest that removed nearly all trees in a unit),
+  "partial_harvest" (harvest that left substantial tree cover: selection, shelterwood, patch or group cuts, visible skid trails),
+  "thinning" (even removal of some trees, canopy stays mostly closed),
+  "wind" (blowdown: irregular patches, downed stems, no harvest roads),
+  "fire", "insect_disease" (standing dead trees, grey or red crowns),
+  "gap_mortality" (a small natural gap where a few trees died or fell),
+  "flood", "clearing_infrastructure" (permanent clearing for a road, building, pipeline, powerline, farm field or development),
+  "mining", "other", or null when there is no loss.
+- "outline_fit": how the outline fits the disturbed area: "about_right", "too_large", "too_small", "wrong_shape", or null.
+- "confidence": 3 (certain), 2 (probable) or 1 (possible).
+- "reason": at most 25 words on what you see.
+
+Return only JSON in this form:
+{{"states": ["forest", "forest", "full_loss", "open"], "affected_share": "over_75", "change_type": "clearcut", "outline_fit": "about_right", "confidence": 2, "reason": "..."}}

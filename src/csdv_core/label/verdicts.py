@@ -10,7 +10,10 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 #: Canopy states a model may give for a date.
-STATES = ("forest", "partial_loss", "full_loss", "open")
+STATES = ("forest", "stressed", "partial_loss", "full_loss", "open")
+#: Canopy that is leafless, brown or thin but standing: defoliation, or trees
+#: that may be dead. It is not loss.
+STRESSED = "stressed"
 #: States that mean canopy was lost since the previous date.
 LOSS = ("partial_loss", "full_loss")
 
@@ -38,7 +41,15 @@ AGENT_CODES: dict[str, int] = {
     "other": 6,
 }
 
-__all__ = ["AGENT_CODES", "AGENT_OF", "LOSS", "STATES", "Verdict", "parse_verdict"]
+__all__ = [
+    "AGENT_CODES",
+    "AGENT_OF",
+    "LOSS",
+    "STATES",
+    "STRESSED",
+    "Verdict",
+    "parse_verdict",
+]
 
 
 @dataclass
