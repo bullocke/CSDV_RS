@@ -54,8 +54,11 @@ GROUP_LABELS: dict[str, str] = {
     "background_forest": "background, forest (not judged)",
 }
 #: Fill of the pooled target: background, partial, stand-replacing, ignore.
+#: Background is a pale neutral, not a green: the target has one background
+#: class for forest and non-forest alike, and the reason map beside it uses
+#: green for forest only.
 CHANGE_COLOURS = {
-    0: (0, 131, 0),
+    0: (214, 210, 198),
     1: (237, 161, 0),
     2: (227, 73, 72),
     IGNORE: (155, 154, 148),
@@ -188,14 +191,14 @@ def legend(width: int, pooled: bool = False, single_loss: bool = False) -> Image
     if pooled and single_loss:
         entries = [
             (CHANGE_COLOURS[2], "cell: loss", False),
-            (CHANGE_COLOURS[0], "cell: background", False),
+            (CHANGE_COLOURS[0], "cell: background (no loss, forest or not)", False),
             (CHANGE_COLOURS[IGNORE], "cell: ignore", False),
         ]
     elif pooled:
         entries = [
             (CHANGE_COLOURS[2], "cell: stand-replacing", False),
             (CHANGE_COLOURS[1], "cell: partial", False),
-            (CHANGE_COLOURS[0], "cell: background", False),
+            (CHANGE_COLOURS[0], "cell: background (no loss, forest or not)", False),
             (CHANGE_COLOURS[IGNORE], "cell: ignore", False),
         ]
     lines = [
