@@ -111,6 +111,24 @@ def test_accepted_candidate_band_and_ring(precise: bool, band: int) -> None:
     assert change[100, 10] == 0
 
 
+def test_inner_band_and_precise_ring_can_be_switched_off() -> None:
+    mask = square(60, 140, 60, 140)
+    rules = RULES.model_copy(
+        update={"band_inside_precise_m": 0.0, "margin_precise_m": 0.0}
+    )
+    cand = CandidateLayer(R.LOSS_FULL, mask, core=mask, precise=True, agent=1)
+    reason, agent = interval_reason(base(), [cand], rules)
+    row = reason[100]
+    assert row[60] == Reason.ACCEPTED_FULL and agent[100, 60] == 1  # up to the outline
+    assert (row[60 - BAND_PRECISE : 60] == Reason.BOUNDARY_OUTSIDE).all()
+    assert row[60 - BAND_PRECISE - 1] == Reason.STABLE_FOREST  # no ring beyond the band
+    # An envelope keeps its ring, and its own inner band setting.
+    loose = CandidateLayer(R.LOSS_PARTIAL, mask, core=mask, precise=False)
+    reason, _ = interval_reason(base(), [loose], rules)
+    assert reason[100, 60] == Reason.BOUNDARY_INSIDE
+    assert reason[100, 60 - MARGIN + 1] == Reason.MARGIN
+
+
 def test_diffuse_extension_is_unlabelled_and_has_no_inner_band() -> None:
     mask = square(60, 140, 60, 100)
     extension = square(60, 140, 100, 150)

@@ -56,11 +56,19 @@ outlines:
   polygon_min_ha: 0.1
 
 rules:
-  # Ignore band on each side of an accepted outline.
+  # Ignore band outside an accepted outline.
   band_precise_m: 4.8
   band_envelope_m: 9.6
+  # Ignore band inside an accepted outline. It costs labelled loss: at 9.6 m
+  # a 1 ha envelope keeps under half of its area.
+  band_inside_precise_m: 4.8
+  band_inside_envelope_m: 9.6
   # Ignore ring around a candidate whose interior is loss or ignore.
   margin_m: 19.2
+  # Ring around an accepted candidate with a precise outline. The band
+  # already covers the uncertainty of such an outline, and a wide ring hides
+  # the forest edge that the model most needs to see as background.
+  margin_precise_m: 19.2
   # Ring used when a model calls the outline too small and no polygon is usable.
   margin_wide_m: 38.4
   # Unjudged cells at or above this DI probability are never background.

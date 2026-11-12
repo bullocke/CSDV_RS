@@ -227,14 +227,23 @@ def interval_reason(
     # Ring around every candidate whose interior is loss or unlabelled.
     normal = np.zeros(before.shape, dtype=bool)
     wide = np.zeros(before.shape, dtype=bool)
+    sharp = np.zeros(before.shape, dtype=bool)
     for cand in live:
         if cand.outcome in R.BACKGROUND_OUTCOMES or cand.outcome == R.UNDER_MIN:
             continue
-        target = wide if cand.wide_margin else normal
+        target = normal
+        if cand.wide_margin:
+            target = wide
+        elif cand.precise and cand.outcome in R.LOSS_OUTCOMES:
+            target = sharp
         target |= cand.mask
         if cand.extension is not None:
             target |= cand.extension
-    ring = _within(normal, _px(cfg.margin_m)) | _within(wide, _px(cfg.margin_wide_m))
+    ring = (
+        _within(normal, _px(cfg.margin_m))
+        | _within(wide, _px(cfg.margin_wide_m))
+        | _within(sharp, _px(cfg.margin_precise_m))
+    )
     reason[ring] = Reason.MARGIN
 
     for cand in live:
@@ -277,19 +286,20 @@ def interval_reason(
         # of the whole footprint.
         depth = ndi.distance_transform_edt(footprint)
         away = ndi.distance_transform_edt(~loss)
-        for part, metres in (
-            (precise, cfg.band_precise_m),
-            (loss & ~precise, cfg.band_envelope_m),
+        for part, metres_out, metres_in in (
+            (precise, cfg.band_precise_m, cfg.band_inside_precise_m),
+            (loss & ~precise, cfg.band_envelope_m, cfg.band_inside_envelope_m),
         ):
-            width = _px(metres)
-            if width <= 0 or not part.any():
+            if not part.any():
                 continue
-            near = _within(part, width)
-            inside = part & (depth <= width)
-            outside = near & ~footprint & (away <= width)
-            reason[inside] = Reason.BOUNDARY_INSIDE
-            reason[outside] = Reason.BOUNDARY_OUTSIDE
-            agent[inside] = IGNORE
+            outer, inner = _px(metres_out), _px(metres_in)
+            if outer > 0:
+                near = _within(part, outer)
+                reason[near & ~footprint & (away <= outer)] = Reason.BOUNDARY_OUTSIDE
+            if inner > 0:
+                inside = part & (depth <= inner)
+                reason[inside] = Reason.BOUNDARY_INSIDE
+                agent[inside] = IGNORE
 
     with np.errstate(invalid="ignore"):
         unknown = np.isnan(base.cover_before)

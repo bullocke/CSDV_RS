@@ -552,7 +552,10 @@ class LabelRules(_Base):
 
     band_precise_m: float = Field(default=4.8, ge=0)
     band_envelope_m: float = Field(default=9.6, ge=0)
+    band_inside_precise_m: float = Field(default=4.8, ge=0)
+    band_inside_envelope_m: float = Field(default=9.6, ge=0)
     margin_m: float = Field(default=19.2, ge=0)
+    margin_precise_m: float = Field(default=19.2, ge=0)
     margin_wide_m: float = Field(default=38.4, ge=0)
     raised_prob: float = Field(default=0.2, ge=0, le=1)
     sparse_cover: float = Field(default=0.2, ge=0, le=1)

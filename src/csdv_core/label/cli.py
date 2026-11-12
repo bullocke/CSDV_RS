@@ -59,13 +59,42 @@ def _common(func):
             help="Folder with pulled cell layers (<unit>/<tag>/). Default: "
             "<export-dir>/run_layers.",
         ),
+        click.option(
+            "--config",
+            "config_path",
+            default=None,
+            type=click.Path(exists=True, dir_okay=False, path_type=Path),
+            help="YAML with values that replace those of the packaged "
+            "label.yaml (only the keys it names).",
+        ),
     ]
     for option in reversed(options):
         func = option(func)
     return func
 
 
-def _run(label_dir, export_dir, run_tag, runs_dir, run_subdir, layers_dir):
+def _config(config_path: Path | None):
+    """The packaged thresholds, with the values of ``config_path`` on top."""
+    import yaml
+
+    from csdv_core.config import load_label, load_yaml
+    from csdv_core.config._models import LabelConfig
+
+    if config_path is None:
+        return load_label()
+    merged = load_yaml("label")
+    extra = yaml.safe_load(config_path.read_text()) or {}
+    for section, values in extra.items():
+        if isinstance(values, dict) and isinstance(merged.get(section), dict):
+            merged[section] = {**merged[section], **values}
+        else:
+            merged[section] = values
+    return LabelConfig.model_validate(merged)
+
+
+def _run(
+    label_dir, export_dir, run_tag, runs_dir, run_subdir, layers_dir, config_path=None
+):
     from csdv_core.label.pipeline import LabelRun
     from csdv_core.review.config import default_export_dir
 
@@ -78,6 +107,7 @@ def _run(label_dir, export_dir, run_tag, runs_dir, run_subdir, layers_dir):
         run_tag=run_tag,
         run_subdir=run_subdir,
         layers_dir=layers_dir,
+        cfg=_config(config_path),
     )
 
 
