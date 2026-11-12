@@ -87,7 +87,9 @@ def event_rows(built: BuiltWindow, run: LabelRun) -> list[dict[str, Any]]:
         if r.first_loss is None or cand.event is None or cand.event.core.is_empty:
             continue
         event = cand.event
-        geometry = event.core.union(event.extension) if event.crisp else event.core
+        geometry = (
+            event.core.union(event.extension) if event.extension_is_loss else event.core
+        )
         pre, post = dates[r.first_loss].split("_")
         rows.append(
             {

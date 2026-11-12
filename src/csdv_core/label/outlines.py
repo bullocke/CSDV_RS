@@ -52,6 +52,8 @@ class EventGeometry:
         crisp: The type has sharp edges, so the extension counts as loss.
         wide_margin: A model called the outline too small and no polygon
             could be used, so more ground around it is left unlabelled.
+        oversize: The polygon is far larger than the candidate. Its
+            extension is left unlabelled whatever the type.
     """
 
     core: BaseGeometry
@@ -61,10 +63,15 @@ class EventGeometry:
     quality: str
     crisp: bool
     wide_margin: bool = False
+    oversize: bool = False
+
+    @property
+    def extension_is_loss(self) -> bool:
+        return self.crisp and not self.oversize
 
     @property
     def polygon_used(self) -> bool:
-        return self.source.endswith("+polygon")
+        return self.source.endswith("polygon")
 
 
 def needs_polygon(routed: Routed) -> bool:
@@ -149,15 +156,31 @@ def choose_outline(
         any(f in _BAD_FIT for f in routed.outline_fit)
         or "under_25" in routed.affected_share
     )
-    if polygon_usable(polygon, candidate, cfg):
+    usable = polygon_usable(polygon, candidate, cfg)
+    oversize = (
+        not usable
+        and cfg.polygon_oversize == "ignore"
+        and polygon is not None
+        and polygon_usable(
+            polygon, candidate, cfg.model_copy(update={"polygon_max_ratio": 1e9})
+        )
+    )
+    if usable or oversize:
         extension = polygon.difference(candidate)
         if doubtful:
             core = candidate.intersection(polygon)
             trimmed = candidate.difference(polygon)
         else:
             core, trimmed = candidate, _EMPTY
+        suffix = "+wide_polygon" if oversize else "+polygon"
         return EventGeometry(
-            core, extension, trimmed, name + "+polygon", "envelope", crisp
+            core,
+            extension,
+            trimmed,
+            name + suffix,
+            "envelope",
+            crisp,
+            oversize=oversize,
         )
     if doubtful:
         # The models doubt the outline and there is nothing better: label none of it.

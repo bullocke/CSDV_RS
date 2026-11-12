@@ -92,7 +92,7 @@ No person takes part in routing. A candidate is accepted when both models report
 
 The models date the first visible damage to the crowns. The detection dates the loss of height. The two differ often: in the example run about a third of the accepted candidates were dated one to three intervals before the interval that flagged them. The label follows the models, because the classifier reads NAIP only.
 
-The candidate outline is the labelled core whenever both models call it about right. Otherwise Terra draws a polygon, which is used only if it covers at least half of the candidate and is at most ten times its area. For types with sharp edges (clearcut, clearing, mining, and fire with full loss) the polygon beyond the candidate is labelled as loss. For diffuse types it is left unlabelled, so that an unflagged part of a damaged stand cannot become background.
+The candidate outline is the labelled core whenever both models call it about right. Otherwise Terra draws a polygon, which is used only if it covers at least half of the candidate and is at most ten times its area. In the example run 27 of 51 polygons covered their candidate but were larger than that, which is the model saying that the candidate is a fragment of a larger event. With `outlines.polygon_oversize: ignore` such a polygon is kept as unlabelled ground, never as loss. The default discards it. For types with sharp edges (clearcut, clearing, mining, and fire with full loss) the polygon beyond the candidate is labelled as loss. For diffuse types it is left unlabelled, so that an unflagged part of a damaged stand cannot become background.
 
 ## Label rules and reasons
 
@@ -113,7 +113,7 @@ Each pixel of each interval gets a reason, and the change label is a lookup of t
 | `nonforest` | Not forest at the earlier date | 0 |
 | `stable_forest` | Forest on both dates, outside every candidate | 0 |
 
-Where several rules claim a pixel, loss wins over ignore and ignore wins over background. The band is measured from the edge of the whole event, so a core that runs into an unlabelled extension has no band on that side.
+Where several rules claim a pixel, loss wins over ignore and ignore wins over background. The band is measured from the edge of the whole event, so a core that runs into an unlabelled extension has no band on that side. The band inside an outline (`band_inside_precise_m`, `band_inside_envelope_m`) and the ring around a precise outline (`margin_precise_m`) have their own widths. The inner band is costly: at 9.6 m an envelope event kept a median of 48% of its area in the example run. `csdv label build --config FILE` builds the labels under other values without touching the packaged ones.
 
 Labels are stored at 0.6 m and pooled to the model's output cells by `csdv_core.label.pooling.pool_change`. A cell is ignore when half of it is ignore. Otherwise it is loss when at least half of its labelled pixels are loss, background when at most 10% are, and ignore in between.
 

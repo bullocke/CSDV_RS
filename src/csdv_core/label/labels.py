@@ -121,7 +121,7 @@ def _layer(cand: JudgedCandidate, k: int, masks: dict) -> CandidateLayer | None:
         layer.core = masks[cand.cand_id, "core"]
         layer.extension = masks[cand.cand_id, "extension"]
         layer.trimmed = masks[cand.cand_id, "trimmed"]
-        layer.crisp = cand.event.crisp
+        layer.crisp = cand.event.extension_is_loss
         layer.precise = cand.event.quality == "precise"
         layer.wide_margin = cand.event.wide_margin
         layer.agent = AGENT_CODES.get(cand.routed.agent or "", IGNORE)

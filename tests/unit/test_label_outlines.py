@@ -146,6 +146,39 @@ def test_without_a_usable_polygon() -> None:
     assert small.core.equals(CAND) and small.wide_margin and not small.polygon_used
 
 
+def test_oversize_polygon_can_be_kept_as_unlabelled_ground() -> None:
+    huge = box(-400, -400, 500, 500)  # 81 times the candidate
+    small = routed(fits=("too_small", "too_small"))
+    dropped = choose_outline(
+        CAND,
+        source="di",
+        geom_src="cells",
+        routed=small,
+        polygon=huge,
+        cfg=CFG.outlines,
+    )
+    assert dropped.extension.is_empty and dropped.wide_margin
+    keep = CFG.outlines.model_copy(update={"polygon_oversize": "ignore"})
+    kept = choose_outline(
+        CAND, source="di", geom_src="cells", routed=small, polygon=huge, cfg=keep
+    )
+    assert kept.core.equals(CAND) and kept.oversize
+    assert kept.extension.area == pytest.approx(900 * 900 - 100 * 100)
+    # A clearcut is crisp, but an oversize polygon is never labelled as loss.
+    assert kept.crisp and not kept.extension_is_loss
+    assert kept.source == "di_cells+wide_polygon" and kept.polygon_used
+    # A polygon that misses the candidate is still dropped.
+    away = choose_outline(
+        CAND,
+        source="di",
+        geom_src="cells",
+        routed=small,
+        polygon=box(80, 0, 900, 900),
+        cfg=keep,
+    )
+    assert away.extension.is_empty and not away.oversize
+
+
 def test_parse_polygon_maps_image_units_to_the_ground() -> None:
     view = View((1000.0, 2000.0, 1384.0, 2384.0), 640)
     answer = {"polygon": [[0, 0], [500, 0], [500, 500], [0, 500]]}

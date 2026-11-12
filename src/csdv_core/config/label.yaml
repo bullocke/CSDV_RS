@@ -54,6 +54,11 @@ outlines:
   polygon_min_cover: 0.5
   polygon_max_ratio: 10.0
   polygon_min_ha: 0.1
+  # What to do with a polygon that covers the candidate but is larger than
+  # `polygon_max_ratio` times it. Such a polygon says the candidate is a
+  # fragment of a much larger event. "drop" discards it. "ignore" keeps it as
+  # ground that is left unlabelled, never as loss.
+  polygon_oversize: drop
 
 rules:
   # Ignore band outside an accepted outline.

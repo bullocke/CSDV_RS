@@ -545,6 +545,7 @@ class LabelOutlines(_Base):
     polygon_min_cover: float = Field(default=0.5, ge=0, le=1)
     polygon_max_ratio: float = Field(default=10.0, gt=1)
     polygon_min_ha: float = Field(default=0.1, ge=0)
+    polygon_oversize: Literal["drop", "ignore"] = "drop"
 
 
 class LabelRules(_Base):
