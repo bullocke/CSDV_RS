@@ -68,6 +68,13 @@ def verdict_requests(
     ]
 
 
+def _unusable(request: Request, reply: Reply) -> bool:
+    """A verdict answer that arrived and is not a valid verdict."""
+    if request.kind != "verdict" or reply.error not in ("", "unparseable"):
+        return False
+    return not parse_verdict(reply.model, reply.data, len(request.dates)).valid
+
+
 def send(
     ledger: Ledger,
     requests: list[Request],
@@ -77,9 +84,38 @@ def send(
     stage: str,
     workers: int = 6,
 ) -> list[dict[str, Any]]:
-    """Send requests to one model and return one record per request."""
+    """Send requests to one model and return one record per request.
+
+    A verdict that comes back but cannot be read as one (a wrong number of
+    states, or a word that is not a state) is asked for once more. About
+    one answer in 150 was of this kind on the probe sites, and without
+    the repeat its candidate stays unlabelled.
+    """
     jobs = [(q.prompt, q.images, {"window_id": window_id, **q.tag}) for q in requests]
     replies: list[Reply] = ask_many(ledger, model, jobs, stage=stage, workers=workers)
+    again = [
+        i
+        for i, (q, r) in enumerate(zip(requests, replies, strict=True))
+        if _unusable(q, r)
+    ]
+    if again:
+        logger.info(
+            "%s %s: %d unusable answers, asking once more",
+            window_id,
+            model,
+            len(again),
+        )
+        second = ask_many(
+            ledger,
+            model,
+            [jobs[i] for i in again],
+            stage=stage,
+            workers=workers,
+            repeat=1,
+        )
+        for i, reply in zip(again, second, strict=True):
+            if reply.data is not None:
+                replies[i] = reply
     return [
         {
             "window_id": window_id,

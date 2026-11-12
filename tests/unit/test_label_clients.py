@@ -110,3 +110,64 @@ def test_request_key_depends_on_every_part() -> None:
 def test_parse_json_tolerates_prose() -> None:
     assert clients.parse_json('Here: {"a": [1, 2]} done') == {"a": [1, 2]}
     assert clients.parse_json("nothing") is None
+
+
+def test_unusable_verdict_is_asked_once_more(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A state that is not a state costs one repeat, not the candidate."""
+    import httpx
+
+    from csdv_core.label import judge
+    from csdv_core.label.requests import Request
+    from csdv_core.label.views import View
+
+    answers = [
+        '{"states": ["forest", "partial_harvest", "open"], "confidence": 2}',
+        '{"states": ["forest", "partial_loss", "open"], "confidence": 2}',
+    ]
+    calls: list = []
+
+    def post(url: str, **kwargs) -> _Response:
+        calls.append(url)
+        text = answers[min(len(calls), len(answers)) - 1]
+        return _Response(
+            {
+                "choices": [{"message": {"content": text}}],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 10, "cost": 0.004},
+            }
+        )
+
+    monkeypatch.setattr(httpx, "post", post)
+    monkeypatch.setenv("OpenRouter_API_KEY", "y")
+    request = Request(
+        cand_id="c1",
+        kind="verdict",
+        prompt="prompt",
+        images=[b"img"],
+        dates=["2018-07-01", "2020-07-01", "2022-07-01"],
+        view=View((0.0, 0.0, 384.0, 384.0), 640),
+        extra={"prompt": "verdict_v3"},
+    )
+    ledger = Ledger(tmp_path, cap=1.0)
+    (record,) = judge.send(ledger, [request], "terra", window_id="w", stage="verdict")
+    assert len(calls) == 2
+    assert record["answer"]["states"][1] == "partial_loss" and not record["error"]
+    assert [row.get("repeat", 0) for row in ledger.rows] == [0, 1]
+    assert ledger.spent() == pytest.approx(0.008)
+
+    # Both answers are cached, so sending again costs nothing.
+    (record,) = judge.send(ledger, [request], "terra", window_id="w", stage="verdict")
+    assert len(calls) == 2 and record["answer"]["states"][1] == "partial_loss"
+
+    # A polygon answer is never repeated.
+    polygon = Request(
+        cand_id="c1",
+        kind="polygon",
+        prompt="draw",
+        images=[b"img"],
+        dates=["2018-07-01", "2020-07-01"],
+        view=View((0.0, 0.0, 384.0, 384.0), 640),
+    )
+    judge.send(ledger, [polygon], "terra", window_id="w", stage="polygon")
+    assert len(calls) == 3

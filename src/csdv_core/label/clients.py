@@ -185,6 +185,7 @@ def ask(
     max_out: int = 4000,
     effort: str = "low",
     attempts: int = 3,
+    repeat: int = 0,
 ) -> Reply:
     """Send one request, through the cache and the budget guard.
 
@@ -195,6 +196,8 @@ def ask(
         images: JPEG bytes, in the order the prompt describes.
         stage: Label of the step, copied into the ledger row.
         tag: Further fields copied into the ledger row (candidate, window).
+        repeat: Number of the repeat of an identical request. A repeat has
+            its own cache entry, so it is sent again.
 
     Raises:
         BudgetExceeded: If the call would pass the ledger's cap.
@@ -202,7 +205,9 @@ def ask(
     import httpx
 
     provider, model = MODELS[name]
-    key = request_key(model, prompt, images, f"{max_out}|{effort}|0")
+    key = request_key(model, prompt, images, f"{max_out}|{effort}|{repeat}")
+    if repeat:
+        tag = {**tag, "repeat": repeat}
     hit = ledger.cached(key)
     if hit is not None:
         return Reply(
@@ -282,6 +287,7 @@ def ask_many(
     *,
     stage: str,
     workers: int = 6,
+    repeat: int = 0,
 ) -> list[Reply]:
     """Send ``(prompt, images, tag)`` jobs concurrently, in order.
 
@@ -295,7 +301,9 @@ def ask_many(
         if stopped["flag"]:
             return Reply(model=name, text="", data=None, cost=0.0, error="budget")
         try:
-            return ask(ledger, name, prompt, images, stage=stage, tag=tag)
+            return ask(
+                ledger, name, prompt, images, stage=stage, tag=tag, repeat=repeat
+            )
         except BudgetExceeded as exc:
             stopped["flag"] = True
             logger.error("Budget stop: %s", exc)
