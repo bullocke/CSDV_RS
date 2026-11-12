@@ -170,10 +170,18 @@ def candidates_cmd(units: str | None, **where) -> None:
 @click.option("--n-other", type=int, default=150, show_default=True)
 @click.option("--n-quiet", type=int, default=150, show_default=True)
 @click.option("--seed", type=int, default=0, show_default=True)
+@click.option(
+    "--reviewed",
+    "review_store",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Review GeoPackage of `csdv review`. Every interpreted polygon gets "
+    "a window of its own, as a fixed reference inside the run.",
+)
 @click.option("--dry-run", is_flag=True, help="Report the sample, write nothing.")
 @click.option("--overwrite", is_flag=True, help="Replace an existing windows.csv.")
 def sample_cmd(
-    units, n_di, n_other, n_quiet, seed, dry_run, overwrite, **where
+    units, n_di, n_other, n_quiet, seed, review_store, dry_run, overwrite, **where
 ) -> None:
     """Draw the sample of windows and forecast the cost of judging it."""
     from csdv_core.label.pipeline import window_parts
@@ -185,7 +193,18 @@ def sample_cmd(
     if path.exists() and not (dry_run or overwrite):
         raise click.ClickException(f"{path} exists. Pass --overwrite to replace it.")
     design = SampleDesign(n_di=n_di, n_other=n_other, n_quiet=n_quiet, seed=seed)
-    table = draw_windows(run, _units(run, units), design)
+    reviewed = None
+    if review_store is not None:
+        import geopandas as gpd
+
+        done = set(gpd.read_file(review_store, layer="interpretations")["sample_id"])
+        sample = gpd.read_file(review_store, layer="sample", ignore_geometry=True)
+        sample = sample[sample["sample_id"].isin(done)]
+        reviewed = [
+            (str(u), int(o))
+            for u, o in zip(sample["unit"], sample["object_id"], strict=True)
+        ]
+    table = draw_windows(run, _units(run, units), design, reviewed)
     judged = []
     for row in table.itertuples():
         parts = window_parts(run, row, with_stack=False)

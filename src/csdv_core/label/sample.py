@@ -7,6 +7,8 @@ inclusion probability.
 Three strata. ``di`` windows are seeded by a detected object, ``other``
 windows by a weak-probability or CHM-loss object, and ``quiet`` windows are
 forest chips with no candidate and low disturbance probability throughout.
+Objects that an interpreter has already labelled can be added as a fourth,
+fixed stratum (``reviewed``).
 Every unit gets the same number of seeded windows, shared among its
 sub-strata (last interval or not, probability class, size class) close to
 proportionally. Each candidate has a random key fixed by the seed and its
@@ -208,8 +210,18 @@ def _equal_allocation(counts: dict[str, int], n_total: int) -> dict[str, int]:
     return alloc
 
 
-def draw_windows(run: LabelRun, units: list[str], design: SampleDesign) -> pd.DataFrame:
+def draw_windows(
+    run: LabelRun,
+    units: list[str],
+    design: SampleDesign,
+    reviewed: list[tuple[str, int]] | None = None,
+) -> pd.DataFrame:
     """Draw the sample of windows over ``units``.
+
+    ``reviewed`` lists detected objects (unit, object ID) that an interpreter
+    has already labelled. Each gets a window of its own in the stratum
+    ``reviewed``, without an inclusion probability, as a fixed reference
+    inside the run.
 
     Returns:
         One row per window: ``window_id``, ``unit``, ``epsg``, ``ix0``,
@@ -250,6 +262,33 @@ def draw_windows(run: LabelRun, units: list[str], design: SampleDesign) -> pd.Da
                         "ny": window.ny,
                     }
                 )
+    for unit_id, object_id in reviewed or []:
+        if unit_id not in units:
+            continue
+        cands = run.candidates(unit_id)
+        match = cands[(cands["source"] == "di") & (cands["object_id"] == object_id)]
+        if match.empty:
+            logger.warning(
+                "%s: reviewed object %d is not a candidate", unit_id, object_id
+            )
+            continue
+        cand = match.iloc[0]
+        window = seed_window(run, "", cand, design.seed)
+        rows.append(
+            {
+                "unit": unit_id,
+                "seed_cand": cand["cand_id"],
+                "sub_stratum": "",
+                "incl_prob": float("nan"),
+                "key": -1.0,
+                "stratum": "reviewed",
+                "epsg": window.epsg,
+                "ix0": window.ix0,
+                "iy0": window.iy0,
+                "nx": window.nx,
+                "ny": window.ny,
+            }
+        )
     n_quiet_unit = -(-design.n_quiet // max(len(units), 1)) if design.n_quiet else 0
     for unit_id in units:
         if not n_quiet_unit:
@@ -278,7 +317,7 @@ def draw_windows(run: LabelRun, units: list[str], design: SampleDesign) -> pd.Da
     table = pd.DataFrame(rows)
     if table.empty:
         return table
-    order = {"di": 0, "other": 1, "quiet": 2}
+    order = {"reviewed": 0, "di": 1, "other": 2, "quiet": 3}
     table["_rank"] = table["stratum"].map(order)
     table = table.sort_values(["_rank", "unit", "key"])
     table = table.drop_duplicates(["unit", "ix0", "iy0", "nx", "ny"], keep="first")

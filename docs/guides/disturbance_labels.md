@@ -59,7 +59,7 @@ A window is labelled completely only if everything that might be a disturbance i
 
 ## The sample
 
-`csdv label sample` draws three strata and records the inclusion probability of every seed. `di` windows are seeded by a detected object, with the same number per unit, shared among sub-strata (last interval or not, probability above or below 0.9, three size classes). `other` windows are seeded by a weak or CHM-loss object. `quiet` windows are forest chips with no candidate and low probability throughout, which measure omission and add plain background. A window is the block of 512 px chips that covers its seed with a margin, at most three chips on a side. A larger candidate is seen through a window placed on a random point inside it.
+`csdv label sample` draws three strata and records the inclusion probability of every seed. `di` windows are seeded by a detected object, with the same number per unit, shared among sub-strata (last interval or not, probability above or below 0.9, three size classes). `other` windows are seeded by a weak or CHM-loss object. `quiet` windows are forest chips with no candidate and low probability throughout, which measure omission and add plain background. A window is the block of 512 px chips that covers its seed with a margin, at most three chips on a side. A larger candidate is seen through a window placed on a random point inside it. `--reviewed data/reference/grid_pilot/review_default.gpkg` adds a window for every polygon already interpreted in `csdv review`, as a fixed reference inside the run.
 
 The inclusion probability belongs to the seed. Other candidates in a window were not drawn with a known probability, and windows can overlap, so rates for a paper should be estimated from seeds only.
 

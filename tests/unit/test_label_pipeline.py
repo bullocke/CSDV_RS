@@ -193,6 +193,22 @@ def test_sample(run: LabelRun) -> None:
     assert other["seed_cand"].iloc[0] in set(seeded["seed_cand"])
 
 
+def test_reviewed_objects_get_their_own_windows(run: LabelRun) -> None:
+    design = SampleDesign(n_di=0, n_other=0, n_quiet=0, seed=1)
+    table = draw_windows(run, [UNIT], design, reviewed=[(UNIT, 1), (UNIT, 99)])
+    assert list(table["stratum"]) == ["reviewed"]
+    assert table["seed_cand"].iloc[0] == f"{UNIT}-di-2018-1"
+    assert pd.isna(table["incl_prob"].iloc[0])
+    # A reviewed object that is also drawn at random keeps one window.
+    both = draw_windows(
+        run,
+        [UNIT],
+        SampleDesign(n_di=5, n_other=0, n_quiet=0, seed=1),
+        reviewed=[(UNIT, 1)],
+    )
+    assert list(both["stratum"]) == ["reviewed"]
+
+
 def test_cli_steps(run: LabelRun, label_export: Path, tmp_path: Path) -> None:
     cli = CliRunner()
     where = ["--label-dir", str(run.root), "--export-dir", str(label_export)]
