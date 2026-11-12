@@ -56,6 +56,15 @@ routing:
   # already cleared in three of the three example cases that were checked,
   # and removal of trees that are already dead is not a second disturbance.
   consecutive_loss: ignore
+  # What to do when both models report loss and name different first
+  # dates. "ignore" leaves every interval from the earlier to the later
+  # date unlabelled. "later" labels the interval of the later date as
+  # loss and leaves only the intervals before it unlabelled. Adopted
+  # 2026-11-11 for now: under "ignore" a stand that died slowly gave
+  # almost no loss labels, because the models rarely agree on the date
+  # of a gradual mortality. The price is some losses dated one interval
+  # late.
+  disputed_date: later
 
 outlines:
   # Types whose edges are sharp enough to trust a model polygon as a label.
@@ -104,6 +113,13 @@ rules:
   unstable_change: 0.15
   # Treat a single-date dip of the forest mask (forest before and after) as forest.
   fill_dips: true
+  # A model polygon far larger than its candidate (`polygon_oversize`)
+  # marks the ground around the candidate as part of a larger event. With
+  # `true` it leaves only forest and scattered trees unlabelled. Ground
+  # that was not forest before the event (fields, houses, roads, water)
+  # stays background, and the polygon adds no ring. Adopted 2026-11-11:
+  # a polygon over a whole burn left chips with loss and no background.
+  oversize_keeps_nonforest: true
 
 pooling:
   # A cell is ignore when at least this share of it is ignore.

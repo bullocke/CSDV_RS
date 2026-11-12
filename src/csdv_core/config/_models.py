@@ -535,6 +535,7 @@ class LabelRouting(_Base):
     reject_confidence: int = Field(default=3, ge=1, le=3)
     guard_flagged_interval: bool = True
     consecutive_loss: Literal["label", "ignore"] = "ignore"
+    disputed_date: Literal["ignore", "later"] = "later"
 
 
 class LabelOutlines(_Base):
@@ -565,6 +566,7 @@ class LabelRules(_Base):
     sparse_height_m: float = Field(default=2.0, ge=0)
     unstable_change: float = Field(default=0.15, ge=0)
     fill_dips: bool = True
+    oversize_keeps_nonforest: bool = True
 
 
 class LabelPooling(_Base):

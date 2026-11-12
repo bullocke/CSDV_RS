@@ -171,6 +171,8 @@ class CandidateLayer:
         crisp: The extension counts as loss.
         precise: The outline is precise (narrow band), else an envelope.
         wide_margin: Leave a wider ring unlabelled around it.
+        oversize: The extension is a polygon far larger than the
+            candidate. It is never loss.
         agent: Agent code of the loss, 255 when the models disagreed.
     """
 
@@ -182,6 +184,7 @@ class CandidateLayer:
     crisp: bool = False
     precise: bool = False
     wide_margin: bool = False
+    oversize: bool = False
     agent: int = IGNORE
 
 
@@ -229,6 +232,16 @@ def interval_reason(
     agent = np.full(before.shape, IGNORE, dtype=np.uint8)
 
     live = [c for c in candidates if c.outcome]
+    # An oversize polygon says that the event is larger than the candidate,
+    # not where its edge is. It leaves forest and scattered trees
+    # unlabelled, keeps ground that was not forest as background, and has
+    # no ring of its own.
+    loose = {
+        id(c)
+        for c in live
+        if c.oversize and c.extension is not None and cfg.oversize_keeps_nonforest
+    }
+    wooded = before | woody
     for cand in live:
         if cand.outcome == R.UNDER_MIN:
             reason[cand.mask] = Reason.UNDER_MIN
@@ -246,7 +259,7 @@ def interval_reason(
         elif cand.precise and cand.outcome in R.LOSS_OUTCOMES:
             target = sharp
         target |= cand.mask
-        if cand.extension is not None:
+        if cand.extension is not None and id(cand) not in loose:
             target |= cand.extension
     ring = (
         _within(normal, _px(cfg.margin_m))
@@ -268,7 +281,10 @@ def interval_reason(
         if cand.trimmed is not None:
             reason[cand.trimmed] = Reason.OUTLINE_TRIMMED
         if cand.extension is not None and not cand.crisp:
-            reason[cand.extension] = Reason.EXTENSION_IGNORED
+            extension = cand.extension
+            if id(cand) in loose:
+                extension = extension & wooded
+            reason[extension] = Reason.EXTENSION_IGNORED
 
     loss = np.zeros(before.shape, dtype=bool)
     precise = np.zeros(before.shape, dtype=bool)

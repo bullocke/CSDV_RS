@@ -124,6 +124,7 @@ def _layer(cand: JudgedCandidate, k: int, masks: dict) -> CandidateLayer | None:
         layer.crisp = cand.event.extension_is_loss
         layer.precise = cand.event.quality == "precise"
         layer.wide_margin = cand.event.wide_margin
+        layer.oversize = cand.event.oversize
         layer.agent = AGENT_CODES.get(cand.routed.agent or "", IGNORE)
     return layer
 

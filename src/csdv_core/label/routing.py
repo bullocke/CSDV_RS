@@ -6,10 +6,11 @@ between consecutive dates. No person takes part.
 
 A candidate is accepted when both models report canopy loss beginning on the
 same date. It is rejected when neither reports loss on any date. When both
-report loss but name different first dates, the intervals from the earlier
-to the later date are left unlabelled and the candidate is kept
-(``date_disputed``). Whatever the status, an interval is labelled only where
-the two models agree about it.
+report loss but name different first dates the candidate is kept
+(``date_disputed``). The intervals before the later date are left
+unlabelled. The interval of the later date is labelled as loss, or left
+unlabelled too (``disputed_date``). Apart from that interval, an interval
+is labelled only where the two models agree about it.
 """
 
 from __future__ import annotations
@@ -151,7 +152,11 @@ def route(a: Verdict, b: Verdict, flagged: int | None, cfg: LabelRouting) -> Rou
     for k in range(n):
         date = k + 1
         in_a, in_b = date in loss_a, date in loss_b
-        if lo != hi and lo <= date <= hi:
+        if lo != hi and date == hi and cfg.disputed_date == "later":
+            # Both models saw the canopy go, one of them earlier. By the
+            # later date they agree that it is gone.
+            outcomes.append(_first_severity(a, b, first_a, first_b))
+        elif lo != hi and lo <= date <= hi:
             outcomes.append(DATE_DISPUTED)
         elif in_a and in_b:
             states = {a.states[date], b.states[date]}
@@ -187,6 +192,16 @@ def route(a: Verdict, b: Verdict, flagged: int | None, cfg: LabelRouting) -> Rou
         agent=a.agent if same_agent else None,
         **common,
     )
+
+
+def _first_severity(a: Verdict, b: Verdict, first_a: int, first_b: int) -> str:
+    """Loss outcome from the state each model gave on its own first loss date."""
+    states = {a.states[first_a], b.states[first_b]}
+    if states == {"full_loss"}:
+        return LOSS_FULL
+    if states == {"partial_loss"}:
+        return LOSS_PARTIAL
+    return LOSS_DISPUTED
 
 
 def _guard_flagged(outcomes: list[str], flagged: int | None, cfg: LabelRouting) -> None:

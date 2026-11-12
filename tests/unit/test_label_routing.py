@@ -72,10 +72,43 @@ def test_types_differ_but_agent_agrees() -> None:
 def test_date_disputed_keeps_the_rest() -> None:
     a = verdict("ffxoo")
     b = verdict("fffxo")
-    out = R.route(a, b, 1, CFG)
+    out = R.route(a, b, 1, LabelRouting(disputed_date="ignore"))
     assert out.status == "date_disputed"
     assert out.outcomes == [R.INTACT, R.DATE_DISPUTED, R.DATE_DISPUTED, R.OPEN]
     assert out.first_loss is None and not out.has_loss
+
+
+def test_disputed_date_is_labelled_at_the_later_date() -> None:
+    a = verdict("ffxoo")
+    b = verdict("fffxo")
+    out = R.route(a, b, 1, CFG)
+    assert out.status == "date_disputed"
+    assert out.outcomes == [R.INTACT, R.DATE_DISPUTED, R.LOSS_FULL, R.OPEN]
+    assert out.first_loss == 2 and out.severity == "stand_replacing"
+
+    # Three intervals apart, with different severities and a stressed date.
+    a = verdict("fpoooo")
+    b = verdict("fsffxo")
+    out = R.route(a, b, 3, CFG)
+    assert out.outcomes == [
+        R.DATE_DISPUTED,
+        R.DATE_DISPUTED,
+        R.DATE_DISPUTED,
+        R.LOSS_DISPUTED,
+        R.OPEN,
+    ]
+    assert out.first_loss == 3 and out.severity == "partial"
+
+    # Loss reported again by both right after the later date is a repeat.
+    a = verdict("fpopo")
+    b = verdict("ffppo")
+    out = R.route(a, b, None, CFG)
+    assert out.outcomes == [
+        R.DATE_DISPUTED,
+        R.LOSS_PARTIAL,
+        R.LOSS_REPEATED,
+        R.OPEN,
+    ]
 
 
 def test_flagged_interval_guard() -> None:
@@ -187,6 +220,7 @@ def test_probe_answers_under_both_rules() -> None:
     literal: Counter = Counter()
     status: Counter = Counter()
     real_in_rejected = 0
+    dated_late = 0
     for site in sites:
         a = parse_verdict("gem37", site["gem37"], site["n_dates"])
         b = parse_verdict("terra", site["terra"], site["n_dates"])
@@ -195,6 +229,7 @@ def test_probe_answers_under_both_rules() -> None:
         status[routed.status] += 1
         if routed.status == "rejected" and site["truth"] == "disturbance":
             real_in_rejected += 1
+        dated_late += routed.status == "date_disputed" and routed.has_loss
     assert literal == {"accepted": 31, "rejected": 36, "ignore": 15}
     assert status == {
         "accepted": 31,
@@ -204,6 +239,8 @@ def test_probe_answers_under_both_rules() -> None:
         "disagree": 4,
     }
     assert real_in_rejected == 2
+    # Every date-disputed site now carries loss at its later date.
+    assert dated_late == 5
 
 
 @pytest.mark.parametrize("states_a,states_b", [("ffx", "ffx"), ("fpx", "fpx")])

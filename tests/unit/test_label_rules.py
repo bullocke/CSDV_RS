@@ -155,6 +155,55 @@ def test_diffuse_extension_is_unlabelled_and_has_no_inner_band() -> None:
     assert reason[100, 150 + MARGIN + 1] == Reason.STABLE_FOREST
 
 
+def test_oversize_polygon_keeps_nonforest_ground_as_background() -> None:
+    mask = square(80, 120, 80, 120)
+    extension = ~mask
+    forest = np.ones((N, N), bool)
+    forest[:, 160:] = False  # a field, then scattered trees
+    cover = np.full((N, N), 0.9, "float32")
+    cover[:, 160:180] = 0.0
+    cover[:, 180:] = 0.1
+    height = np.full((N, N), 18.0, "float32")
+    height[:, 160:] = 0.5
+    layers = base(
+        forest_before=forest,
+        forest_after=forest,
+        cover_before=cover,
+        height_before=height,
+    )
+
+    def cand(oversize: bool) -> CandidateLayer:
+        return CandidateLayer(
+            R.LOSS_PARTIAL,
+            mask,
+            core=mask,
+            extension=extension,
+            crisp=False,
+            oversize=oversize,
+            agent=1,
+        )
+
+    reason, _ = interval_reason(layers, [cand(True)], RULES)
+    assert reason[100, 100] == Reason.ACCEPTED_PARTIAL
+    assert reason[100, 130] == Reason.EXTENSION_IGNORED  # forest
+    assert reason[100, 170] == Reason.NONFOREST  # the field stays background
+    assert reason[100, 190] == Reason.EXTENSION_IGNORED  # scattered trees
+    # No ring from the polygon: the field is background up to the forest.
+    assert reason[100, 159] == Reason.EXTENSION_IGNORED
+    assert reason[100, 160] == Reason.NONFOREST
+    assert to_change(reason, CFG.policy)[100, 170] == 0
+    # Forest beside the candidate is still unlabelled.
+    assert reason[60, 100] == Reason.EXTENSION_IGNORED
+
+    # A polygon that is not oversize, or the option switched off, keeps
+    # the whole extension unlabelled.
+    reason, _ = interval_reason(layers, [cand(False)], RULES)
+    assert reason[100, 170] == Reason.EXTENSION_IGNORED
+    off = RULES.model_copy(update={"oversize_keeps_nonforest": False})
+    reason, _ = interval_reason(layers, [cand(True)], off)
+    assert reason[100, 170] == Reason.EXTENSION_IGNORED
+
+
 def test_crisp_extension_is_loss() -> None:
     mask = square(60, 140, 60, 100)
     extension = square(60, 140, 100, 150)
