@@ -315,6 +315,7 @@ _SHORT = {
     "open": "open",
     "rejected_flagged": "REJ",
     "rejected_weak": "rej?",
+    "flagged_unconfirmed": "flag?",
     "failed": "fail",
     "unjudged": "-",
     "under_min": "small",

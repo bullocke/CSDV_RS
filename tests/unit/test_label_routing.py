@@ -72,6 +72,24 @@ def test_date_disputed_keeps_the_rest() -> None:
     assert out.first_loss is None and not out.has_loss
 
 
+def test_flagged_interval_guard() -> None:
+    """Loss dated two intervals before the flagged one: defoliation, then removal."""
+    a = verdict("fpooo", change_type="insect_disease")
+    b = verdict("fpooo", change_type="insect_disease")
+    plain = R.route(a, b, 2, CFG)
+    assert plain.outcomes == [R.LOSS_PARTIAL, R.OPEN, R.OPEN, R.OPEN]
+    guard = CFG.model_copy(update={"guard_flagged_interval": True})
+    guarded = R.route(a, b, 2, guard)
+    assert guarded.outcomes == [R.LOSS_PARTIAL, R.OPEN, R.FLAGGED_UNCONFIRMED, R.OPEN]
+    assert guarded.status == "accepted" and guarded.first_loss == 0
+    # Loss confirmed in the flagged interval is untouched.
+    same = R.route(a, b, 0, guard)
+    assert same.outcomes == plain.outcomes
+    # It also applies when only one model reports loss, elsewhere.
+    split = R.route(verdict("fpooo"), verdict("fffff"), 3, guard)
+    assert split.outcomes == [R.DISAGREE, R.OPEN, R.OPEN, R.FLAGGED_UNCONFIRMED]
+
+
 def test_rejection_is_unlabelled_only_where_flagged() -> None:
     out = R.route(verdict("ffff"), verdict("ffff"), 2, CFG)
     assert out.status == "rejected"

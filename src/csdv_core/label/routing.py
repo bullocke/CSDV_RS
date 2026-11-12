@@ -29,6 +29,7 @@ INTACT = "intact"  # both say forest
 OPEN = "open"  # no new loss, at least one model says open
 REJECTED_FLAGGED = "rejected_flagged"  # confident joint rejection, flagged interval
 REJECTED_WEAK = "rejected_weak"  # joint rejection below the confidence bar
+FLAGGED_UNCONFIRMED = "flagged_unconfirmed"  # flagged here, loss placed elsewhere
 FAILED = "failed"  # a verdict is missing or unusable
 UNJUDGED = "unjudged"  # large enough, never sent to the models
 UNDER_MIN = "under_min"  # too small to judge
@@ -134,6 +135,7 @@ def route(a: Verdict, b: Verdict, flagged: int | None, cfg: LabelRouting) -> Rou
         outcomes = [
             DISAGREE if (k + 1) in (loss_a | loss_b) else quiet[k] for k in range(n)
         ]
+        _guard_flagged(outcomes, flagged, cfg)
         return Routed(status="disagree", outcomes=outcomes, **common)
     first_a, first_b = min(loss_a), min(loss_b)
     lo, hi = min(first_a, first_b), max(first_a, first_b)
@@ -155,6 +157,7 @@ def route(a: Verdict, b: Verdict, flagged: int | None, cfg: LabelRouting) -> Rou
             outcomes.append(DISAGREE)
         else:
             outcomes.append(quiet[k])
+    _guard_flagged(outcomes, flagged, cfg)
     agreed = [k for k, o in enumerate(outcomes) if o in LOSS_OUTCOMES]
     first = agreed[0] if agreed else None
     severity = None
@@ -171,6 +174,19 @@ def route(a: Verdict, b: Verdict, flagged: int | None, cfg: LabelRouting) -> Rou
         agent=a.agent if same_agent else None,
         **common,
     )
+
+
+def _guard_flagged(outcomes: list[str], flagged: int | None, cfg: LabelRouting) -> None:
+    """Leave the flagged interval unlabelled when the models see no loss in it.
+
+    The candidate's source saw a change in that interval. When the models
+    place the loss in another interval, their "no new loss" there is not
+    enough to call the ground background.
+    """
+    if not cfg.guard_flagged_interval or flagged is None:
+        return
+    if 0 <= flagged < len(outcomes) and outcomes[flagged] in BACKGROUND_OUTCOMES:
+        outcomes[flagged] = FLAGGED_UNCONFIRMED
 
 
 def plan_literal(a: Verdict, b: Verdict, cfg: LabelRouting) -> str:

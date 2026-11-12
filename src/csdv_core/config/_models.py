@@ -533,6 +533,7 @@ class LabelRouting(_Base):
     """How two verdicts are combined."""
 
     reject_confidence: int = Field(default=3, ge=1, le=3)
+    guard_flagged_interval: bool = False
 
 
 class LabelOutlines(_Base):

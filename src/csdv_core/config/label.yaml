@@ -43,6 +43,12 @@ routing:
   # Stated confidence both models need for a joint "no loss" to count as a
   # confident rejection.
   reject_confidence: 3
+  # Whether the interval in which a candidate was flagged can be background
+  # when the models place its loss in another interval. The models date the
+  # first visible damage (a defoliated canopy, say), and the detection dates
+  # the loss of height. With `true`, the flagged interval is left unlabelled
+  # unless both models report loss in it.
+  guard_flagged_interval: false
 
 outlines:
   # Types whose edges are sharp enough to trust a model polygon as a label.
