@@ -567,6 +567,7 @@ class LabelRules(_Base):
     unstable_change: float = Field(default=0.15, ge=0)
     fill_dips: bool = True
     oversize_keeps_nonforest: bool = True
+    never_green_ndvi: float | None = Field(default=None, ge=-1, le=1)
 
 
 class LabelPooling(_Base):

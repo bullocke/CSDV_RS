@@ -343,3 +343,45 @@ def test_pooling() -> None:
     assert out[1, 1] == 3 and out[0, 3] == 5 and out[0, 0] == IGNORE
     stacked = pool_change(np.stack([change, change]), 4, cfg)
     assert stacked.shape == (2, 2, 4) and (stacked[1] == pooled).all()
+
+
+def test_never_green_ground_is_neither_forest_nor_scattered_trees() -> None:
+    """A roof is tall, so the canopy model calls it forest or woody."""
+    before = np.ones((N, N), bool)
+    cover = np.full((N, N), 0.9, "float32")
+    before[:40] = False
+    cover[:40] = 0.3  # woody, below the forest rule
+    after = before.copy()
+    after[100:140] = False  # left the forest mask
+    prob = np.full((N, N), 0.01, "float32")
+    prob[150:170] = 0.5
+    never = square(0, N, 0, 100)  # the western half was never green
+    layers = base(
+        forest_before=before, forest_after=after, cover_before=cover, prob=prob
+    )
+    plain, _ = interval_reason(layers, [], RULES)
+    assert plain[10, 10] == Reason.SPARSE_WOODY
+    assert plain[60, 10] == Reason.STABLE_FOREST
+    assert plain[120, 10] == Reason.FOREST_LOST_UNJUDGED
+    assert plain[160, 10] == Reason.RAISED_PROB
+
+    layers.never_green = never
+    reason, _ = interval_reason(layers, [], RULES)
+    assert (reason[:, :100] == Reason.NONFOREST).all()
+    assert (reason[:, 100:] == plain[:, 100:]).all()
+    assert (to_change(reason, CFG.policy)[:, :100] == 0).all()
+
+
+def test_an_accepted_loss_on_never_green_ground_stays_loss() -> None:
+    never = np.ones((N, N), bool)
+    cand = CandidateLayer(
+        outcome=R.LOSS_FULL, mask=square(60, 120, 60, 120), precise=True, agent=1
+    )
+    rejected = CandidateLayer(outcome=R.REJECTED_FLAGGED, mask=square(150, 180, 20, 50))
+    with_rule, agent = interval_reason(base(never_green=never), [cand, rejected], RULES)
+    without, _ = interval_reason(base(), [cand, rejected], RULES)
+    painted = without != Reason.STABLE_FOREST
+    assert (with_rule[painted] == without[painted]).all()
+    assert with_rule[90, 90] == Reason.ACCEPTED_FULL and agent[90, 90] == 1
+    assert with_rule[160, 30] == Reason.REJECTED_FLAGGED
+    assert (with_rule[~painted] == Reason.NONFOREST).all()

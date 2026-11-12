@@ -56,6 +56,12 @@ class SampleDesign:
         quiet_forest_share: Smallest forest share of a quiet chip.
         quiet_raised_share: Largest share of a quiet chip's cells with raised
             disturbance probability in any interval.
+        quiet_max_per_unit: Most quiet windows one unit may hold. Units with
+            few quiet chips pass their share to the others, up to this cap.
+            None: no cap.
+        stage1_di: Windows per unit, seeded by a detected object, that form
+            the first stage of a run with the reviewed windows.
+        stage1_other: The same for windows seeded by another object.
     """
 
     n_di: int = 650
@@ -64,6 +70,9 @@ class SampleDesign:
     seed: int = 0
     quiet_forest_share: float = 0.8
     quiet_raised_share: float = 0.02
+    quiet_max_per_unit: int | None = 25
+    stage1_di: int = 4
+    stage1_other: int = 2
 
 
 def _key(seed: int, name: str) -> float:
@@ -210,6 +219,23 @@ def _equal_allocation(counts: dict[str, int], n_total: int) -> dict[str, int]:
     return alloc
 
 
+def _quiet_allocation(
+    available: dict[str, int], n_quiet: int, cap: int | None
+) -> dict[str, int]:
+    """Quiet windows per unit: equal, as far as each unit has quiet chips.
+
+    Args:
+        available: Number of quiet chips of each unit that has any.
+        n_quiet: Quiet windows wanted over all units.
+        cap: Most quiet windows in one unit, or None for no cap. With a cap
+            the total can stay below ``n_quiet``.
+    """
+    room = {
+        unit_id: n if cap is None else min(n, cap) for unit_id, n in available.items()
+    }
+    return _equal_allocation(room, n_quiet)
+
+
 def draw_windows(
     run: LabelRun,
     units: list[str],
@@ -225,9 +251,11 @@ def draw_windows(
 
     Returns:
         One row per window: ``window_id``, ``unit``, ``epsg``, ``ix0``,
-        ``iy0``, ``nx``, ``ny``, ``stratum``, ``sub_stratum``, ``seed_cand``
-        and ``incl_prob``. Two seeds that give the same window keep one row,
-        that of the smaller key.
+        ``iy0``, ``nx``, ``ny``, ``stratum``, ``sub_stratum``, ``seed_cand``,
+        ``incl_prob`` and ``stage``. Two seeds that give the same window keep
+        one row, that of the smaller key. Window IDs follow the order of the
+        table, so they change when the design changes: a sample is drawn
+        once per label folder.
     """
     min_ha = run.cfg.candidates.min_ha
     counts_di, counts_other = {}, {}
@@ -289,15 +317,24 @@ def draw_windows(
                 "ny": window.ny,
             }
         )
-    n_quiet_unit = -(-design.n_quiet // max(len(units), 1)) if design.n_quiet else 0
+    # Quiet windows: the same number per unit as far as each unit has quiet
+    # chips. What a unit cannot take goes to the others, up to the cap.
+    quiet_chips: dict[str, pd.DataFrame] = {}
     for unit_id in units:
-        if not n_quiet_unit:
+        if not design.n_quiet:
             break
         chips = _quiet_chips(run, unit_id, design)
         if chips.empty:
             logger.info("%s: no quiet forest chip", unit_id)
             continue
-        take = chips.astype({"key": float}).nsmallest(n_quiet_unit, "key")
+        quiet_chips[unit_id] = chips.astype({"key": float})
+    alloc_quiet = _quiet_allocation(
+        {unit_id: len(chips) for unit_id, chips in quiet_chips.items()},
+        design.n_quiet,
+        design.quiet_max_per_unit,
+    )
+    for unit_id, chips in quiet_chips.items():
+        take = chips.nsmallest(alloc_quiet[unit_id], "key")
         for chip in take.itertuples():
             rows.append(
                 {
@@ -321,8 +358,29 @@ def draw_windows(
     table["_rank"] = table["stratum"].map(order)
     table = table.sort_values(["_rank", "unit", "key"])
     table = table.drop_duplicates(["unit", "ix0", "iy0", "nx", "ny"], keep="first")
-    quiet = table["stratum"] == "quiet"
-    table = pd.concat([table[~quiet], table[quiet].head(design.n_quiet)])
     table = table.reset_index(drop=True)
     table.insert(0, "window_id", [f"W{i + 1:04d}" for i in range(len(table))])
+    table["stage"] = _stages(table, design)
     return table.drop(columns=["_rank", "key"])
+
+
+def _stages(table: pd.DataFrame, design: SampleDesign) -> list[int]:
+    """Stage of every window: 1 for the first, smaller part of a run, else 2.
+
+    Stage 1 holds every reviewed window, every quiet window (they have no
+    candidate, so no model call) and, per unit, the ``stage1_di`` windows
+    seeded by a detected object and the ``stage1_other`` windows seeded by
+    another object that have the smallest stage keys. The stage key is a
+    hash of the seed candidate of its own, not the key the candidate was
+    drawn with. The drawn windows of a thinly sampled sub-stratum have small
+    sampling keys, so those keys would favour such sub-strata.
+    """
+    stage = pd.Series(2, index=table.index)
+    stage[table["stratum"].isin(["reviewed", "quiet"])] = 1
+    limits = {"di": design.stage1_di, "other": design.stage1_other}
+    for (_, stratum), group in table.groupby(["unit", "stratum"]):
+        if stratum not in limits or limits[stratum] <= 0:
+            continue
+        keys = group["seed_cand"].map(lambda c: _key(design.seed, f"stage:{c}"))
+        stage[keys.nsmallest(limits[stratum]).index] = 1
+    return stage.astype(int).tolist()

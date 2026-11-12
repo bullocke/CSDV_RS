@@ -43,6 +43,7 @@ __all__ = [
     "point_bounds",
     "quad_bounds",
     "quad_id_at",
+    "quarter_quad_bounds",
 ]
 
 
@@ -89,6 +90,31 @@ def quad_bounds(quad_id: str) -> tuple[float, float, float, float]:
     north = int(match["lat"]) + 1 - row * QUAD_DEG
     west = -(int(match["lon"]) + 1) + col * QUAD_DEG
     return (west, north - QUAD_DEG, west + QUAD_DEG, north)
+
+
+def quarter_quad_bounds(
+    quad_id: str, quarter: str
+) -> tuple[float, float, float, float]:
+    """Return the ``(west, south, east, north)`` bounds of a NAIP quarter quad.
+
+    A quarter quad is one quarter of a grid cell, 3.75 minutes on a side. The
+    bounds are nominal: the delivered image reaches a few hundred metres past
+    them on every side.
+
+    Args:
+        quad_id: Cell ID with or without the ``q`` prefix.
+        quarter: ``nw``, ``ne``, ``sw`` or ``se``.
+
+    Raises:
+        ValueError: If ``quarter`` is not one of the four.
+    """
+    if quarter not in ("nw", "ne", "sw", "se"):
+        raise ValueError(f"Not a quarter of a quad: {quarter!r}")
+    west, south, east, north = quad_bounds(quad_id)
+    mid_x, mid_y = (west + east) / 2, (south + north) / 2
+    x0, x1 = (west, mid_x) if quarter[1] == "w" else (mid_x, east)
+    y0, y1 = (mid_y, north) if quarter[0] == "n" else (south, mid_y)
+    return (x0, y0, x1, y1)
 
 
 def point_bounds(

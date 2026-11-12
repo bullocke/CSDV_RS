@@ -379,3 +379,191 @@ def test_cli_steps(run: LabelRun, label_export: Path, tmp_path: Path) -> None:
     requests = str(run.root / "requests")
     result = cli.invoke(main, ["label", "compare-renders", requests, requests])
     assert result.exit_code == 0 and "median 0.00" in result.output
+
+
+def test_ground_beyond_the_unit_is_empty_for_every_source(
+    run: LabelRun, label_grid, tmp_path: Path
+) -> None:
+    """The mosaics here reach past the unit. The stack must not show that ground."""
+    from csdv_core.label.stacks import inside_unit, load_stack
+
+    render_window(run, ROW, source="local", data_root=tmp_path / "data")
+    folder = run.root / "stacks" / "w1"
+    meta = json.loads((folder / "meta.json").read_text())
+    assert meta["clipped_to_unit"] and 0.9 < meta["inside_unit"] < 0.98
+    stack = load_stack(folder)
+    inside = inside_unit(run.unit(UNIT), stack.bounds)
+    assert not stack.data[:, :, ~inside].any()
+    assert stack.data.any(axis=1)[:, inside].all()
+    for info in meta["years"].values():
+        assert info["coverage"] == pytest.approx(meta["inside_unit"], abs=1e-3)
+        assert info["date_rule"] == "mosaic_name"  # these mosaics have no sidecar
+
+
+def test_cell_ndvi_follows_the_unit_cells(run: LabelRun, tmp_path: Path) -> None:
+    from csdv_core.label.lattice import cells_to_pixels
+    from csdv_core.label.stacks import load_cell_ndvi, load_stack, unit_cell_ndvi
+
+    render_window(run, ROW, source="local", data_root=tmp_path / "data")
+    folder = run.root / "stacks" / "w1"
+    stored = load_cell_ndvi(folder)
+    unit = run.unit(UNIT)
+    stack = load_stack(folder)
+    assert stored.years == unit.years
+    fresh = unit_cell_ndvi(unit.grid, stack)
+    assert (stored.row0, stored.col0) == (fresh.row0, fresh.col0)
+    np.testing.assert_allclose(stored.values, fresh.values, atol=1e-4, equal_nan=True)
+
+    # One cell, from the pixels that lie in it.
+    row, col = stored.row0 + 5, stored.col0 + 7
+    mark = np.zeros(unit.grid.cell_shape, bool)
+    mark[row, col] = True
+    pixels = cells_to_pixels(mark, unit.grid, stack.bounds)
+    assert pixels.sum() == 32 * 32
+    red = stack.data[1, 0][pixels].astype(float).sum()
+    nir = stack.data[1, 3][pixels].astype(float).sum()
+    assert stored.values[1, 5, 7] == pytest.approx((nir - red) / (nir + red), abs=1e-4)
+    # A cell that the stack covers only in part has no value, and so has a
+    # cell the stack does not reach.
+    assert np.isnan(stored.on_unit(unit.grid.cell_shape)[:, 0, 0]).all() or (
+        stored.row0 == 0 and stored.col0 == 0
+    )
+    assert load_cell_ndvi(tmp_path) is None
+
+
+def _with_rule(run: LabelRun, value: float | None) -> None:
+    rules = run.cfg.rules.model_copy(update={"never_green_ndvi": value})
+    run.cfg = run.cfg.model_copy(update={"rules": rules})
+
+
+def test_never_green_ground_leaves_the_forest_mask(
+    run: LabelRun, tmp_path: Path
+) -> None:
+    """Random imagery has an NDVI near 0, so a high threshold flags every cell."""
+    render_window(run, ROW, source="local", data_root=tmp_path / "data")
+    _write_answers(run)
+    records = J.read_records(run.answers)
+    plain = build_window(run, ROW, records)
+    assert plain.labels.never_green is None  # off by default
+    assert (plain.labels.reason == Reason.STABLE_FOREST).any()
+    assert (plain.labels.reason == Reason.SPARSE_WOODY).any()
+
+    _with_rule(run, 0.5)
+    built = build_window(run, ROW, records)
+    labels = built.labels
+    assert labels.never_green.all()
+    assert not labels.forest.any()  # the stored forest band follows
+    for gone in (Reason.STABLE_FOREST, Reason.SPARSE_WOODY, Reason.RAISED_PROB):
+        assert not (labels.reason == gone).any()
+    assert (labels.reason == Reason.NONFOREST).sum() > (
+        plain.labels.reason == Reason.NONFOREST
+    ).sum()
+    # What the candidates paint is untouched: the accepted loss, the
+    # rejection, the disagreement and their rings.
+    for kept in (
+        Reason.ACCEPTED_FULL,
+        Reason.REJECTED_FLAGGED,
+        Reason.DISAGREE,
+        Reason.MARGIN,
+    ):
+        assert ((labels.reason == kept) == (plain.labels.reason == kept)).all()
+    # The stored cell NDVI is enough, the imagery is not needed.
+    blind = build_window(run, ROW, records, with_stack=False)
+    assert (blind.labels.reason == labels.reason).all()
+
+    # A threshold below every cell changes nothing.
+    _with_rule(run, -0.9)
+    same = build_window(run, ROW, records)
+    assert (same.labels.reason == plain.labels.reason).all()
+    assert not same.labels.never_green.any()
+
+
+def test_never_green_rule_without_cell_ndvi_is_not_applied(
+    run: LabelRun, caplog: pytest.LogCaptureFixture
+) -> None:
+    _with_rule(run, 0.5)
+    with caplog.at_level("WARNING"):
+        built = build_window(run, ROW, [], with_stack=False)
+    assert built.labels.never_green is None
+    assert "never-green rule is not applied" in caplog.text
+
+
+def test_a_stale_stack_is_refused(run: LabelRun, tmp_path: Path) -> None:
+    """Window IDs follow the sample's order. Other ground under an old ID fails."""
+    render_window(run, ROW, source="local", data_root=tmp_path / "data")
+    moved = ROW.copy()
+    moved["ix0"] = ROW["ix0"] + 1
+    with pytest.raises(ValueError, match="another window"):
+        render_window(run, moved, source="local", data_root=tmp_path / "data")
+    # The same window is still read from its stack.
+    assert render_window(run, ROW, source="local", data_root=tmp_path / "data") == 3
+
+
+def test_a_rendered_folder_is_not_sampled_again(
+    run: LabelRun, label_export: Path, tmp_path: Path
+) -> None:
+    cli = CliRunner()
+    where = ["--label-dir", str(run.root), "--export-dir", str(label_export)]
+    render_window(run, ROW, source="local", data_root=tmp_path / "data")
+    result = cli.invoke(main, ["label", "sample", *where, "--overwrite"])
+    assert result.exit_code != 0 and "already holds" in result.output
+    result = cli.invoke(main, ["label", "sample", *where, "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "Stage 1:" in result.output
+
+
+def test_verdict_reports_windows_without_requests_and_takes_a_stage(
+    run: LabelRun, label_export: Path, tmp_path: Path
+) -> None:
+    cli = CliRunner()
+    where = ["--label-dir", str(run.root), "--export-dir", str(label_export)]
+    dry = ["label", "verdict", *where, "--dry-run", "--cap", "1"]
+    result = cli.invoke(main, dry)
+    assert result.exit_code == 0, result.output
+    assert "0 new verdict calls" in result.output
+    assert "1 of 1 selected windows have no requests.jsonl" in result.output
+    assert "w1" in result.output
+
+    # windows.csv without a stage column cannot be filtered by stage.
+    result = cli.invoke(main, [*dry, "--stage", "1"])
+    assert result.exit_code != 0 and "no stage column" in result.output
+
+    render_window(run, ROW, source="local", data_root=tmp_path / "data")
+    table = pd.read_csv(run.root / "windows.csv")
+    table["stage"] = 2
+    table.to_csv(run.root / "windows.csv", index=False)
+    result = cli.invoke(main, [*dry, "--stage", "1"])
+    assert result.exit_code == 0 and "0 new verdict calls" in result.output
+    assert "have no requests" not in result.output
+    result = cli.invoke(main, [*dry, "--stage", "2"])
+    assert result.exit_code == 0 and "6 new verdict calls" in result.output
+
+
+def test_a_chip_in_two_windows_is_written_once(
+    run: LabelRun, label_export: Path
+) -> None:
+    second = ROW.copy()
+    second["window_id"] = "w2"
+    second["ix0"] = ROW["ix0"] + 1  # shares the eastern column of w1
+    pd.DataFrame([ROW, second]).to_csv(run.root / "windows.csv", index=False)
+    where = ["--label-dir", str(run.root), "--export-dir", str(label_export)]
+    result = CliRunner().invoke(main, ["label", "build", *where, "--no-imagery"])
+    assert result.exit_code == 0, result.output
+    assert "2 chips lie in two windows" in result.output
+    chips = pd.read_parquet(run.root / "chips" / "chips.parquet")
+    assert len(chips) == 6 and chips["chip_id"].is_unique
+    shared = chips[chips["chip_id"].isin([f"e26919_x978_y{y}" for y in (14646, 14647)])]
+    assert set(shared["window_id"]) == {"w1"}
+
+
+def test_render_reports_how_the_dates_were_found(
+    run: LabelRun, label_export: Path, tmp_path: Path
+) -> None:
+    where = ["--label-dir", str(run.root), "--export-dir", str(label_export)]
+    data = ["--data-root", str(tmp_path / "data"), "--naip-source", "local"]
+    cli = CliRunner()
+    result = cli.invoke(main, ["label", "render", *where, *data, "--check"])
+    assert result.exit_code == 0 and "3 without a sidecar" in result.output
+    result = cli.invoke(main, ["label", "render", *where, *data])
+    assert result.exit_code == 0, result.output
+    assert "3 by mosaic_name" in result.output and "median date" in result.output

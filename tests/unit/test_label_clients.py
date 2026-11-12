@@ -171,3 +171,67 @@ def test_unusable_verdict_is_asked_once_more(
     )
     judge.send(ledger, [polygon], "terra", window_id="w", stage="polygon")
     assert len(calls) == 3
+
+
+def test_a_busy_server_is_waited_for(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rate limit is the pace of the run, not a fault of the request."""
+    import httpx
+
+    waits: list[float] = []
+    monkeypatch.setattr(clients.time, "sleep", waits.append)
+    monkeypatch.setenv("OpenRouter_API_KEY", "y")
+    busy = [429, 503, 429, 429, 529]
+    calls: list = []
+
+    def post(url: str, **kwargs):
+        calls.append(url)
+        if len(calls) <= len(busy):
+            request = httpx.Request("POST", url)
+            headers = {"retry-after": "7"} if len(calls) == 2 else {}
+            response = httpx.Response(
+                busy[len(calls) - 1], request=request, headers=headers
+            )
+            raise httpx.HTTPStatusError("busy", request=request, response=response)
+        return _Response(
+            {
+                "choices": [{"message": {"content": '{"states": ["forest"]}'}}],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 10, "cost": 0.004},
+            }
+        )
+
+    monkeypatch.setattr(httpx, "post", post)
+    ledger = Ledger(tmp_path, cap=1.0)
+    reply = clients.ask(ledger, "terra", "p", [b"img"], stage="verdict", tag={})
+    # Five busy answers are more than the three attempts of an ordinary
+    # failure, and the call still succeeds.
+    assert not reply.error and reply.data == {"states": ["forest"]}
+    assert waits == [15.0, 7.0, 60.0, 120.0, 120.0]
+    assert ledger.spent() == pytest.approx(0.004) and len(calls) == 6
+
+
+def test_a_server_that_stays_busy_ends_the_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import httpx
+
+    waits: list[float] = []
+    monkeypatch.setattr(clients.time, "sleep", waits.append)
+    monkeypatch.setenv("OpenRouter_API_KEY", "y")
+    calls: list = []
+
+    def post(url: str, **kwargs):
+        calls.append(url)
+        request = httpx.Request("POST", url)
+        raise httpx.HTTPStatusError(
+            "busy", request=request, response=httpx.Response(429, request=request)
+        )
+
+    monkeypatch.setattr(httpx, "post", post)
+    ledger = Ledger(tmp_path, cap=1.0)
+    reply = clients.ask(ledger, "terra", "p", [b"img"], stage="verdict", tag={})
+    assert reply.error and reply.data is None and ledger.spent() == 0
+    # Six waits for the busy server, then the three ordinary attempts.
+    assert len(calls) == clients.BUSY_TRIES + 3
+    assert ledger.reserve("k", 0.9) is None  # the hold was released

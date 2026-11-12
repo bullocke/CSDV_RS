@@ -16,6 +16,7 @@ from csdv_core.grid.cells import (
     point_bounds,
     quad_bounds,
     quad_id_at,
+    quarter_quad_bounds,
 )
 from csdv_core.grid.units import GridPaths, Unit, load_unit, read_batch, save_unit
 
@@ -147,3 +148,15 @@ def test_unit_record_round_trip_and_fixed_box(tmp_path):
     moved.unit_id = "q4407159"
     with pytest.raises(ValueError, match="already exists"):
         save_unit(paths, moved)
+
+
+def test_quarter_quads_tile_their_quad():
+    west, south, east, north = quad_bounds("q4407159")
+    parts = {q: quarter_quad_bounds("4407159", q) for q in ("nw", "ne", "sw", "se")}
+    assert parts["nw"] == (west, (south + north) / 2, (west + east) / 2, north)
+    assert parts["se"] == ((west + east) / 2, south, east, (south + north) / 2)
+    area = sum((b[2] - b[0]) * (b[3] - b[1]) for b in parts.values())
+    assert area == pytest.approx(QUAD_DEG**2)
+    assert parts["sw"][2] == parts["se"][0] and parts["sw"][3] == parts["nw"][1]
+    with pytest.raises(ValueError):
+        quarter_quad_bounds("4407159", "north")

@@ -44,10 +44,21 @@
 # write the stacks, the request images and the four-band chips to node
 # scratch, copy them into the label run folder on success.
 #
-# Outputs under the label run folder: stacks/<window>/, requests/<window>/
-# (JPEGs and requests.jsonl or polygons.jsonl), chips/<chip>_naip.tif and
-# render_done/<unit>_<kind>.json. Pull requests/ and stacks/*/meta.json to
-# the laptop. The chips stay on CHPC for training.
+# Outputs under the label run folder: stacks/<window>/ (one GeoTIFF per year,
+# meta.json with the dates, cell_ndvi.tif), requests/<window>/ (JPEGs and
+# requests.jsonl or polygons.jsonl), chips/<chip>_naip.tif and
+# render_done/<unit>_<kind>.json. scripts/chpc/pull_label_run.sh copies the
+# requests, meta.json and cell_ndvi.tif to the laptop. The chips stay on CHPC
+# for training.
+#
+# The date of a window comes from the .provenance.json beside each mosaic.
+# The --check step counts mosaics without one, and the last lines of the
+# render count the window-years by date rule. "mosaic_name" there means the
+# unit's median date was used, which can be months off: stop and look.
+#
+# Every job renders into fresh node scratch, so a polygon pass reads the
+# mosaics again. Keep the checkout unchanged between the verdict pass and
+# the polygon pass, so that both give a window the same dates.
 #
 # A window on the edge of its unit is rendered with the ground beyond the
 # unit's mosaic left black. A window that lacks a year inside the unit is

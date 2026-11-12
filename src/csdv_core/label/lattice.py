@@ -34,6 +34,7 @@ __all__ = [
     "Bounds",
     "Chip",
     "Window",
+    "cell_index",
     "cells_to_pixels",
     "grid_transform",
     "pixel_slices",
@@ -185,6 +186,28 @@ def pixel_slices(inner: Bounds, outer: Bounds) -> tuple[slice, slice]:
     return slice(row0, row1), slice(col0, col1)
 
 
+def cell_index(grid: CellGrid, bounds: Bounds) -> tuple[np.ndarray, np.ndarray]:
+    """Row and column of the unit's cell under each pixel row and column.
+
+    Args:
+        grid: Cell grid of the run.
+        bounds: Extent on the 0.6 m lattice.
+
+    Returns:
+        ``(rows, cols)``: the cell row of every pixel row of ``bounds``
+        (north to south) and the cell column of every pixel column. Values
+        below 0 or beyond the grid mark pixels outside it.
+    """
+    width = round((bounds[2] - bounds[0]) / GSD)
+    height = round((bounds[3] - bounds[1]) / GSD)
+    cell = grid.cell_transform
+    xs = bounds[0] + (np.arange(width) + 0.5) * GSD
+    ys = bounds[3] - (np.arange(height) + 0.5) * GSD
+    cols = np.floor((xs - cell.c) / cell.a).astype(int)
+    rows = np.floor((cell.f - ys) / -cell.e).astype(int)
+    return rows, cols
+
+
 def cells_to_pixels(
     cells: np.ndarray, grid: CellGrid, bounds: Bounds, fill: float = np.nan
 ) -> np.ndarray:
@@ -200,13 +223,8 @@ def cells_to_pixels(
         An array with the pixel shape of ``bounds`` and the dtype of
         ``cells`` (bool stays bool, with False outside the grid).
     """
-    width = round((bounds[2] - bounds[0]) / GSD)
-    height = round((bounds[3] - bounds[1]) / GSD)
-    cell = grid.cell_transform
-    xs = bounds[0] + (np.arange(width) + 0.5) * GSD
-    ys = bounds[3] - (np.arange(height) + 0.5) * GSD
-    cols = np.floor((xs - cell.c) / cell.a).astype(int)
-    rows = np.floor((cell.f - ys) / -cell.e).astype(int)
+    rows, cols = cell_index(grid, bounds)
+    height, width = rows.size, cols.size
     in_c = np.flatnonzero((cols >= 0) & (cols < grid.cell_cols))
     in_r = np.flatnonzero((rows >= 0) & (rows < grid.cell_rows))
     stack = cells if cells.ndim == 3 else cells[None]

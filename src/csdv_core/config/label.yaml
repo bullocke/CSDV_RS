@@ -120,6 +120,18 @@ rules:
   # stays background, and the polygon adds no ring. Adopted 2026-11-11:
   # a polygon over a whole burn left chips with loss and no background.
   oversize_keeps_nonforest: true
+  # The forest rule of the grid runs is canopy height alone, so a roof or a
+  # rock face taller than 5 m counts as forest. With a value here, a cell
+  # whose NDVI (from the sums of its near-infrared and red digital numbers)
+  # never reaches it on any date is treated as non-forest: background, not
+  # forest and not scattered trees. What a candidate paints is unchanged,
+  # so a loss both models accept stays loss. The value compares the largest
+  # NDVI over all dates, never one date: leaf-off flights and uncalibrated
+  # radiometry put a third of forest cells below 0.10 on some date. Dry
+  # conifer forest reaches only 0.10 to 0.20, so choose the value from the
+  # run's own windows. Needs cell_ndvi.tif in the stack folders (written by
+  # `render`). null: off.
+  never_green_ndvi: null
 
 pooling:
   # A cell is ignore when at least this share of it is ignore.

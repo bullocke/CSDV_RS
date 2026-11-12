@@ -147,6 +147,9 @@ class BaseLayers:
         height_before: Mean canopy height (m) at the earlier date.
         prob: Disturbance probability of the interval, NaN where not monitored.
         unstable: The unit's forest mask is unreliable in this interval.
+        never_green: Ground whose NDVI stayed low on every date (a roof, a
+            rock face). It is neither forest nor scattered trees. None when
+            the rule is off.
     """
 
     no_data: np.ndarray
@@ -156,6 +159,7 @@ class BaseLayers:
     height_before: np.ndarray
     prob: np.ndarray
     unstable: bool = False
+    never_green: np.ndarray | None = None
 
 
 @dataclass
@@ -222,6 +226,12 @@ def interval_reason(
             base.height_before >= cfg.sparse_height_m
         )
         raised = base.prob >= cfg.raised_prob
+    if base.never_green is not None:
+        # Ground that was never green is not forest and not scattered trees,
+        # whatever height the canopy model gives it (a roof, a rock face).
+        before = before & ~base.never_green
+        after = after & ~base.never_green
+        woody = woody & ~base.never_green
     reason = np.full(before.shape, Reason.NONFOREST, dtype=np.uint8)
     reason[~before & woody] = Reason.SPARSE_WOODY
     reason[before & after] = (

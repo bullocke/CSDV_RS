@@ -90,15 +90,22 @@ def write_label_chips(
     *,
     dates: list[str],
     native_m: list[float | None] | None = None,
+    skip: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Write the label rasters of every chip and return one table row per chip.
 
     Needs no imagery, so it can run where the verdicts are.
+
+    Args:
+        skip: Chip IDs that another window has already written. They are
+            left as they are and get no row.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     rows = []
     aux_names = [f"prob_{i}" for i in labels.intervals] + [f"forest_{d}" for d in dates]
     for chip in window.chips():
+        if skip and chip.chip_id in skip:
+            continue
         r, c = pixel_slices(chip.bounds, window.bounds)
         change = labels.change[:, r, c]
         stem = out_dir / chip.chip_id

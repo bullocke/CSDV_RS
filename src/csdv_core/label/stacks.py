@@ -7,6 +7,12 @@ window plus a collar and is read back as a :class:`WindowStack`.
 
 A stack is written once and then reused, so the vision-model images, the
 chips and the review sheets all come from the same pixels.
+
+Beside the imagery the folder holds ``cell_ndvi.tif``: the NDVI of every
+19.2 m cell of the unit that the stack touches, one band per year. It is a
+few kilobytes, so it can be copied to a machine that does not hold the
+imagery, where the label rules use it to tell ground that was never green
+(roofs, rock) from forest.
 """
 
 from __future__ import annotations
@@ -19,11 +25,13 @@ from typing import Any
 
 import numpy as np
 
+from csdv_core.disturbance.inputs import CellGrid
 from csdv_core.label.inputs import UnitInputs
 from csdv_core.label.lattice import (
     GSD,
     Bounds,
     Window,
+    cell_index,
     cells_to_pixels,
     grid_transform,
     pixel_slices,
@@ -36,14 +44,26 @@ logger = logging.getLogger(__name__)
 #: of the window (with its collar) that lies inside the unit's cell grid.
 MIN_COVERAGE = 0.98
 BAND_NAMES = ("R", "G", "B", "NIR")
+#: File of the cell NDVI inside a stack folder.
+CELL_NDVI_FILE = "cell_ndvi.tif"
+#: NDVI is stored as int16 after multiplying by this.
+NDVI_SCALE = 10_000
+NDVI_NODATA = -32768
+#: Smallest share of a cell's pixels that must hold imagery for its NDVI.
+NDVI_MIN_SHARE = 0.9
 
 __all__ = [
     "BAND_NAMES",
+    "CELL_NDVI_FILE",
     "MIN_COVERAGE",
+    "CellNdvi",
     "WindowStack",
     "build_stack",
     "inside_unit",
+    "load_cell_ndvi",
     "load_stack",
+    "unit_cell_ndvi",
+    "write_cell_ndvi",
     "write_four_band",
 ]
 
@@ -117,6 +137,19 @@ def inside_unit(unit: UnitInputs, bounds: Bounds) -> np.ndarray:
     return cells_to_pixels(cells, unit.grid, bounds)
 
 
+def _check_same_window(
+    meta: dict[str, Any], unit: UnitInputs, bounds: Bounds, folder: Path
+) -> None:
+    same_unit = meta.get("unit") == unit.unit
+    same_ground = np.allclose(meta.get("bounds", []) or [np.nan] * 4, bounds, atol=1e-6)
+    if not (same_unit and same_ground):
+        raise ValueError(
+            f"{folder} holds the stack of another window (unit "
+            f"{meta.get('unit')}, bounds {meta.get('bounds')}). The sample was "
+            "probably drawn again after rendering. Use a new label folder."
+        )
+
+
 def build_stack(
     unit: UnitInputs,
     window: Window,
@@ -131,7 +164,9 @@ def build_stack(
     A year is kept when its imagery covers the part of the stack that lies
     inside the unit's cell grid. The mosaics of a unit end at its edge, so a
     window there has pixels without imagery (0 in every band) beyond it. The
-    remote sources fill that ground from the neighbouring quads.
+    remote sources could fill that ground from the neighbouring quads, but
+    it is left empty for every source, so that a window looks the same
+    whichever machine rendered it.
 
     Args:
         unit: The window's unit.
@@ -148,11 +183,19 @@ def build_stack(
         ``meta.json`` as a dict. ``inside_unit`` is the share of the stack
         inside the unit's cell grid. ``failed`` lists years that could not
         be read or cover less than :data:`MIN_COVERAGE` of that part.
+
+    Raises:
+        ValueError: If the folder holds the stack of another window. Window
+            IDs follow the order of the sample, so a sample drawn again into
+            a folder that was already rendered would otherwise reuse the
+            imagery of other ground.
     """
     meta_path = folder / "meta.json"
+    bounds = window.stack_bounds(collar_px)
     done: dict[str, Any] = {}
     if meta_path.exists():
         earlier = json.loads(meta_path.read_text())
+        _check_same_window(earlier, unit, bounds, folder)
         if not earlier.get("failed"):
             return earlier
         done = {
@@ -160,14 +203,15 @@ def build_stack(
             for year, info in earlier["years"].items()
             if (folder / f"{year}.tif").exists()
         }
-    bounds = window.stack_bounds(collar_px)
     inside = inside_unit(unit, bounds)
+    keep = None if inside.all() else inside
     meta: dict[str, Any] = {
         "window_id": window.window_id,
         "unit": unit.unit,
         "epsg": window.epsg,
         "bounds": list(bounds),
         "inside_unit": round(float(inside.mean()), 4),
+        "clipped_to_unit": True,
         "years": done,
         "failed": {},
     }
@@ -183,6 +227,7 @@ def build_stack(
                 epsg=window.epsg,
                 bounds=bounds,
                 data_root=data_root,
+                keep=keep,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("%s %d (%s): %s", window.window_id, year, year_source, exc)
@@ -209,6 +254,11 @@ def build_stack(
             "native_m": read.native_m,
             "item_ids": list(read.item_ids),
             "coverage": round(read.coverage, 4),
+            "date_rule": read.date_rule,
+            "quad": read.quad,
+            "date_share": read.date_share,
+            "other_dates": list(read.other_dates),
+            "mixed_dates": read.mixed_dates,
         }
     folder.mkdir(parents=True, exist_ok=True)
     meta_path.write_text(json.dumps(meta, indent=1))
@@ -247,3 +297,138 @@ def stack_gsd_note(stack: WindowStack) -> str:
         for y, m in zip(stack.years, stack.native_m, strict=True)
     ]
     return ", ".join(parts) + f" (stored at {GSD} m)"
+
+
+@dataclass
+class CellNdvi:
+    """NDVI of the unit's cells under a window, one layer per year.
+
+    Attributes:
+        years: NAIP years, ascending.
+        row0: Row of the unit's cell grid at the top of ``values``.
+        col0: Column of the unit's cell grid at the left of ``values``.
+        values: ``(years, rows, cols)`` float32, NaN where a cell has too
+            little imagery.
+    """
+
+    years: list[int]
+    row0: int
+    col0: int
+    values: np.ndarray
+
+    def on_unit(self, cell_shape: tuple[int, int]) -> np.ndarray:
+        """``values`` placed on the unit's whole cell grid (NaN elsewhere)."""
+        out = np.full((len(self.years), *cell_shape), np.nan, dtype="float32")
+        rows, cols = self.values.shape[1:]
+        out[:, self.row0 : self.row0 + rows, self.col0 : self.col0 + cols] = self.values
+        return out
+
+
+def unit_cell_ndvi(
+    grid: CellGrid, stack: WindowStack, *, min_share: float = NDVI_MIN_SHARE
+) -> CellNdvi:
+    """NDVI of every cell of the unit that the stack touches, per year.
+
+    The NDVI of a cell is taken from the sums of its near-infrared and red
+    digital numbers, ``(NIR - R) / (NIR + R)``. That weights bright pixels
+    more than a mean of pixel values would, so sunlit crowns count for more
+    than their shadows. The digital numbers are not calibrated between
+    flights, which is why the label rules use the largest value over all
+    years and not the value of one year.
+
+    Args:
+        grid: Cell grid of the unit.
+        stack: Imagery of the window.
+        min_share: Smallest share of a cell's pixels that must hold imagery.
+
+    Returns:
+        The cells from the first to the last row and column that the stack
+        reaches inside the grid. Empty when the stack lies outside it.
+    """
+    rows, cols = cell_index(grid, stack.bounds)
+    ok_r = (rows >= 0) & (rows < grid.cell_rows)
+    ok_c = (cols >= 0) & (cols < grid.cell_cols)
+    n_years = len(stack.years)
+    if not ok_r.any() or not ok_c.any():
+        return CellNdvi(list(stack.years), 0, 0, np.zeros((n_years, 0, 0), "float32"))
+    row0, col0 = int(rows[ok_r].min()), int(cols[ok_c].min())
+    n_rows = int(rows[ok_r].max()) - row0 + 1
+    n_cols = int(cols[ok_c].max()) - col0 + 1
+    inside = ok_r[:, None] & ok_c[None, :]
+    index = ((rows - row0)[:, None] * n_cols + (cols - col0)[None, :])[inside]
+    size = n_rows * n_cols
+    cell_px = round(grid.cell_transform.a / GSD) ** 2
+    values = np.full((n_years, size), np.nan, dtype="float32")
+    for t in range(n_years):
+        block = stack.data[t]
+        seen = block.any(axis=0)[inside]
+        red = block[0][inside].astype("float64") * seen
+        nir = block[3][inside].astype("float64") * seen
+        count = np.bincount(index, weights=seen, minlength=size)
+        sum_red = np.bincount(index, weights=red, minlength=size)
+        sum_nir = np.bincount(index, weights=nir, minlength=size)
+        total = sum_nir + sum_red
+        enough = (count >= min_share * cell_px) & (total > 0)
+        values[t, enough] = (sum_nir[enough] - sum_red[enough]) / total[enough]
+    return CellNdvi(
+        list(stack.years), row0, col0, values.reshape(n_years, n_rows, n_cols)
+    )
+
+
+def write_cell_ndvi(unit: UnitInputs, stack: WindowStack, folder: Path) -> Path:
+    """Write the cell NDVI of a stack to ``cell_ndvi.tif`` in its folder.
+
+    One int16 band per year (NDVI times :data:`NDVI_SCALE`), georeferenced on
+    the unit's cell grid.
+    """
+    import rasterio
+    from affine import Affine
+
+    ndvi = unit_cell_ndvi(unit.grid, stack)
+    cell = unit.grid.cell_transform
+    transform = Affine(
+        cell.a,
+        0.0,
+        cell.c + ndvi.col0 * cell.a,
+        0.0,
+        cell.e,
+        cell.f + ndvi.row0 * cell.e,
+    )
+    scaled = np.where(
+        np.isnan(ndvi.values), NDVI_NODATA, np.round(ndvi.values * NDVI_SCALE)
+    ).astype("int16")
+    path = folder / CELL_NDVI_FILE
+    folder.mkdir(parents=True, exist_ok=True)
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        height=max(scaled.shape[1], 1),
+        width=max(scaled.shape[2], 1),
+        count=len(ndvi.years),
+        dtype="int16",
+        crs=f"EPSG:{stack.epsg}",
+        transform=transform,
+        nodata=NDVI_NODATA,
+        compress="DEFLATE",
+    ) as dst:
+        if scaled.size:
+            dst.write(scaled)
+        dst.descriptions = tuple(str(y) for y in ndvi.years)
+        dst.update_tags(row0=ndvi.row0, col0=ndvi.col0, scale=NDVI_SCALE)
+    return path
+
+
+def load_cell_ndvi(folder: Path) -> CellNdvi | None:
+    """Read ``cell_ndvi.tif`` of a stack folder, or None when there is none."""
+    import rasterio
+
+    path = folder / CELL_NDVI_FILE
+    if not path.exists():
+        return None
+    with rasterio.open(path) as src:
+        raw = src.read()
+        years = [int(d) for d in src.descriptions]
+        tags = src.tags()
+    values = np.where(raw == NDVI_NODATA, np.nan, raw / NDVI_SCALE).astype("float32")
+    return CellNdvi(years, int(tags["row0"]), int(tags["col0"]), values)

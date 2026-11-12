@@ -35,7 +35,16 @@ from csdv_core.label.inputs import UnitInputs, load_unit_inputs
 from csdv_core.label.labels import JudgedCandidate, WindowLabels, window_labels
 from csdv_core.label.lattice import GSD, Window
 from csdv_core.label.requests import Request
-from csdv_core.label.stacks import WindowStack, build_stack, load_stack
+from csdv_core.label.stacks import (
+    CELL_NDVI_FILE,
+    CellNdvi,
+    WindowStack,
+    build_stack,
+    load_cell_ndvi,
+    load_stack,
+    unit_cell_ndvi,
+    write_cell_ndvi,
+)
 from csdv_core.label.views import View
 
 logger = logging.getLogger(__name__)
@@ -268,6 +277,9 @@ def render_window(
     parts = window_parts(run, row)
     if parts is None or parts.stack is None:
         return 0
+    stack_folder = run.root / "stacks" / window.window_id
+    if not (stack_folder / CELL_NDVI_FILE).exists():
+        write_cell_ndvi(parts.unit, parts.stack, stack_folder)
     folder = run.root / "requests" / window.window_id
     if kind == "verdict":
         requests = J.verdict_requests(
@@ -320,6 +332,16 @@ def window_dates(run: LabelRun, window_id: str) -> list[str] | None:
     return [years[y]["date"] for y in sorted(years, key=int)]
 
 
+def window_cell_ndvi(run: LabelRun, parts: WindowParts) -> CellNdvi | None:
+    """Cell NDVI of a window: the stored file, else from the stack if loaded."""
+    stored = load_cell_ndvi(run.root / "stacks" / parts.window.window_id)
+    if stored is not None:
+        return stored
+    if parts.stack is not None:
+        return unit_cell_ndvi(parts.unit.grid, parts.stack)
+    return None
+
+
 def build_window(
     run: LabelRun, row: Any, records: list[dict[str, Any]], *, with_stack: bool = True
 ) -> BuiltWindow | None:
@@ -340,7 +362,20 @@ def build_window(
         dates = window_dates(run, wid) or [
             parts.unit.dates[y] for y in parts.unit.years
         ]
+    cell_ndvi = None
+    if run.cfg.rules.never_green_ndvi is not None:
+        cell_ndvi = window_cell_ndvi(run, parts)
+        if cell_ndvi is None:
+            logger.warning(
+                "%s: no cell NDVI, so the never-green rule is not applied", wid
+            )
     labels = window_labels(
-        parts.unit, parts.window, parts.stack, judged, run.cfg, dates=dates
+        parts.unit,
+        parts.window,
+        parts.stack,
+        judged,
+        run.cfg,
+        dates=dates,
+        cell_ndvi=cell_ndvi,
     )
     return BuiltWindow(parts, judged, labels, verdicts)

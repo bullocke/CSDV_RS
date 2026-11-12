@@ -36,12 +36,18 @@ from csdv_core.label.rules import (
     interval_reason,
     to_change,
 )
-from csdv_core.label.stacks import WindowStack
+from csdv_core.label.stacks import CellNdvi, WindowStack
 from csdv_core.label.verdicts import AGENT_CODES
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["JudgedCandidate", "WindowLabels", "burn", "window_labels"]
+__all__ = [
+    "JudgedCandidate",
+    "WindowLabels",
+    "burn",
+    "never_green_cells",
+    "window_labels",
+]
 
 
 @dataclass
@@ -79,8 +85,12 @@ class WindowLabels:
         change: ``(intervals, rows, cols)`` uint8: 0, 1, 2, 255.
         prob: ``(intervals, rows, cols)`` uint8 probability in percent, 255
             where not monitored.
-        forest: ``(dates, rows, cols)`` uint8 forest mask (dips filled).
+        forest: ``(dates, rows, cols)`` uint8 forest mask (dips filled, and
+            without the ground that was never green when that rule is on).
         unstable: Whether the unit's forest mask is unreliable, per interval.
+        never_green: ``(rows, cols)`` bool, ground the never-green rule took
+            out of the forest mask. None when the rule is off or the window
+            has no cell NDVI.
     """
 
     bounds: Bounds
@@ -91,6 +101,31 @@ class WindowLabels:
     prob: np.ndarray
     forest: np.ndarray
     unstable: list[bool]
+    never_green: np.ndarray | None = None
+
+
+def never_green_cells(
+    ndvi: CellNdvi, cell_shape: tuple[int, int], threshold: float
+) -> np.ndarray:
+    """Cells of the unit whose NDVI stays below ``threshold`` on every date.
+
+    A cell counts only when it has an NDVI for every year, so a cell that
+    lacks imagery on some date is never called never-green.
+
+    Args:
+        ndvi: Cell NDVI of a window.
+        cell_shape: Shape of the unit's cell grid.
+        threshold: NDVI that a vegetated cell reaches on at least one date.
+
+    Returns:
+        ``cell_shape`` bool, False for every cell the window does not hold.
+    """
+    values = ndvi.on_unit(cell_shape)
+    if values.shape[0] == 0:
+        return np.zeros(cell_shape, dtype=bool)
+    known = ~np.isnan(values).any(axis=0)
+    highest = np.where(known, np.nan_to_num(values, nan=-1.0).max(axis=0), np.inf)
+    return known & (highest < threshold)
 
 
 def burn(geom: BaseGeometry | None, bounds: Bounds) -> np.ndarray:
@@ -137,6 +172,7 @@ def window_labels(
     cfg: LabelConfig,
     *,
     dates: list[str] | None = None,
+    cell_ndvi: CellNdvi | None = None,
 ) -> WindowLabels:
     """Reason, agent and change rasters of every interval of a window.
 
@@ -150,6 +186,9 @@ def window_labels(
         candidates: Candidates of the window after routing.
         cfg: Label thresholds.
         dates: Acquisition dates of the window, needed when ``stack`` is None.
+        cell_ndvi: Cell NDVI of the window, used when
+            ``cfg.rules.never_green_ndvi`` is set. Without it the rule is
+            not applied to this window.
 
     Raises:
         ValueError: If the stack does not hold exactly the unit's years. The
@@ -180,6 +219,13 @@ def window_labels(
         forest = fill_forest_dips(forest)
     unstable = unstable_intervals(forest, cfg.rules.unstable_change)
     forest_px = cells_to_pixels(forest, unit.grid, outer)
+    never_px = None
+    if cfg.rules.never_green_ndvi is not None and cell_ndvi is not None:
+        never = never_green_cells(
+            cell_ndvi, unit.grid.cell_shape, cfg.rules.never_green_ndvi
+        )
+        never_px = cells_to_pixels(never, unit.grid, outer)
+        forest_px = forest_px & ~never_px
     cover_px = cells_to_pixels(unit.layer("chm_cover"), unit.grid, outer)
     height_px = cells_to_pixels(unit.layer("chm_height"), unit.grid, outer)
     prob_px = cells_to_pixels(unit.layer("probability"), unit.grid, outer)
@@ -210,6 +256,7 @@ def window_labels(
             height_before=height_px[k],
             prob=prob_px[k + 1],
             unstable=unstable[k],
+            never_green=never_px,
         )
         layers = [layer for c in candidates if (layer := _layer(c, k, masks))]
         reason, agent = interval_reason(base, layers, cfg.rules)
@@ -230,4 +277,5 @@ def window_labels(
         prob=np.stack(probs),
         forest=forest_px[:, rows, cols].astype(np.uint8),
         unstable=unstable,
+        never_green=None if never_px is None else never_px[rows, cols],
     )
