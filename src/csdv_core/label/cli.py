@@ -294,7 +294,7 @@ def render_cmd(unit, windows, kind, naip_source, data_root, with_chips, check, *
     from csdv_core.io.paths import project_paths
     from csdv_core.label.chips import write_naip_chips
     from csdv_core.label.naip import local_mosaics
-    from csdv_core.label.pipeline import render_window
+    from csdv_core.label.pipeline import render_window, stack_complete
     from csdv_core.label.stacks import load_stack
 
     _setup_logging()
@@ -314,9 +314,14 @@ def render_cmd(unit, windows, kind, naip_source, data_root, with_chips, check, *
             raise click.ClickException("Some mosaics are missing.")
         return
     total = 0
+    skipped: list[str] = []
     for n, row in enumerate(table.itertuples(), start=1):
         count = render_window(run, row, kind=kind, source=source, data_root=root)
         total += count
+        if not stack_complete(run, row):
+            # render_window has logged which years lack imagery.
+            skipped.append(str(row.window_id))
+            continue
         if with_chips:
             window = run.window(row)
             write_naip_chips(
@@ -327,7 +332,15 @@ def render_cmd(unit, windows, kind, naip_source, data_root, with_chips, check, *
         logging.getLogger(__name__).info(
             "%d/%d %s: %d %s requests", n, len(table), row.window_id, count, kind
         )
-    click.echo(f"{total} {kind} requests in {len(table)} windows")
+    click.echo(
+        f"{total} {kind} requests in {len(table) - len(skipped)} of "
+        f"{len(table)} windows"
+    )
+    if skipped:
+        click.echo(
+            f"Skipped, imagery incomplete ({len(skipped)}): {', '.join(skipped)}. "
+            "The reason for each is in stacks/<window>/meta.json under 'failed'."
+        )
 
 
 @label.command("verdict")
@@ -530,6 +543,10 @@ def sheets_cmd(windows, max_pairs, **where) -> None:
     click.echo(f"Sheets in {out}")
 
 
+#: A pixel darker than this in every band of a request image has no imagery.
+_EMPTY_LEVEL = 12
+
+
 @label.command("compare-renders")
 @click.argument("first", type=click.Path(exists=True, file_okay=False, path_type=Path))
 @click.argument("second", type=click.Path(exists=True, file_okay=False, path_type=Path))
@@ -544,24 +561,45 @@ def compare_renders(first: Path, second: Path) -> None:
     from PIL import Image
 
     rows = []
+    only_first = 0
     for path in sorted(first.rglob("*.jpg")):
         other = second / path.relative_to(first)
         if not other.exists():
+            only_first += 1
             continue
+        name = str(path.relative_to(first))
         a = np.asarray(Image.open(path).convert("RGB"), dtype=np.int16)
         b = np.asarray(Image.open(other).convert("RGB"), dtype=np.int16)
         if a.shape != b.shape:
-            rows.append((str(path.relative_to(first)), float("nan")))
+            rows.append((name, float("nan"), float("nan")))
             continue
-        rows.append((str(path.relative_to(first)), float(np.abs(a - b).mean())))
+        # A window on the edge of its unit is black beyond the unit's mosaic
+        # in a local render and filled from the next quad in a remote one.
+        # The two are compared where both have imagery.
+        empty = (a.max(axis=2) < _EMPTY_LEVEL) | (b.max(axis=2) < _EMPTY_LEVEL)
+        diff = np.abs(a - b).mean(axis=2)
+        both = float(diff[~empty].mean()) if (~empty).any() else float("nan")
+        rows.append((name, both, float(empty.mean())))
     if not rows:
         raise click.ClickException("No request image is in both folders.")
-    diffs = np.array([d for _, d in rows])
+    diffs = np.array([d for _, d, _ in rows])
+    gaps = np.array([g for _, _, g in rows])
     worst = sorted(rows, key=lambda r: -np.nan_to_num(r[1], nan=1e9))[:5]
     click.echo(
-        f"{len(rows)} images in both. Mean absolute difference per image: median "
-        f"{np.nanmedian(diffs):.2f}, 90th percentile {np.nanpercentile(diffs, 90):.2f} "
-        f"(grey levels of 255). Different size: {int(np.isnan(diffs).sum())}."
+        f"{len(rows)} images in both, {only_first} only in the first. Mean "
+        f"absolute difference per image where both have imagery: median "
+        f"{np.nanmedian(diffs):.2f}, 90th percentile "
+        f"{np.nanpercentile(diffs, 90):.2f} (grey levels of 255). Different "
+        f"size: {int(np.isnan(gaps).sum())}."
     )
-    for name, diff in worst:
+    for name, diff, _ in worst:
         click.echo(f"  {diff:6.2f}  {name}")
+    partial = sorted((r for r in rows if r[2] > 0.05), key=lambda r: -r[2])
+    if partial:
+        windows = sorted({Path(name).parts[0] for name, _, _ in partial})
+        click.echo(
+            f"{len(partial)} images lack imagery over more than 5% of the view in "
+            f"one of the renders (windows: {', '.join(windows)}). Largest share:"
+        )
+        for name, _, gap in partial[:5]:
+            click.echo(f"  {gap:6.0%}  {name}")

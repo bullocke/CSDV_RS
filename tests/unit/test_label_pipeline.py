@@ -20,6 +20,7 @@ from csdv_core.label.pipeline import (
     build_window,
     load_requests,
     render_window,
+    stack_complete,
     window_parts,
 )
 from csdv_core.label.rules import Reason
@@ -142,6 +143,92 @@ def test_render_then_build(run: LabelRun, tmp_path: Path) -> None:
     blind = build_window(run, ROW, records, with_stack=False)
     assert (blind.labels.reason == reason).all()
     assert blind.labels.intervals == built.labels.intervals
+
+
+def _blank(data_root: Path, year: int, keep: tuple[float, float, float, float]) -> None:
+    """Leave imagery of one year only inside ``keep`` (x0, y0, x1, y1)."""
+    path = next((data_root / "naip" / UNIT / str(year)).glob("*.tif"))
+    with rasterio.open(path, "r+") as dst:
+        data = dst.read()
+        t = dst.transform
+        xs = t.c + (np.arange(dst.width) + 0.5) * t.a
+        ys = t.f + (np.arange(dst.height) + 0.5) * t.e
+        inside = ((ys > keep[1]) & (ys < keep[3]))[:, None] & (
+            (xs > keep[0]) & (xs < keep[2])
+        )
+        data[:, ~inside] = 0
+        dst.write(data)
+
+
+def _grid_bounds(grid) -> tuple[float, float, float, float]:
+    t = grid.cell_transform
+    rows, cols = grid.cell_shape
+    return (t.c, t.f + rows * t.e, t.c + cols * t.a, t.f)
+
+
+def test_a_window_past_the_unit_edge_is_kept(
+    run: LabelRun, label_grid, tmp_path: Path
+) -> None:
+    """The mosaics of a unit end at its edge. A window there is still used."""
+    data_root = tmp_path / "data"
+    for year in (2015, 2018, 2021):
+        _blank(data_root, year, _grid_bounds(label_grid))
+    assert render_window(run, ROW, source="local", data_root=data_root) == 3
+    meta = json.loads((run.root / "stacks" / "w1" / "meta.json").read_text())
+    assert meta["failed"] == {}
+    assert 0.9 < meta["inside_unit"] < 0.98
+    assert all(0.9 < info["coverage"] < 0.98 for info in meta["years"].values())
+    assert stack_complete(run, ROW)
+
+
+def test_a_gap_inside_the_unit_skips_the_window(
+    run: LabelRun, label_export: Path, label_grid, tmp_path: Path
+) -> None:
+    """A year without imagery inside the unit drops the window, not the run."""
+    data_root = tmp_path / "data"
+    x0, y0, x1, y1 = _grid_bounds(label_grid)
+    full = next((data_root / "naip" / UNIT / "2018").glob("*.tif"))
+    saved = full.read_bytes()
+    _blank(data_root, 2018, (x0, y0 + 150.0, x1, y1))
+
+    cli = CliRunner()
+    args = ["label", "render", "--label-dir", str(run.root)]
+    args += ["--export-dir", str(label_export), "--data-root", str(data_root)]
+    args += ["--naip-source", "local", "--chips"]
+    result = cli.invoke(main, args)
+    assert result.exit_code == 0, result.output
+    assert "0 verdict requests in 0 of 1 windows" in result.output
+    assert "Skipped, imagery incomplete (1): w1" in result.output
+    assert not list((run.root / "chips").glob("*_naip.tif"))
+    meta = json.loads((run.root / "stacks" / "w1" / "meta.json").read_text())
+    assert list(meta["failed"]) == ["2018"] and not stack_complete(run, ROW)
+
+    # A failed year is read again once its mosaic is whole.
+    full.write_bytes(saved)
+    result = cli.invoke(main, args)
+    assert result.exit_code == 0, result.output
+    assert "3 verdict requests in 1 of 1 windows" in result.output
+    assert len(list((run.root / "chips").glob("*_naip.tif"))) == 4
+
+
+def test_compare_renders_skips_ground_without_imagery(tmp_path: Path) -> None:
+    from PIL import Image
+
+    rng = np.random.default_rng(0)
+    image = rng.integers(60, 200, (64, 64, 3), dtype=np.uint8)
+    cut = image.copy()
+    cut[:, 40:] = 0
+    for name, array in (("a", image), ("b", cut)):
+        folder = tmp_path / name / "w1"
+        folder.mkdir(parents=True)
+        Image.fromarray(array).save(folder / "c1_v0.jpg", quality=95)
+    result = CliRunner().invoke(
+        main, ["label", "compare-renders", str(tmp_path / "a"), str(tmp_path / "b")]
+    )
+    assert result.exit_code == 0, result.output
+    assert "1 images lack imagery" in result.output and "w1" in result.output
+    median = float(result.output.split("median ")[1].split(",")[0])
+    assert median < 12  # only the JPEG noise of the part both renders hold
 
 
 def test_answers_to_an_older_prompt_are_not_used(run: LabelRun, tmp_path: Path) -> None:

@@ -298,6 +298,19 @@ class BuiltWindow:
     verdicts: dict[str, dict]
 
 
+def stack_complete(run: LabelRun, row: Any) -> bool:
+    """True when the rendered stack of a window holds every year of its unit.
+
+    A window whose stack lacks a year cannot be judged or labelled, because
+    the cell layers and the verdict states are indexed by the unit's years.
+    """
+    meta = run.root / "stacks" / str(row.window_id) / "meta.json"
+    if not meta.exists():
+        return False
+    years = sorted(int(y) for y in json.loads(meta.read_text())["years"])
+    return years == list(run.unit(str(row.unit)).years)
+
+
 def window_dates(run: LabelRun, window_id: str) -> list[str] | None:
     """Acquisition dates recorded when a window was rendered, or None."""
     meta = run.root / "stacks" / window_id / "meta.json"

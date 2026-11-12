@@ -69,6 +69,8 @@ The inclusion probability belongs to the seed. Other candidates in a window were
 
 The mosaics written by `csdv download` flag their fourth band as alpha. A warp straight from such a file treats near-infrared as transparency, which removes pixels where it is zero and weights the others by it. `render` reads the pixels into an array first, so the flag has no effect. Stacks and chips written here carry band names and no alpha flag.
 
+A window near the edge of its unit reaches past the unit's mosaics. In the sample of the scale test this holds for about one window in nine. Ground outside the unit's cell grid has no cell layer and is always `no_data` in the labels, so imagery is not required there. A year is kept when its imagery covers at least 98% of the part of the window, with its collar, that lies inside the cell grid. With the local mosaics the ground beyond the unit stays black in the request images and in the chips. The remote sources fill it from the neighbouring quads. A window that still lacks a year is skipped, because the cell layers and the verdict states are indexed by the unit's years. `render` names the skipped windows in its last line, and `stacks/<window>/meta.json` records the reason under `failed` and the share of the stack inside the unit under `inside_unit`. A later `render` tries the failed years again.
+
 Each candidate gets one image per date with a thin yellow outline. The view follows the rule adopted after the pilot: zoom in on a small candidate (down to 150 m), use 384 m at 640 px when the candidate fits, and widen the view only when it does not, at up to 1,280 px so that resolution stays at 0.6 m up to 768 m. After the verdicts, `csdv label render --kind polygon` writes two images (before and after the agreed loss) for every accepted candidate whose outline the models doubt.
 
 A unit needs a line of location text (state and physiographic region) in `LOCATIONS` in `src/csdv_core/label/requests.py`. Rendering stops for a unit without one, because a prompt without a location has not been tested. Site labels such as "CA_CampFire" name the answer and are never shown to a model.
@@ -80,7 +82,7 @@ csdv label compare-renders results/vlm_labeling/2_scale_test/examples/requests \
     results/chpc_exports/label/examples/requests
 ```
 
-The two renders start from the same quads, but the CHPC mosaics were resampled once when they were written, so small differences are expected. A median difference of a few grey levels is normal. A large one means the two sides read different dates or different bands.
+The two renders start from the same quads, but the CHPC mosaics were resampled once when they were written, so small differences are expected. A median difference of a few grey levels is normal. A large one means the two sides read different dates or different bands. Images are compared where both renders have imagery, and the command lists the windows where one render lacks imagery over more than 5% of the view, which are the windows on the edge of a unit.
 
 ## Verdicts and cost
 

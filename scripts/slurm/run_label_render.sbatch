@@ -49,6 +49,11 @@
 # render_done/<unit>_<kind>.json. Pull requests/ and stacks/*/meta.json to
 # the laptop. The chips stay on CHPC for training.
 #
+# A window on the edge of its unit is rendered with the ground beyond the
+# unit's mosaic left black. A window that lacks a year inside the unit is
+# skipped and named in the last line of `csdv label render`, and the job still
+# succeeds. Look for "Skipped" in the log.
+#
 # Resources: a window of nine chips with eight dates reads in a few seconds
 # and uses under 1 GB. A unit of 60 windows takes a few minutes.
 

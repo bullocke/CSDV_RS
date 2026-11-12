@@ -20,12 +20,20 @@ from typing import Any
 import numpy as np
 
 from csdv_core.label.inputs import UnitInputs
-from csdv_core.label.lattice import GSD, Bounds, Window, grid_transform, pixel_slices
+from csdv_core.label.lattice import (
+    GSD,
+    Bounds,
+    Window,
+    cells_to_pixels,
+    grid_transform,
+    pixel_slices,
+)
 from csdv_core.label.naip import NaipRead, read_naip
 
 logger = logging.getLogger(__name__)
 
-#: Smallest share of a window that a year must cover to be kept.
+#: Smallest share that a year must cover to be kept, measured over the part
+#: of the window (with its collar) that lies inside the unit's cell grid.
 MIN_COVERAGE = 0.98
 BAND_NAMES = ("R", "G", "B", "NIR")
 
@@ -34,6 +42,7 @@ __all__ = [
     "MIN_COVERAGE",
     "WindowStack",
     "build_stack",
+    "inside_unit",
     "load_stack",
     "write_four_band",
 ]
@@ -97,6 +106,17 @@ def write_four_band(
         dst.update_tags(**tags)
 
 
+def inside_unit(unit: UnitInputs, bounds: Bounds) -> np.ndarray:
+    """Pixels of ``bounds`` that lie inside the unit's cell grid.
+
+    A window on the edge of a unit reaches past the unit's mosaic. Ground
+    outside the cell grid has no cell layer and is never labelled, so
+    imagery is not required there.
+    """
+    cells = np.ones(unit.grid.cell_shape, dtype=bool)
+    return cells_to_pixels(cells, unit.grid, bounds)
+
+
 def build_stack(
     unit: UnitInputs,
     window: Window,
@@ -108,33 +128,52 @@ def build_stack(
 ) -> dict[str, Any]:
     """Fetch every year of a window once and return its metadata.
 
+    A year is kept when its imagery covers the part of the stack that lies
+    inside the unit's cell grid. The mosaics of a unit end at its edge, so a
+    window there has pixels without imagery (0 in every band) beyond it. The
+    remote sources fill that ground from the neighbouring quads.
+
     Args:
         unit: The window's unit.
         window: The window.
         folder: Stack folder (one per window). An existing ``meta.json``
-            means the stack is done.
+            without failed years means the stack is done. Failed years are
+            tried again.
         collar_px: Pixels kept around the window.
         source: ``local`` to read the unit's mosaics. Default: each year's
             own source as recorded for the unit (``pc`` or ``rest``).
         data_root: Root of the local mosaics, for ``source="local"``.
 
     Returns:
-        ``meta.json`` as a dict. ``failed`` lists years that could not be
-        read or cover less than :data:`MIN_COVERAGE` of the window.
+        ``meta.json`` as a dict. ``inside_unit`` is the share of the stack
+        inside the unit's cell grid. ``failed`` lists years that could not
+        be read or cover less than :data:`MIN_COVERAGE` of that part.
     """
     meta_path = folder / "meta.json"
+    done: dict[str, Any] = {}
     if meta_path.exists():
-        return json.loads(meta_path.read_text())
+        earlier = json.loads(meta_path.read_text())
+        if not earlier.get("failed"):
+            return earlier
+        done = {
+            year: info
+            for year, info in earlier["years"].items()
+            if (folder / f"{year}.tif").exists()
+        }
     bounds = window.stack_bounds(collar_px)
+    inside = inside_unit(unit, bounds)
     meta: dict[str, Any] = {
         "window_id": window.window_id,
         "unit": unit.unit,
         "epsg": window.epsg,
         "bounds": list(bounds),
-        "years": {},
+        "inside_unit": round(float(inside.mean()), 4),
+        "years": done,
         "failed": {},
     }
     for year in unit.years:
+        if str(year) in done:
+            continue
         year_source = source or unit.sources.get(year, "pc")
         try:
             read: NaipRead = read_naip(
@@ -149,8 +188,13 @@ def build_stack(
             logger.warning("%s %d (%s): %s", window.window_id, year, year_source, exc)
             meta["failed"][str(year)] = repr(exc)[:200]
             continue
-        if read.coverage < MIN_COVERAGE:
-            meta["failed"][str(year)] = f"coverage {read.coverage:.2f}"
+        covered = read.data.any(axis=0)
+        coverage = float(covered[inside].mean()) if inside.any() else 0.0
+        if coverage < MIN_COVERAGE:
+            meta["failed"][str(year)] = (
+                f"covers {coverage:.2f} of the part inside the unit "
+                f"({read.coverage:.2f} of the whole stack)"
+            )
             continue
         write_four_band(
             folder / f"{year}.tif",
@@ -164,6 +208,7 @@ def build_stack(
             "source": read.source,
             "native_m": read.native_m,
             "item_ids": list(read.item_ids),
+            "coverage": round(read.coverage, 4),
         }
     folder.mkdir(parents=True, exist_ok=True)
     meta_path.write_text(json.dumps(meta, indent=1))
