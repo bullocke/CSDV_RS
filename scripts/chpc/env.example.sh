@@ -21,6 +21,14 @@ export NAIPCROWNS_DIR="$CSDV_REPO/../naip-crowns"
 # EDIT: clone of https://github.com/smorf-ntsg/naip-chm (code and weights).
 export NAIPCHM_REPO_DIR="$CSDV_REPO/../naip-chm"
 
+# EDIT: Slurm options of your CPU allocation, passed at submission by the job
+# scripts that name no allocation themselves:
+#   sbatch $CSDV_SBATCH_CPU scripts/slurm/run_label_render.sbatch ...
+# Keep real names in env.sh only (it is gitignored). Never export
+# SBATCH_ACCOUNT, SBATCH_PARTITION or SBATCH_QOS: they override the #SBATCH
+# lines of every script, including the data transfer jobs.
+export CSDV_SBATCH_CPU="--account=EDIT --partition=EDIT --qos=EDIT"
+
 export CSDV_ENV=csdv-gpu
 export CSDV_DATA_ROOT="$CSDV_STORE/data"
 export CSDV_RESULTS_ROOT="$CSDV_STORE/results"
