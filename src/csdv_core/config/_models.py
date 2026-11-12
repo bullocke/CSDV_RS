@@ -534,6 +534,7 @@ class LabelRouting(_Base):
 
     reject_confidence: int = Field(default=3, ge=1, le=3)
     guard_flagged_interval: bool = False
+    consecutive_loss: Literal["label", "ignore"] = "label"
 
 
 class LabelOutlines(_Base):

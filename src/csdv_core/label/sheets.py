@@ -316,6 +316,7 @@ _SHORT = {
     "rejected_flagged": "REJ",
     "rejected_weak": "rej?",
     "flagged_unconfirmed": "flag?",
+    "loss_repeated": "again?",
     "failed": "fail",
     "unjudged": "-",
     "under_min": "small",

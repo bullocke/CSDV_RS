@@ -90,6 +90,23 @@ def test_flagged_interval_guard() -> None:
     assert split.outcomes == [R.DISAGREE, R.OPEN, R.OPEN, R.FLAGGED_UNCONFIRMED]
 
 
+def test_loss_right_after_a_loss_can_be_left_unlabelled() -> None:
+    a = verdict("ffppo", change_type="thinning")
+    b = verdict("ffppo", change_type="thinning")
+    both = R.route(a, b, 1, CFG)
+    assert both.outcomes == [R.INTACT, R.LOSS_PARTIAL, R.LOSS_PARTIAL, R.OPEN]
+    first = CFG.model_copy(update={"consecutive_loss": "ignore"})
+    once = R.route(a, b, 1, first)
+    assert once.outcomes == [R.INTACT, R.LOSS_PARTIAL, R.LOSS_REPEATED, R.OPEN]
+    assert once.first_loss == 1 and once.status == "accepted"
+    # Three in a row: only the first is labelled.
+    three = R.route(verdict("fpppo"), verdict("fpppo"), 0, first)
+    assert three.outcomes == [R.LOSS_PARTIAL, R.LOSS_REPEATED, R.LOSS_REPEATED, R.OPEN]
+    # A later loss after a quiet interval is a new event and stays.
+    later = R.route(verdict("fpoox"), verdict("fpoox"), 0, first)
+    assert later.outcomes == [R.LOSS_PARTIAL, R.OPEN, R.OPEN, R.LOSS_FULL]
+
+
 def test_rejection_is_unlabelled_only_where_flagged() -> None:
     out = R.route(verdict("ffff"), verdict("ffff"), 2, CFG)
     assert out.status == "rejected"

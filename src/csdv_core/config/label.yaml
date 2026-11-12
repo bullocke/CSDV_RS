@@ -49,6 +49,11 @@ routing:
   # the loss of height. With `true`, the flagged interval is left unlabelled
   # unless both models report loss in it.
   guard_flagged_interval: false
+  # What to do when both models report loss again in the interval right
+  # after an agreed loss. "label" labels both. "ignore" labels the first and
+  # leaves the second unlabelled: in the example run the second was ground
+  # already cleared in three of the three cases that were checked.
+  consecutive_loss: label
 
 outlines:
   # Types whose edges are sharp enough to trust a model polygon as a label.

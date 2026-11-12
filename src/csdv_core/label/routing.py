@@ -30,6 +30,7 @@ OPEN = "open"  # no new loss, at least one model says open
 REJECTED_FLAGGED = "rejected_flagged"  # confident joint rejection, flagged interval
 REJECTED_WEAK = "rejected_weak"  # joint rejection below the confidence bar
 FLAGGED_UNCONFIRMED = "flagged_unconfirmed"  # flagged here, loss placed elsewhere
+LOSS_REPEATED = "loss_repeated"  # loss again right after an agreed loss
 FAILED = "failed"  # a verdict is missing or unusable
 UNJUDGED = "unjudged"  # large enough, never sent to the models
 UNDER_MIN = "under_min"  # too small to judge
@@ -157,6 +158,11 @@ def route(a: Verdict, b: Verdict, flagged: int | None, cfg: LabelRouting) -> Rou
             outcomes.append(DISAGREE)
         else:
             outcomes.append(quiet[k])
+    if cfg.consecutive_loss == "ignore":
+        previous = list(outcomes)
+        for k in range(1, n):
+            if previous[k] in LOSS_OUTCOMES and previous[k - 1] in LOSS_OUTCOMES:
+                outcomes[k] = LOSS_REPEATED
     _guard_flagged(outcomes, flagged, cfg)
     agreed = [k for k, o in enumerate(outcomes) if o in LOSS_OUTCOMES]
     first = agreed[0] if agreed else None
