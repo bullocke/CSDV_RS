@@ -1,0 +1,99 @@
+# Thresholds of the disturbance labelling pipeline (`csdv label`).
+# See docs/guides/disturbance_labels.md. Lengths are metres, areas hectares.
+
+chips:
+  # Chip side in 0.6 m pixels. Chips tile the global 0.6 m lattice of each
+  # UTM zone, so a chip covers 307.2 m.
+  chip_px: 512
+  # Largest window, in chips per side. A larger candidate is clipped.
+  max_window_chips: 3
+  # Space kept between a seed candidate and the window edge.
+  window_margin_m: 19.2
+  # Extra pixels fetched around a window, so that a one-chip window still
+  # gives the standard 384 m view to the vision models.
+  collar_px: 64
+
+candidates:
+  # Smallest candidate that is judged. The pilot found smaller ones
+  # unresolved at any zoom.
+  min_ha: 0.3
+  # DI probability from which a cell that was not detected counts as raised.
+  weak_prob: 0.2
+  # Cells around a detected object that never start a weak or CHM-loss object.
+  detected_buffer_cells: 1
+  # A cell counts as CHM loss when it leaves the forest mask and its canopy
+  # cover falls by at least this much. Cells that only flicker around the
+  # forest threshold do not start a candidate.
+  chm_loss_min_drop: 0.2
+
+views:
+  # Standard view edge (640 px at 0.6 m).
+  detail_m: 384.0
+  # A candidate whose longer side times `zoom` is under `detail_m` is zoomed in.
+  zoom: 3.0
+  # Smallest view edge.
+  min_m: 150.0
+  # A candidate that does not fit `detail_m` gets `margin` times its longer side.
+  margin: 1.25
+  px: 640
+  max_px: 1280
+  jpeg_quality: 92
+
+routing:
+  # Stated confidence both models need for a joint "no loss" to count as a
+  # confident rejection.
+  reject_confidence: 3
+
+outlines:
+  # Types whose edges are sharp enough to trust a model polygon as a label.
+  crisp_types: [clearcut, clearing_infrastructure, mining]
+  # Fire counts as crisp only where both models report full loss.
+  crisp_fire_full: true
+  # A model polygon is used when it covers this share of the candidate and is
+  # not more than `polygon_max_ratio` times its area.
+  polygon_min_cover: 0.5
+  polygon_max_ratio: 10.0
+  polygon_min_ha: 0.1
+
+rules:
+  # Ignore band on each side of an accepted outline.
+  band_precise_m: 4.8
+  band_envelope_m: 9.6
+  # Ignore ring around a candidate whose interior is loss or ignore.
+  margin_m: 19.2
+  # Ring used when a model calls the outline too small and no polygon is usable.
+  margin_wide_m: 38.4
+  # Unjudged cells at or above this DI probability are never background.
+  raised_prob: 0.2
+  # A cell below the forest rule still counts as woody (ignore, not
+  # non-forest) with this canopy cover or this mean height.
+  sparse_cover: 0.2
+  sparse_height_m: 2.0
+  # A unit interval whose forest area changes by more than this share has an
+  # unreliable forest mask. Unverified forest background becomes ignore there.
+  unstable_change: 0.15
+  # Treat a single-date dip of the forest mask (forest before and after) as forest.
+  fill_dips: true
+
+pooling:
+  # A cell is ignore when at least this share of it is ignore.
+  ignore_share: 0.5
+  # Of the labelled pixels: loss from this share, background up to
+  # `background_share`, ignore in between.
+  loss_share: 0.5
+  background_share: 0.1
+  cells_m: [2.4, 4.8, 9.6]
+
+# Label of each reason: 0 background, 1 partial loss, 2 stand-replacing loss,
+# 255 ignore. Reasons not listed are ignore. A loader can apply another table
+# to the stored reason raster without new labels.
+policy:
+  accepted_full: 2
+  accepted_partial: 1
+  accepted_severity_disputed: 1
+  extension_full: 2
+  extension_partial: 1
+  judged_intact: 0
+  post_event_open: 0
+  nonforest: 0
+  stable_forest: 0

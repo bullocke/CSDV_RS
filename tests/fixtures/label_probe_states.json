@@ -1,0 +1,2756 @@
+[
+{
+"site": "ais_ELKNE-U1-0-0a",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 2,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "ais_ELKNE-U1-0-0b",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"partial_loss",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 2,
+"change_type": "partial_harvest",
+"outline_fit": "too_large",
+"affected_share": "under_25"
+}
+},
+{
+"site": "ais_ELKNE-U10-0-0",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"full_loss",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "clearcut",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"full_loss",
+"open",
+"open"
+],
+"confidence": 2,
+"change_type": "clearcut",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+}
+},
+{
+"site": "ais_ELKNE-U11-0-0",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"full_loss",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "partial_harvest",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"full_loss",
+"open",
+"open"
+],
+"confidence": 2,
+"change_type": "clearcut",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+}
+},
+{
+"site": "ais_ELKNE-U12-0-0",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"full_loss",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "clearcut",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"full_loss",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "clearcut",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+}
+},
+{
+"site": "ais_ELKNE-U13-0-0",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"full_loss",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "clearcut",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"full_loss",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "clearcut",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+}
+},
+{
+"site": "ais_ELKNE-U14-0-0",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"full_loss",
+"open",
+"open",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "clearcut",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+},
+"terra": {
+"states": [
+"forest",
+"full_loss",
+"open",
+"open",
+"open",
+"open"
+],
+"confidence": 2,
+"change_type": "clearcut",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+}
+},
+{
+"site": "ais_ELKNE-U17-0-0",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"partial_loss"
+],
+"confidence": 3,
+"change_type": "wind",
+"outline_fit": "about_right",
+"affected_share": "25_to_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"partial_loss"
+],
+"confidence": 3,
+"change_type": "wind",
+"outline_fit": "about_right",
+"affected_share": "25_to_75"
+}
+},
+{
+"site": "ais_ELKNE-U18-0-0",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"partial_loss",
+"open",
+"open",
+"open"
+],
+"confidence": 2,
+"change_type": "partial_harvest",
+"outline_fit": "about_right",
+"affected_share": "25_to_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"partial_loss",
+"open",
+"open"
+],
+"confidence": 2,
+"change_type": "wind",
+"outline_fit": "about_right",
+"affected_share": "25_to_75"
+}
+},
+{
+"site": "ais_ELKNE-U2-1-0",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"partial_loss",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": "partial_harvest",
+"outline_fit": "about_right",
+"affected_share": "25_to_75"
+},
+"terra": {
+"states": [
+"forest",
+"partial_loss",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 2,
+"change_type": "partial_harvest",
+"outline_fit": "about_right",
+"affected_share": "25_to_75"
+}
+},
+{
+"site": "ais_ELKNE-U20-0-0",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "ais_ELKNE-U21-0-0",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "ais_ELKNE-U23-0-0",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 2,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "ais_ELKNE-U25-0-0",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"partial_loss",
+"open",
+"open",
+"open"
+],
+"confidence": 2,
+"change_type": "partial_harvest",
+"outline_fit": "about_right",
+"affected_share": "25_to_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"partial_loss",
+"partial_loss",
+"open"
+],
+"confidence": 2,
+"change_type": "mining",
+"outline_fit": "too_small",
+"affected_share": "25_to_75"
+}
+},
+{
+"site": "ais_ELKNE-U28-0-0",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"partial_loss",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "wind",
+"outline_fit": "about_right",
+"affected_share": "25_to_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"partial_loss"
+],
+"confidence": 2,
+"change_type": "wind",
+"outline_fit": "about_right",
+"affected_share": "25_to_75"
+}
+},
+{
+"site": "ais_ELKNE-U29-0-0",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"partial_loss",
+"open",
+"open"
+],
+"confidence": 2,
+"change_type": "wind",
+"outline_fit": "about_right",
+"affected_share": "25_to_75"
+}
+},
+{
+"site": "ais_ELKNE-U3-0-0",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"full_loss",
+"open",
+"open",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "clearcut",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+},
+"terra": {
+"states": [
+"forest",
+"full_loss",
+"open",
+"open",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "clearcut",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+}
+},
+{
+"site": "ais_ELKNE-U34-0-0",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"partial_loss",
+"forest",
+"forest"
+],
+"confidence": 2,
+"change_type": "wind",
+"outline_fit": "about_right",
+"affected_share": "25_to_75"
+}
+},
+{
+"site": "ais_ELKNE-U4-0-0",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"full_loss",
+"open",
+"open",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "clearcut",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+},
+"terra": {
+"states": [
+"forest",
+"full_loss",
+"open",
+"open",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "clearcut",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+}
+},
+{
+"site": "ais_ELKNE-U42-0-0",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"partial_loss",
+"partial_loss",
+"open",
+"open"
+],
+"confidence": 2,
+"change_type": "wind",
+"outline_fit": "about_right",
+"affected_share": "25_to_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"partial_loss",
+"partial_loss",
+"open"
+],
+"confidence": 2,
+"change_type": "flood",
+"outline_fit": "about_right",
+"affected_share": "25_to_75"
+}
+},
+{
+"site": "ais_ELKNE-U44-0-0",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "ais_ELKNE-U47-0-0",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"partial_loss",
+"open",
+"open"
+],
+"confidence": 2,
+"change_type": "wind",
+"outline_fit": "about_right",
+"affected_share": "25_to_75"
+}
+},
+{
+"site": "ais_ELKNE-U49-0-0",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"partial_loss",
+"open",
+"open",
+"open"
+],
+"confidence": 2,
+"change_type": "insect_disease",
+"outline_fit": "about_right",
+"affected_share": "25_to_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"partial_loss",
+"open",
+"open",
+"partial_loss"
+],
+"confidence": 2,
+"change_type": "wind",
+"outline_fit": "about_right",
+"affected_share": "25_to_75"
+}
+},
+{
+"site": "ais_ELKNE-U50-0-0",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "ais_ELKNE-U6-0-0",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"partial_loss",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "partial_harvest",
+"outline_fit": "about_right",
+"affected_share": "25_to_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"partial_loss",
+"open",
+"open"
+],
+"confidence": 2,
+"change_type": "wind",
+"outline_fit": "about_right",
+"affected_share": "25_to_75"
+}
+},
+{
+"site": "ais_ELKNE-U7-0-0",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"partial_loss"
+],
+"confidence": 3,
+"change_type": "wind",
+"outline_fit": "too_small",
+"affected_share": "25_to_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"partial_loss"
+],
+"confidence": 2,
+"change_type": "wind",
+"outline_fit": "about_right",
+"affected_share": "25_to_75"
+}
+},
+{
+"site": "ais_ELKNE-U9-0-0",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"partial_loss",
+"full_loss",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "clearcut",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"full_loss",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "clearcut",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+}
+},
+{
+"site": "nochange_N01",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N02",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N03",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N04",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N05",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N06",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N07",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N08",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"partial_loss"
+],
+"confidence": 2,
+"change_type": "gap_mortality",
+"outline_fit": "too_large",
+"affected_share": "under_25"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"partial_loss"
+],
+"confidence": 2,
+"change_type": "partial_harvest",
+"outline_fit": "too_large",
+"affected_share": "under_25"
+}
+},
+{
+"site": "nochange_N09",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N10",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N11",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N12",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N13",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N14",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N15",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N16",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N17",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N18",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N19",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N20",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N21",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N22",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N23",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N24",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N25",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N26",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N27",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 2,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N28",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"open",
+"open",
+"open",
+"open",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"open",
+"open",
+"open",
+"open",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N29",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 2,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "nochange_N30",
+"truth": "none",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "review_R001",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"full_loss",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "clearcut",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"full_loss",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "clearcut",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+}
+},
+{
+"site": "review_R002",
+"truth": "none",
+"n_dates": 7,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "review_R004",
+"truth": "disturbance",
+"n_dates": 8,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"full_loss",
+"open",
+"open",
+"open",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "clearing_infrastructure",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"partial_loss",
+"open",
+"open",
+"open",
+"open",
+"open"
+],
+"confidence": 2,
+"change_type": "clearing_infrastructure",
+"outline_fit": "about_right",
+"affected_share": "25_to_75"
+}
+},
+{
+"site": "review_R005",
+"truth": "disturbance",
+"n_dates": 8,
+"gem37": {
+"states": [
+"forest",
+"partial_loss",
+"partial_loss",
+"open",
+"open",
+"open",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "partial_harvest",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+},
+"terra": {
+"states": [
+"forest",
+"partial_loss",
+"partial_loss",
+"open",
+"open",
+"open",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "partial_harvest",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+}
+},
+{
+"site": "review_R006",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"full_loss",
+"open",
+"open",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "mining",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+},
+"terra": {
+"states": [
+"forest",
+"full_loss",
+"open",
+"open",
+"open",
+"partial_loss"
+],
+"confidence": 3,
+"change_type": "mining",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+}
+},
+{
+"site": "review_R007",
+"truth": "disturbance",
+"n_dates": 7,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"full_loss",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "fire",
+"outline_fit": "too_small",
+"affected_share": "over_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"partial_loss",
+"full_loss",
+"open"
+],
+"confidence": 2,
+"change_type": "partial_harvest",
+"outline_fit": "too_small",
+"affected_share": "over_75"
+}
+},
+{
+"site": "review_R009",
+"truth": "none",
+"n_dates": 7,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 2,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "review_R010",
+"truth": "disturbance",
+"n_dates": 8,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"partial_loss"
+],
+"confidence": 3,
+"change_type": "thinning",
+"outline_fit": "too_small",
+"affected_share": "over_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"partial_loss"
+],
+"confidence": 2,
+"change_type": "partial_harvest",
+"outline_fit": "too_small",
+"affected_share": "25_to_75"
+}
+},
+{
+"site": "review_R012",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"partial_loss",
+"partial_loss"
+],
+"confidence": 2,
+"change_type": "partial_harvest",
+"outline_fit": "about_right",
+"affected_share": "25_to_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"partial_loss",
+"partial_loss"
+],
+"confidence": 2,
+"change_type": "partial_harvest",
+"outline_fit": "too_small",
+"affected_share": "25_to_75"
+}
+},
+{
+"site": "review_R013",
+"truth": "disturbance",
+"n_dates": 7,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"partial_loss",
+"open",
+"open",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "insect_disease",
+"outline_fit": "too_small",
+"affected_share": "over_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"full_loss",
+"open",
+"open",
+"open",
+"open"
+],
+"confidence": 2,
+"change_type": "insect_disease",
+"outline_fit": "too_small",
+"affected_share": "over_75"
+}
+},
+{
+"site": "review_R014",
+"truth": "disturbance",
+"n_dates": 7,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"full_loss",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "fire",
+"outline_fit": "too_small",
+"affected_share": "over_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"full_loss",
+"open",
+"open"
+],
+"confidence": 2,
+"change_type": "clearcut",
+"outline_fit": "too_small",
+"affected_share": "over_75"
+}
+},
+{
+"site": "review_R015",
+"truth": "disturbance",
+"n_dates": 7,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"partial_loss",
+"full_loss",
+"open"
+],
+"confidence": 3,
+"change_type": "partial_harvest",
+"outline_fit": "too_small",
+"affected_share": "over_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"partial_loss",
+"full_loss",
+"open"
+],
+"confidence": 2,
+"change_type": "partial_harvest",
+"outline_fit": "too_small",
+"affected_share": "over_75"
+}
+},
+{
+"site": "review_R016",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"partial_loss",
+"open",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "partial_harvest",
+"outline_fit": "too_small",
+"affected_share": "25_to_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"partial_loss",
+"open",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "partial_harvest",
+"outline_fit": "too_small",
+"affected_share": "25_to_75"
+}
+},
+{
+"site": "review_R017",
+"truth": "none",
+"n_dates": 7,
+"gem37": {
+"states": [
+"open",
+"open",
+"open",
+"open",
+"open",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"open",
+"open",
+"open",
+"open",
+"open",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "review_R018",
+"truth": "disturbance",
+"n_dates": 7,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"full_loss",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "fire",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"partial_loss",
+"full_loss",
+"open"
+],
+"confidence": 2,
+"change_type": "fire",
+"outline_fit": "too_small",
+"affected_share": "over_75"
+}
+},
+{
+"site": "review_R019",
+"truth": "disturbance",
+"n_dates": 8,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "review_R020",
+"truth": "disturbance",
+"n_dates": 7,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 2,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "review_R021",
+"truth": "disturbance",
+"n_dates": 7,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"partial_loss",
+"partial_loss",
+"full_loss",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "partial_harvest",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"partial_loss",
+"forest",
+"full_loss",
+"open",
+"open"
+],
+"confidence": 2,
+"change_type": "partial_harvest",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+}
+},
+{
+"site": "review_R022",
+"truth": "disturbance",
+"n_dates": 7,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"full_loss",
+"open",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "clearcut",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"partial_loss",
+"open",
+"full_loss",
+"open"
+],
+"confidence": 2,
+"change_type": "partial_harvest",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+}
+},
+{
+"site": "review_R023",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"full_loss"
+],
+"confidence": 3,
+"change_type": "clearcut",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"full_loss"
+],
+"confidence": 3,
+"change_type": "clearcut",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+}
+},
+{
+"site": "review_R024",
+"truth": "none",
+"n_dates": 8,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "review_R025",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"partial_loss",
+"open",
+"open"
+],
+"confidence": 2,
+"change_type": "partial_harvest",
+"outline_fit": "about_right",
+"affected_share": "25_to_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"partial_loss",
+"open",
+"open"
+],
+"confidence": 2,
+"change_type": "partial_harvest",
+"outline_fit": "too_small",
+"affected_share": "25_to_75"
+}
+},
+{
+"site": "review_R026",
+"truth": "none",
+"n_dates": 8,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": null,
+"outline_fit": null,
+"affected_share": "none"
+}
+},
+{
+"site": "review_R027",
+"truth": "disturbance",
+"n_dates": 6,
+"gem37": {
+"states": [
+"forest",
+"partial_loss",
+"open",
+"open",
+"open",
+"open"
+],
+"confidence": 3,
+"change_type": "partial_harvest",
+"outline_fit": "about_right",
+"affected_share": "over_75"
+},
+"terra": {
+"states": [
+"forest",
+"partial_loss",
+"forest",
+"forest",
+"forest",
+"forest"
+],
+"confidence": 3,
+"change_type": "partial_harvest",
+"outline_fit": "too_small",
+"affected_share": "25_to_75"
+}
+},
+{
+"site": "review_R028",
+"truth": "disturbance",
+"n_dates": 7,
+"gem37": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"partial_loss"
+],
+"confidence": 3,
+"change_type": "wind",
+"outline_fit": "about_right",
+"affected_share": "25_to_75"
+},
+"terra": {
+"states": [
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"forest",
+"partial_loss"
+],
+"confidence": 2,
+"change_type": "wind",
+"outline_fit": "about_right",
+"affected_share": "25_to_75"
+}
+}
+]

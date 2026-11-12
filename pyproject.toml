@@ -55,6 +55,9 @@ viewer = [
     # csdv review app (src/csdv_core/review)
     "solara",
 ]
+# Disturbance labels with vision models (csdv_core.label). pyarrow writes the
+# chip table. Binary deps (rasterio, geopandas, pillow) come from environment.yml.
+label = ["httpx", "pillow", "pyarrow", "pystac-client", "planetary-computer"]
 dev = [
     "pytest",
     "pytest-cov",
@@ -73,6 +76,7 @@ csdv_core = [
     "config/*.yaml",
     "examples/vocab/*.yaml",
     "review/*.vue",
+    "label/prompts/*.txt",
 ]
 
 [tool.black]

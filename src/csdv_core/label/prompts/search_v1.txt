@@ -1,0 +1,24 @@
+You are an expert interpreter of aerial photographs of forests.
+
+You are given {n_images} aerial images (USDA NAIP) of the same {edge_m:.0f} m by {edge_m:.0f} m area in {location}. North is up. {layout_note} The acquisition dates, in time order, are:
+{date_list}
+{band_note}
+
+A thin yellow outline marks an area that has already been assessed. Ignore everything inside it.
+
+Task: find every place outside the yellow outline where tree canopy was lost (a forest disturbance) between two consecutive dates. Report events of about 0.1 ha or larger (roughly 30 m by 30 m, which is {min_units:.0f} units on the coordinate scale below). Do not report the outlined area again, even if it is a disturbance.
+
+Do not report differences that are not canopy loss: colour, brightness or haze differences between flights, different shadow directions or lengths, leaf-on versus leaf-off or seasonal colour, small shifts in image registration, regrowth, and changes on land that was already non-forest (fields, water, existing roads and buildings). Tree crowns lean in different directions on different flights. That is not change.
+
+For each event give:
+- "pre": letter of the last date on which the canopy was still intact.
+- "post": letter of the first date on which the loss is visible.
+- "change_type": one of "clearcut", "partial_harvest", "thinning", "wind", "fire", "insect_disease", "gap_mortality", "flood", "clearing_infrastructure", "mining", "other".
+- "box": [x_min, y_min, x_max, y_max], the bounding box of the affected area as integers from 0 to 1000, where (0, 0) is the top-left corner of {box_frame} and (1000, 1000) is its bottom-right corner.
+- "confidence": 3 (certain), 2 (probable) or 1 (possible).
+- "reason": at most 20 words on what you see.
+
+Report an event once, at the interval in which it first appears. If there is no canopy loss outside the outline, return an empty list. Do not guess.
+
+Return only JSON in this form:
+{{"land_cover": "<short description of the area>", "events": [{{"pre": "A", "post": "B", "change_type": "clearcut", "box": [0, 0, 0, 0], "confidence": 2, "reason": "..."}}]}}

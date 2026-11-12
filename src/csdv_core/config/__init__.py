@@ -20,6 +20,7 @@ from csdv_core.config._models import (
     DisturbanceConfig,
     ForestMaskConfig,
     ForestMaskProfile,
+    LabelConfig,
     MetricsConfig,
     SatelliteConfig,
     SitesConfig,
@@ -40,6 +41,7 @@ __all__ = [
     "load_forest_mask",
     "load_di",
     "load_disturbance",
+    "load_label",
     "reload_config",
     "SitesConfig",
     "SiteTypesConfig",
@@ -51,6 +53,7 @@ __all__ = [
     "ForestMaskProfile",
     "DIConfig",
     "DisturbanceConfig",
+    "LabelConfig",
 ]
 
 
@@ -125,6 +128,12 @@ def load_disturbance() -> DisturbanceConfig:
     return DisturbanceConfig.model_validate(load_yaml("disturbance"))
 
 
+@lru_cache(maxsize=1)
+def load_label() -> LabelConfig:
+    """Load and validate ``label.yaml`` (thresholds of ``csdv label``)."""
+    return LabelConfig.model_validate(load_yaml("label"))
+
+
 def reload_config() -> None:
     """Clear cached config loaders. Intended for tests."""
     for fn in (
@@ -137,5 +146,6 @@ def reload_config() -> None:
         load_forest_mask,
         load_di,
         load_disturbance,
+        load_label,
     ):
         fn.cache_clear()

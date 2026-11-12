@@ -86,3 +86,135 @@ def review_exports(tmp_path: Path) -> Path:
     for unit, crs, n in REVIEW_UNITS:
         _write_review_unit(root, unit, crs, n)
     return root
+
+
+# ---------------------------------------------------------------------------
+# A small disturbance run for the labelling tools (csdv_core.label)
+
+LABEL_UNIT = "q4407159"
+LABEL_YEARS = [2015, 2018, 2021]
+LABEL_EPSG = 26919
+#: Top-left corner of the run's grid. On the 0.6 m lattice, off any 19.2 m
+#: lattice, like the real units.
+LABEL_ORIGIN = (300000.6, 4500001.2)
+LABEL_CELLS = (40, 40)
+
+
+def _label_grid():
+    """Cell grid of the synthetic labelling run (40 by 40 cells of 19.2 m)."""
+    from affine import Affine
+    from rasterio.crs import CRS
+
+    from csdv_core.disturbance.inputs import CellGrid
+
+    return CellGrid(
+        crs=CRS.from_epsg(LABEL_EPSG),
+        pixel_transform=Affine(0.6, 0, LABEL_ORIGIN[0], 0, -0.6, LABEL_ORIGIN[1]),
+        pixel_m=0.6,
+        block_px=32,
+        cell_rows=LABEL_CELLS[0],
+        cell_cols=LABEL_CELLS[1],
+    )
+
+
+@pytest.fixture()
+def label_grid():
+    """Cell grid of the synthetic labelling run."""
+    return _label_grid()
+
+
+def _cell_box(row0: int, col0: int, rows: int, cols: int):
+    x0 = LABEL_ORIGIN[0] + col0 * _CELL
+    y1 = LABEL_ORIGIN[1] - row0 * _CELL
+    return box(x0, y1 - rows * _CELL, x0 + cols * _CELL, y1)
+
+
+@pytest.fixture()
+def label_export(tmp_path: Path) -> Path:
+    """An export folder with one unit, its candidates and its cell layers.
+
+    The unit is forest everywhere except a field with sparse trees beside it
+    (rows 34-38, columns 30-37). A
+    detected object (5 by 5 cells, with a refined outline) lies at rows
+    10-14, columns 10-14 in 2015-2018. A block at rows 25-29, columns 5-9
+    leaves the forest mask in 2018-2021 without being detected, and a block
+    at rows 30-33, columns 25-28 has raised probability in 2015-2018.
+    """
+    from csdv_core.disturbance.inputs import grid_to_dict
+    from csdv_core.disturbance.store import write_year_stack
+
+    grid = _label_grid()
+    root = tmp_path / "exports"
+    run = root / "runs" / REVIEW_TAG / LABEL_UNIT
+    run.mkdir(parents=True)
+    crs = f"EPSG:{LABEL_EPSG}"
+    table = pd.DataFrame(
+        [
+            {"object_id": 1, "onset_year": 2018, "year_before": 2015,
+             "interval": "2015-2018", "n_cells": 25, "area_ha": 25 * 0.036864,
+             "mean_prob": 0.9, "max_prob": 1.0},
+            {"object_id": 2, "onset_year": 2021, "year_before": 2018,
+             "interval": "2018-2021", "n_cells": 2, "area_ha": 2 * 0.036864,
+             "mean_prob": 0.7, "max_prob": 0.8},
+        ]
+    )
+    geoms = [_cell_box(10, 10, 5, 5), _cell_box(20, 30, 1, 2)]
+    objects = gpd.GeoDataFrame(table, geometry=geoms, crs=crs)
+    objects.to_file(run / "disturbances.gpkg", layer="objects")
+    refined = gpd.GeoDataFrame(
+        table.iloc[:1][["object_id", "onset_year", "year_before", "interval"]],
+        geometry=[geoms[0].buffer(-6.0)],
+        crs=crs,
+    )
+    refined.to_file(run / "disturbances.gpkg", layer="refined_outlines")
+    (run / "run_params.json").write_text(
+        json.dumps(
+            {
+                "site": LABEL_UNIT,
+                "params": {"inputs": {"years": LABEL_YEARS}},
+                "grid": grid_to_dict(grid),
+            }
+        )
+    )
+    (run / "summary.json").write_text(
+        json.dumps(
+            {
+                "years": LABEL_YEARS,
+                "inputs": [
+                    {"year": y, "acquisition_date": f"{y}-08-0{i + 1}"}
+                    for i, y in enumerate(LABEL_YEARS)
+                ],
+            }
+        )
+    )
+    (run / "unit.json").write_text(
+        json.dumps(
+            {
+                "unit_id": LABEL_UNIT,
+                "label": "Synthetic",
+                "years": {str(y): {"source": "pc"} for y in LABEL_YEARS},
+            }
+        )
+    )
+    shape = (len(LABEL_YEARS), *LABEL_CELLS)
+    cover = np.full(shape, 0.9, dtype="float32")
+    cover[:, 34:39, 30:35] = 0.0  # a field
+    cover[:, 34:39, 35:38] = 0.3  # sparse trees beside it
+    cover[1:, 10:15, 10:15] = 0.1  # the detected object
+    cover[2, 25:30, 5:10] = 0.1  # undetected loss
+    height = np.where(cover > 0.5, 18.0, 1.0).astype("float32")
+    height[:, 34:39, 35:38] = 4.0
+    prob = np.full(shape, 0.01, dtype="float32")
+    prob[0] = np.nan
+    prob[1, 10:15, 10:15] = 0.95
+    prob[1, 30:34, 25:29] = 0.4
+    prob[2, 25:30, 5:10] = 0.1
+    prob[:, 34:39, 30:38] = np.nan
+    layers = root / "run_layers" / LABEL_UNIT / REVIEW_TAG
+    (layers / "detection").mkdir(parents=True)
+    (layers / "layers").mkdir(parents=True)
+    write_year_stack(layers / "layers" / "forest.tif", cover >= 0.5, grid, LABEL_YEARS)
+    write_year_stack(layers / "layers" / "chm_cover.tif", cover, grid, LABEL_YEARS)
+    write_year_stack(layers / "layers" / "chm_height.tif", height, grid, LABEL_YEARS)
+    write_year_stack(layers / "detection" / "probability.tif", prob, grid, LABEL_YEARS)
+    return root

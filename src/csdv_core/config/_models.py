@@ -492,3 +492,105 @@ class DisturbanceConfig(_Base):
         if reference is not None and years is not None and reference not in years:
             raise ValueError(f"reference_year {reference} is not in years {years}")
         return self
+
+
+# ---------------------------------------------------------------------------
+# label.yaml
+# ---------------------------------------------------------------------------
+
+
+class LabelChips(_Base):
+    """Chip and window geometry."""
+
+    chip_px: int = Field(default=512, ge=16)
+    max_window_chips: int = Field(default=3, ge=1)
+    window_margin_m: float = Field(default=19.2, ge=0)
+    collar_px: int = Field(default=64, ge=0)
+
+
+class LabelCandidates(_Base):
+    """What counts as a candidate."""
+
+    min_ha: float = Field(default=0.3, gt=0)
+    weak_prob: float = Field(default=0.2, ge=0, le=1)
+    detected_buffer_cells: int = Field(default=1, ge=0)
+    chm_loss_min_drop: float = Field(default=0.2, ge=0, le=1)
+
+
+class LabelViews(_Base):
+    """Window rule for the images sent to the vision models."""
+
+    detail_m: float = Field(default=384.0, gt=0)
+    zoom: float = Field(default=3.0, gt=0)
+    min_m: float = Field(default=150.0, gt=0)
+    margin: float = Field(default=1.25, ge=1)
+    px: int = Field(default=640, ge=64)
+    max_px: int = Field(default=1280, ge=64)
+    jpeg_quality: int = Field(default=92, ge=50, le=100)
+
+
+class LabelRouting(_Base):
+    """How two verdicts are combined."""
+
+    reject_confidence: int = Field(default=3, ge=1, le=3)
+
+
+class LabelOutlines(_Base):
+    """When a model polygon is used and for which types it counts as loss."""
+
+    crisp_types: list[str] = Field(
+        default_factory=lambda: ["clearcut", "clearing_infrastructure", "mining"]
+    )
+    crisp_fire_full: bool = True
+    polygon_min_cover: float = Field(default=0.5, ge=0, le=1)
+    polygon_max_ratio: float = Field(default=10.0, gt=1)
+    polygon_min_ha: float = Field(default=0.1, ge=0)
+
+
+class LabelRules(_Base):
+    """Thresholds of the per-pixel label rules."""
+
+    band_precise_m: float = Field(default=4.8, ge=0)
+    band_envelope_m: float = Field(default=9.6, ge=0)
+    margin_m: float = Field(default=19.2, ge=0)
+    margin_wide_m: float = Field(default=38.4, ge=0)
+    raised_prob: float = Field(default=0.2, ge=0, le=1)
+    sparse_cover: float = Field(default=0.2, ge=0, le=1)
+    sparse_height_m: float = Field(default=2.0, ge=0)
+    unstable_change: float = Field(default=0.15, ge=0)
+    fill_dips: bool = True
+
+
+class LabelPooling(_Base):
+    """Pooling of 0.6 m labels to output cells."""
+
+    ignore_share: float = Field(default=0.5, gt=0, le=1)
+    loss_share: float = Field(default=0.5, gt=0, le=1)
+    background_share: float = Field(default=0.1, ge=0, le=1)
+    cells_m: list[float] = Field(default_factory=lambda: [2.4, 4.8, 9.6])
+
+    @model_validator(mode="after")
+    def _shares_ordered(self) -> LabelPooling:
+        if self.background_share >= self.loss_share:
+            raise ValueError("background_share must be below loss_share")
+        return self
+
+
+class LabelConfig(_Base):
+    """All thresholds of the labelling pipeline (``csdv label``)."""
+
+    chips: LabelChips = Field(default_factory=LabelChips)
+    candidates: LabelCandidates = Field(default_factory=LabelCandidates)
+    views: LabelViews = Field(default_factory=LabelViews)
+    routing: LabelRouting = Field(default_factory=LabelRouting)
+    outlines: LabelOutlines = Field(default_factory=LabelOutlines)
+    rules: LabelRules = Field(default_factory=LabelRules)
+    pooling: LabelPooling = Field(default_factory=LabelPooling)
+    policy: dict[str, int] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _policy_values(self) -> LabelConfig:
+        bad = {k: v for k, v in self.policy.items() if v not in (0, 1, 2, 255)}
+        if bad:
+            raise ValueError(f"policy labels must be 0, 1, 2 or 255, got {bad}")
+        return self

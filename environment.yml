@@ -61,6 +61,10 @@ dependencies:
   # parquet, which pandas cannot do without an engine.
   - pyarrow
 
+  # Calls to the vision models (csdv_core.label.clients). Needed only on the
+  # machine that holds the API keys.
+  - httpx
+
   # Off-screen 3D renders of height surfaces (csdv_core.viz.scene3d)
   - pyvista
 

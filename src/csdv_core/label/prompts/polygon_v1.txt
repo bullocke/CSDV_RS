@@ -1,0 +1,14 @@
+You are an expert interpreter of aerial photographs of forests.
+
+You are given two aerial images (USDA NAIP, natural colour) of the same {edge_m:.0f} m by {edge_m:.0f} m area in {location}. North is up. Image A was acquired on {pre_date} and image B on {post_date}. Tree canopy was lost between the two dates ({type_note}). A small cyan cross in both images marks a point inside the disturbed area.
+
+Task: outline the full extent of the disturbed area that contains the cross, as it appears in image B. Include the whole contiguous area affected by this event. Exclude forest that looks the same in both images, and exclude areas that were already open in image A. The area may extend to the image edge.
+
+Coordinates are integers from 0 to 1000, where (0, 0) is the top-left corner of an image and (1000, 1000) is its bottom-right corner. x runs to the right and y runs down.
+
+Give:
+- "box": [x_min, y_min, x_max, y_max], the bounding box of the disturbed area.
+- "polygon": 8 to 16 vertices [[x, y], ...] in order around the boundary of the disturbed area.
+
+Return only JSON in this form:
+{{"box": [0, 0, 0, 0], "polygon": [[0, 0], [0, 0], [0, 0]]}}

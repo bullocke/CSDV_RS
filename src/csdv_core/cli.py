@@ -158,6 +158,12 @@ def _attach_review() -> None:
     main.add_command(_review_cli, name="review")
 
 
+def _attach_label() -> None:
+    from csdv_core.label.cli import label as _label_cli
+
+    main.add_command(_label_cli, name="label")
+
+
 # Attach now: imports are cheap (click + module-level imports only); heavy
 # imports (ee, torch, rasterio in segmentation) happen inside the command
 # bodies, not at import time.
@@ -173,6 +179,7 @@ _attach_check()
 _attach_disturbance()
 _attach_grid()
 _attach_review()
+_attach_label()
 
 
 if __name__ == "__main__":
