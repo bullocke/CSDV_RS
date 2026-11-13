@@ -569,6 +569,23 @@ def test_render_reports_how_the_dates_were_found(
     assert "3 by mosaic_name" in result.output and "median date" in result.output
 
 
+def test_polygon_render_without_verdicts_is_refused(
+    run: LabelRun, label_export: Path, tmp_path: Path
+) -> None:
+    where = ["--label-dir", str(run.root), "--export-dir", str(label_export)]
+    data = ["--data-root", str(tmp_path / "data"), "--naip-source", "local"]
+    polygon = ["label", "render", *where, *data, "--kind", "polygon"]
+    cli = CliRunner()
+    result = cli.invoke(main, polygon)
+    assert result.exit_code != 0 and "no verdict" in result.output
+    result = cli.invoke(main, ["label", "render", *where, *data])
+    assert result.exit_code == 0, result.output
+    _write_answers(run, fit="too_small")
+    result = cli.invoke(main, polygon)
+    assert result.exit_code == 0, result.output
+    assert "verdicts of these windows" in result.output
+
+
 def test_a_window_whose_stack_lacks_a_year_is_left_out_without_imagery(
     run: LabelRun, tmp_path: Path
 ) -> None:

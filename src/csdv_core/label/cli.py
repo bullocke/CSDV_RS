@@ -405,6 +405,23 @@ def render_cmd(unit, windows, kind, naip_source, data_root, with_chips, check, *
         if missing:
             raise click.ClickException("Some mosaics are missing.")
         return
+    if kind == "polygon":
+        # Polygon requests follow the verdicts. Without them every window
+        # would get an empty request list, and nothing would say why.
+        from csdv_core.label import judge
+
+        wanted = set(table["window_id"].astype(str))
+        verdicts = sum(
+            rec["kind"] == "verdict" and rec["window_id"] in wanted
+            for rec in judge.read_records(run.answers)
+        )
+        if not verdicts:
+            raise click.ClickException(
+                f"{run.answers} holds no verdict for these windows. Polygon "
+                "images are rendered from the verdicts: copy answers.jsonl "
+                "into the label folder first (scripts/chpc/push_label_run.sh)."
+            )
+        click.echo(f"{verdicts} verdicts of these windows in {run.answers}")
     total = 0
     skipped: list[str] = []
     for n, row in enumerate(table.itertuples(), start=1):
