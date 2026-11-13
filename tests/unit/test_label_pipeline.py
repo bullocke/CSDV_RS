@@ -567,3 +567,17 @@ def test_render_reports_how_the_dates_were_found(
     result = cli.invoke(main, ["label", "render", *where, *data])
     assert result.exit_code == 0, result.output
     assert "3 by mosaic_name" in result.output and "median date" in result.output
+
+
+def test_a_window_whose_stack_lacks_a_year_is_left_out_without_imagery(
+    run: LabelRun, tmp_path: Path
+) -> None:
+    """Such a window is skipped at render. A build on another machine agrees."""
+    render_window(run, ROW, source="local", data_root=tmp_path / "data")
+    assert build_window(run, ROW, [], with_stack=False) is not None
+    path = run.root / "stacks" / "w1" / "meta.json"
+    meta = json.loads(path.read_text())
+    meta["failed"]["2018"] = "covers 0.30 of the part inside the unit"
+    del meta["years"]["2018"]
+    path.write_text(json.dumps(meta))
+    assert build_window(run, ROW, [], with_stack=False) is None

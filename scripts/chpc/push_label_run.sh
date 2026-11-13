@@ -2,9 +2,10 @@
 # Copy the small files of a label run from this machine to CHPC, so that the
 # windows can be rendered there from the NAIP mosaics. Run locally.
 #
-# Sent: windows.csv, units.csv, candidates/ and, when it exists, answers.jsonl
-# (the polygon images are rendered from the verdicts). Nothing else leaves
-# this machine: no API key, no ledger, no response cache.
+# Sent: windows.csv, units.csv, candidates/ and, when they exist, answers.jsonl
+# (the polygon images are rendered from the verdicts) and config.yaml (the
+# thresholds this run changes, for the label build). Nothing else leaves this
+# machine: no API key, no ledger, no response cache.
 #
 # Usage:
 #   scripts/chpc/push_label_run.sh LABEL_DIR NAME [--dry-run]
@@ -18,7 +19,7 @@
 #
 # Afterwards, on CHPC, submit scripts/slurm/run_label_render.sbatch for
 # $CSDV_EXPORT_DIR/label/NAME, then bring the request images back with
-#   scripts/chpc/pull_exports.sh label/NAME/requests
+#   scripts/chpc/pull_label_run.sh NAME
 
 set -euo pipefail
 
@@ -45,5 +46,6 @@ DEST="$CSDV_CHPC_HOST:$CSDV_CHPC_EXPORTS/label/$NAME/"
 echo "$LABEL_DIR -> $DEST"
 rsync -avh --partial --mkpath ${DRY[@]+"${DRY[@]}"} \
     --include='windows.csv' --include='units.csv' --include='answers.jsonl' \
+    --include='config.yaml' \
     --include='candidates/' --include='candidates/*.gpkg' --exclude='*' \
     "${LABEL_DIR%/}/" "$DEST"

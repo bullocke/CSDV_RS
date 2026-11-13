@@ -359,9 +359,18 @@ def build_window(
     )
     dates = None
     if parts.stack is None:
-        dates = window_dates(run, wid) or [
-            parts.unit.dates[y] for y in parts.unit.years
-        ]
+        dates = window_dates(run, wid)
+        if dates is not None and len(dates) != len(parts.unit.years):
+            # Rendered, and a year had no imagery. With the imagery such a
+            # window is left out (window_parts), so it is left out here too.
+            logger.warning(
+                "%s: its stack holds %d of the unit's %d years, skipped",
+                wid,
+                len(dates),
+                len(parts.unit.years),
+            )
+            return None
+        dates = dates or [parts.unit.dates[y] for y in parts.unit.years]
     cell_ndvi = None
     if run.cfg.rules.never_green_ndvi is not None:
         cell_ndvi = window_cell_ndvi(run, parts)
