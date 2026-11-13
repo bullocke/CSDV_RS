@@ -128,9 +128,11 @@ rules:
   # so a loss both models accept stays loss. The value compares the largest
   # NDVI over all dates, never one date: leaf-off flights and uncalibrated
   # radiometry put a third of forest cells below 0.10 on some date. Dry
-  # conifer forest reaches only 0.10 to 0.20, so choose the value from the
-  # run's own windows. Needs cell_ndvi.tif in the stack folders (written by
-  # `render`). null: off.
+  # conifer forest reaches only 0.10 to 0.20, and some flights carry no
+  # vegetation signal at all, so forest lost right after one never shows a
+  # high value. A low value (0.05) flags only ground without any vegetation.
+  # Choose it from the run's own windows. Needs cell_ndvi.tif in the stack
+  # folders (written by `render`). null: off.
   never_green_ndvi: null
 
 pooling:
