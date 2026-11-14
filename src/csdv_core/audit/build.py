@@ -70,7 +70,14 @@ def write_page(site: Path) -> None:
     site.mkdir(parents=True, exist_ok=True)
     page = resources.files("csdv_core.audit") / "page"
     for name in PAGE_FILES:
-        (site / name).write_bytes((page / name).read_bytes())
+        _replace(site / name, (page / name).read_bytes())
+
+
+def _replace(path: Path, content: bytes) -> None:
+    """Write a file in one step, so a page in use never reads half of it."""
+    partial = path.with_name(path.name + ".part")
+    partial.write_bytes(content)
+    partial.replace(path)
 
 
 def _place(src: Path, dst: Path, link: bool) -> None:
@@ -102,6 +109,23 @@ def _requests(label_dir: Path, window_id: str) -> dict[str, dict]:
             if record.get("kind") == "verdict":
                 out[record["cand_id"]] = record
     return out
+
+
+def _interval_of(dates: list[str], date_a: str, date_b: str) -> int | None:
+    """Index of the interval ``date_a`` to ``date_b`` among a chip's dates.
+
+    A chip that lies in two windows carries the dates of the window that
+    owns it. The other window may be dated from a neighbouring flight line
+    of the same years, so when the exact dates are not found the interval
+    with the same pair of years is taken.
+    """
+    pairs = list(zip(dates[:-1], dates[1:], strict=True))
+    if (date_a, date_b) in pairs:
+        return pairs.index((date_a, date_b))
+    years = [(a[:4], b[:4]) for a, b in pairs]
+    if (date_a[:4], date_b[:4]) in years:
+        return years.index((date_a[:4], date_b[:4]))
+    return None
 
 
 def label_overlay_image(
@@ -143,11 +167,8 @@ def label_overlay_image(
         cminx, cminy, cmaxx, cmaxy = json.loads(chip["bounds"])
         if cmaxx <= minx or cminx >= maxx or cmaxy <= miny or cminy >= maxy:
             continue
-        dates = json.loads(chip["dates"])
-        if date_a not in dates or dates.index(date_a) + 1 >= len(dates):
-            continue
-        k = dates.index(date_a)
-        if dates[k + 1] != date_b:
+        k = _interval_of(json.loads(chip["dates"]), date_a, date_b)
+        if k is None:
             continue
         path = chips_dir / f"{chip['chip_id']}_change.tif"
         if not path.exists():
@@ -311,7 +332,7 @@ _ITEMS = ";\nwindow.AUDIT_ITEMS = "
 def _write_entries(site: Path, meta: dict, entries: list[dict]) -> None:
     """Write ``items.js``. A script, not JSON, so the page opens from disk."""
     text = _META + json.dumps(meta) + _ITEMS + json.dumps(entries, indent=0) + ";\n"
-    (site / "items.js").write_text(text)
+    _replace(site / "items.js", text.encode())
 
 
 def read_entries(site: Path) -> tuple[dict, list[dict]]:

@@ -56,6 +56,8 @@ Block 2 shows a window with its label: red is labelled loss, hatched ground is l
 
 The page times every item. The header shows the count, the median time per item and the time left for the target.
 
+The target items of block 1 come first, then those of block 2, and the reserve of both blocks last. `http://localhost:8766/?block=2` keeps the page to one block, for example to judge windows before the candidates are finished.
+
 ## Files
 
 | Path | Content |
@@ -65,7 +67,7 @@ The page times every item. The header shows the count, the median time per item 
 | `answers/<interpreter>.jsonl` | One line per answer, appended. A line with `"void": true` withdraws the item's earlier answer |
 | `stack_windows.txt`, `stack_windows_reserve.txt` | Windows of block 2 whose imagery is still on CHPC |
 
-Candidate items reuse the request images of the label run, so block 1 needs nothing beyond the run folder. Block 2 needs the stacks of its windows:
+Candidate items reuse the request images of the label run, so block 1 needs nothing beyond the run folder. A chip that lies in two windows carries the dates of the window that owns it, so where the other window was flown on another day of the same year its label is matched by the pair of years. Block 2 needs the stacks of its windows:
 
 ```bash
 scripts/chpc/pull_label_run.sh scale_test --no-requests --stacks-from $AUDIT/stack_windows.txt

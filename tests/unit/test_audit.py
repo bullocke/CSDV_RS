@@ -327,6 +327,11 @@ def test_overlay_marks_loss_and_ignore_only(label_dir):
         )
     )
     assert clear[:, :19, 3].max() == 0
+    # Another flight date of the same years is the same interval.
+    near = label_overlay_image(
+        chips, label_dir / "chips", view, "2014-09-20", "2016-05-02"
+    )
+    assert np.array_equal(np.asarray(near), np.asarray(overlay))
     # No chip holds an interval between dates that are not consecutive.
     assert (
         label_overlay_image(chips, label_dir / "chips", view, DATES[0], DATES[2])

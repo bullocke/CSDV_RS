@@ -11,6 +11,7 @@
   const META = window.AUDIT_META || { name: "audit" };
   const SERVED = location.protocol === "http:" || location.protocol === "https:";
   const STORE_KEY = "csdv-audit:" + META.name;
+  const ONLY_BLOCK = Number((/[?&]block=(\d+)/.exec(location.search) || [])[1] || 0);
   const TYPES = [
     ["h", "harvest", "harvest"],
     ["w", "wind", "wind"],
@@ -69,7 +70,7 @@
     hiddenAt: 0,
     gate: null,
     introduced: new Set(),
-    reserveOk: new Set(),
+    reserveOk: false,
     saving: false,
   };
   const view = { scale: 1, x: 0, y: 0, side: 0, drag: null };
@@ -515,8 +516,14 @@
     }
   }
 
+  // Items still to judge, in serving order: the target items of every
+  // block first, the reserve after them. index.html?block=2 keeps to one block.
   function pending() {
-    return ITEMS.filter((i) => !state.latest.has(i.id));
+    const open = ITEMS.filter(
+      (i) => !state.latest.has(i.id) && (!ONLY_BLOCK || i.block === ONLY_BLOCK)
+    );
+    const target = open.filter((i) => !i.reserve);
+    return target.length ? target : open;
   }
 
   function message(html, onGo) {
@@ -552,23 +559,20 @@
       state.gate = null;
       return;
     }
+    if (item.reserve && !state.reserveOk) {
+      state.reserveOk = true;
+      message(
+        "<h1>Every target item is judged</h1><p>The items that follow are a reserve " +
+          "from the same draw. Each one judged narrows the intervals. Stop here " +
+          "whenever you like.</p>" +
+          '<p class="go">Press Enter to continue with the reserve.</p>',
+        () => next()
+      );
+      return;
+    }
     if (!state.introduced.has(item.block)) {
       state.introduced.add(item.block);
       message(INTRO[item.block] + '<p class="go">Press Enter to start.</p>', () => show(item));
-      return;
-    }
-    const key = item.block;
-    const doneTarget = ITEMS.some((i) => i.block === key && !i.reserve && state.latest.has(i.id));
-    if (item.reserve && doneTarget && !state.reserveOk.has(key)) {
-      state.reserveOk.add(key);
-      message(
-        "<h1>The target of block " +
-          key +
-          " is reached</h1><p>The items that follow are a reserve from the same draw. " +
-          "Each one judged narrows the intervals. Stop here whenever you like.</p>" +
-          '<p class="go">Press Enter to continue with the reserve.</p>',
-        () => show(item)
-      );
       return;
     }
     show(item);
