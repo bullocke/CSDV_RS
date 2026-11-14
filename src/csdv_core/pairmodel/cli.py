@@ -70,6 +70,13 @@ def pair() -> None:
 @click.option("--lr", type=float, default=2e-4, show_default=True)
 @click.option("--workers", type=int, default=7, show_default=True)
 @click.option("--reverse-prob", type=float, default=0.2, show_default=True)
+@click.option(
+    "--agents/--no-agents",
+    default=True,
+    show_default=True,
+    help="Train a second head that names the agent of a loss.",
+)
+@click.option("--agent-weight", type=float, default=0.5, show_default=True)
 @click.option("--patience", type=int, default=8, show_default=True)
 @click.option("--seed", type=int, default=0, show_default=True)
 @click.option("--max-val-samples", type=int, default=None)
@@ -97,6 +104,8 @@ def train_cmd(
     lr,
     workers,
     reverse_prob,
+    agents,
+    agent_weight,
     patience,
     seed,
     max_val_samples,
@@ -135,6 +144,8 @@ def train_cmd(
         lr=lr,
         workers=workers,
         reverse_prob=reverse_prob,
+        agents=agents,
+        agent_weight=agent_weight,
         patience=patience,
         seed=seed,
         max_val_samples=max_val_samples,

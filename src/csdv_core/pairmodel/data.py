@@ -27,7 +27,8 @@ import numpy as np
 import pandas as pd
 
 from csdv_core.config._models import LabelPooling
-from csdv_core.label.pooling import pool_change
+from csdv_core.label.pooling import pool_agent, pool_change
+from csdv_core.label.verdicts import AGENT_CODES
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +37,12 @@ IGNORE = 255
 GSD = 0.6
 #: A cell is ignore when at least this share of it has no imagery on a date.
 NO_IMAGERY_SHARE = 0.5
+#: Agent groups in the order of the model's classes. Class ``i`` is code
+#: ``i + 1`` of the agent raster.
+AGENT_NAMES: tuple[str, ...] = tuple(sorted(AGENT_CODES, key=AGENT_CODES.__getitem__))
 
 __all__ = [
+    "AGENT_NAMES",
     "IGNORE",
     "Augment",
     "PairArrays",
@@ -104,6 +109,8 @@ class PairArrays:
         change: Change label of the interval at 0.6 m (0, 1, 2 or 255).
         forest_a: Forest mask at the earlier date, bool.
         forest_b: Forest mask at the later date, bool.
+        agent: Agent code of the interval at 0.6 m (1 to 6, 255 where there
+            is no agreed loss or the two models named different agents).
     """
 
     a: np.ndarray
@@ -111,6 +118,7 @@ class PairArrays:
     change: np.ndarray
     forest_a: np.ndarray
     forest_b: np.ndarray
+    agent: np.ndarray
 
 
 def _json_list(value: Any) -> list:
@@ -192,7 +200,7 @@ def missing_files(chips_dir: Path, chip_ids: Sequence[str]) -> list[str]:
     chips_dir = Path(chips_dir)
     missing = []
     for chip_id in chip_ids:
-        for part in ("naip", "change", "aux"):
+        for part in ("naip", "change", "aux", "agent"):
             if not (chips_dir / f"{chip_id}_{part}.tif").is_file():
                 missing.append(f"{chip_id}_{part}.tif")
     return missing
@@ -322,7 +330,9 @@ def read_pair(
     with rasterio.open(f"{stem}_aux.tif") as src:
         first = n_dates - 1
         forest = src.read([first + k + 1, first + k + 2], window=win(window_a))
-    return PairArrays(a, b, change, forest[0] == 1, forest[1] == 1)
+    with rasterio.open(f"{stem}_agent.tif") as src:
+        agent = src.read(k + 1, window=win(window_a))
+    return PairArrays(a, b, change, forest[0] == 1, forest[1] == 1, agent)
 
 
 def pair_target(arrays: PairArrays, *, reverse: bool = False) -> np.ndarray:
@@ -365,6 +375,27 @@ def pool_target(
     for image in (a, b):
         pooled[_pool_valid(image, cell_px) <= 1.0 - NO_IMAGERY_SHARE] = IGNORE
     return pooled
+
+
+def pool_agents(agent: np.ndarray, target: np.ndarray, cell_px: int) -> np.ndarray:
+    """Agent class of each loss cell: 0 to 5, and 255 where there is none.
+
+    Args:
+        agent: Agent codes at 0.6 m (1 to 6, 255 none).
+        target: The pooled target of the same sample (0, 1, 255). Only its
+            loss cells get a class, so a reversed pair has none.
+        cell_px: Pixels per cell side.
+
+    Returns:
+        The index into :data:`AGENT_NAMES` of the most common agent among
+        the loss pixels of each loss cell. 255 for every other cell, and for
+        loss cells on which the two vision models named different agents.
+    """
+    codes = pool_agent(agent, target, cell_px)
+    out = np.full(codes.shape, IGNORE, dtype="uint8")
+    known = (codes >= 1) & (codes <= len(AGENT_NAMES))
+    out[known] = codes[known] - 1
+    return out
 
 
 def _jitter(image: np.ndarray, rng: np.random.Generator) -> np.ndarray:
@@ -421,7 +452,7 @@ def build_sample(
     std: np.ndarray,
     aug: Augment | None = None,
     rng: np.random.Generator | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """One sample of the index, ready for the model.
 
     Args:
@@ -435,8 +466,9 @@ def build_sample(
         rng: Random generator, required with ``aug``.
 
     Returns:
-        ``(a, b, target)``: two float32 ``(4, rows, cols)`` images and the
-        uint8 target on cells.
+        ``(a, b, target, agent)``: two float32 ``(4, rows, cols)`` images,
+        the uint8 target on cells (0 background, 1 loss, 255 ignore) and the
+        uint8 agent class of the loss cells (:func:`pool_agents`).
     """
     window_a = window_b = None
     reverse = False
@@ -469,6 +501,7 @@ def build_sample(
     target = pool_target(
         pair_target(arrays, reverse=reverse), arrays.a, arrays.b, cell_px, pooling
     )
+    agent = pool_agents(arrays.agent, target, cell_px)
     first, second = arrays.a, arrays.b
     native_first, native_second = float(row.native_a), float(row.native_b)
     if reverse:
@@ -479,8 +512,8 @@ def build_sample(
     if aug is not None and aug.flip and rng is not None:
         turns = int(rng.integers(0, 4))
         mirror = bool(rng.integers(0, 2))
-        a, b, target = (_turn(x, turns, mirror) for x in (a, b, target))
-    return a, b, target
+        a, b, target, agent = (_turn(x, turns, mirror) for x in (a, b, target, agent))
+    return a, b, target, agent
 
 
 def _turn(array: np.ndarray, turns: int, mirror: bool) -> np.ndarray:
@@ -527,7 +560,7 @@ def band_stats(
 class PairDataset:
     """Samples of an index for a PyTorch ``DataLoader``.
 
-    Each item is ``(a, b, target, unit_index)``. Training items are drawn
+    Each item is ``(a, b, target, agent, unit_index)``. Training items are drawn
     with augmentation from a generator seeded per worker. Validation items
     are whole chips without any random change.
     """
@@ -569,11 +602,11 @@ class PairDataset:
             )
         return self._rng
 
-    def __getitem__(self, item: int) -> tuple[Any, Any, Any, int]:
+    def __getitem__(self, item: int) -> tuple[Any, Any, Any, Any, int]:
         import torch
 
         row = self.index.iloc[item]
-        a, b, target = build_sample(
+        a, b, target, agent = build_sample(
             self.chips_dir,
             row,
             cell_px=self.cell_px,
@@ -587,5 +620,6 @@ class PairDataset:
             torch.from_numpy(a),
             torch.from_numpy(b),
             torch.from_numpy(target),
+            torch.from_numpy(agent),
             self.units.index(row.unit),
         )

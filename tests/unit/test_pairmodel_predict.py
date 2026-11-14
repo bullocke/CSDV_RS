@@ -324,11 +324,22 @@ def test_train_predict_compare_from_the_command_line(unit) -> None:
         ],
     )
     assert trained.exit_code == 0, trained.output
-    for name in ("best.pt", "last.pt", "metrics.csv", "config.json", "curves.png"):
+    for name in (
+        "best.pt",
+        "last.pt",
+        "metrics.csv",
+        "config.json",
+        "curves.png",
+        "agent_confusion_val.csv",
+    ):
         assert (run / name).is_file(), name
     history = pd.read_csv(run / "metrics.csv")
     assert list(history["epoch"]) == [1, 2]
     assert "ap_qb" in history.columns
+    assert history["val_agent_cells"].iloc[-1] > 0
+    confusion = pd.read_csv(run / "agent_confusion_val.csv")
+    assert list(confusion["label"])[0] == "harvest"
+    assert confusion["cells"].sum() == history["val_agent_cells"].iloc[-1]
     record = json.loads((run / "config.json").read_text())
     assert record["split"]["test"] == [UNIT]
     assert UNIT not in record["split"]["train"]
@@ -388,6 +399,10 @@ def test_train_predict_compare_from_the_command_line(unit) -> None:
     assert mapped.exit_code == 0, mapped.output
     prob = run / "map" / f"prob_{UNIT}.tif"
     assert prob.is_file()
+    with rasterio.open(run / "map" / f"agent_{UNIT}.tif") as src:
+        codes = src.read()
+        assert src.count == 2 and src.colormap(1)[3] == (227, 73, 72, 255)
+    assert set(np.unique(codes)) <= {1, 2, 3, 4, 5, 6, 255}
 
     compared = runner.invoke(
         pair,
@@ -434,4 +449,10 @@ def test_train_predict_compare_from_the_command_line(unit) -> None:
     assert len(objects) == 1 and objects.iloc[0]["cells"] >= 36
     summary = json.loads((out / "compare.json").read_text())
     assert summary["chips"] == 2
+    # The unit's only loss is a harvest: every agent cell of the label is in
+    # the harvest row, whatever the barely trained model names.
+    agents = pd.read_csv(out / "agent_confusion.csv")
+    assert agents["cells"].sum() == summary["agents"]["cells"] > 0
+    assert agents.loc[agents["label"] == "harvest", "cells"].iloc[0] > 0
+    assert agents.loc[agents["label"] != "harvest", "cells"].sum() == 0
     assert list((out / "events").glob("*.png"))

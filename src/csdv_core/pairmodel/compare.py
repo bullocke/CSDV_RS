@@ -11,6 +11,8 @@ Outputs, in the output folder:
 - ``model_only.csv``: patches the model flags that no detected object touches.
 - ``overview.png``: model and DI probability of every interval.
 - ``events/*.png``: close-ups (earlier image, later image, model, DI, label).
+- ``agent_confusion.csv``: for a map with agents, the agent the model names
+  on the label's loss cells against the agent of the label.
 - ``compare.json``: the headline numbers.
 
 The labels descend from the DI's own candidates, so agreement with them
@@ -33,7 +35,8 @@ import numpy as np
 from csdv_core.config._models import LabelPooling
 from csdv_core.label.lattice import GSD, Bounds
 from csdv_core.label.pooling import pool_change
-from csdv_core.pairmodel.metrics import CellCounts
+from csdv_core.pairmodel.data import AGENT_NAMES, pool_agents
+from csdv_core.pairmodel.metrics import AgentCounts, CellCounts
 from csdv_core.pairmodel.predict import PredGrid, cells_at_centres
 
 logger = logging.getLogger(__name__)
@@ -44,7 +47,13 @@ NO_CHIP = 254
 #: Smallest patch reported in ``model_only.csv``, hectares.
 MIN_PATCH_HA = 0.3
 
-__all__ = ["CompareResult", "compare_unit", "label_cells", "open_map"]
+__all__ = [
+    "CompareResult",
+    "compare_unit",
+    "label_agent_cells",
+    "label_cells",
+    "open_map",
+]
 
 
 @dataclass
@@ -140,6 +149,78 @@ def label_cells(
         footprints.append(bounds)  # type: ignore[arg-type]
     assert target is not None and di is not None
     return target, di, footprints
+
+
+def label_agent_cells(
+    chips_dir: Path, unit: str, grid: PredGrid, pooling: LabelPooling
+) -> np.ndarray:
+    """Agent class of the label's loss cells on the cells of a map.
+
+    Returns:
+        ``(intervals, rows, cols)`` uint8: the index into
+        :data:`~csdv_core.pairmodel.data.AGENT_NAMES` on loss cells with an
+        agreed agent, 255 everywhere else.
+    """
+    import pandas as pd
+    import rasterio
+
+    table = pd.read_parquet(Path(chips_dir) / "chips.parquet")
+    table = table[table["unit"] == unit]
+    out: np.ndarray | None = None
+    cell = grid.cell_px
+    for chip in table.itertuples():
+        bounds = tuple(json.loads(chip.bounds))
+        stem = Path(chips_dir) / chip.chip_id
+        with rasterio.open(f"{stem}_change.tif") as src:
+            change = src.read()
+        with rasterio.open(f"{stem}_agent.tif") as src:
+            agent = src.read()
+        if out is None:
+            out = np.full((change.shape[0], grid.rows, grid.cols), IGNORE, "uint8")
+        binary = np.where(change == IGNORE, IGNORE, change > 0).astype("uint8")
+        pooled = pool_change(binary, cell, pooling)
+        pooled[pooled == 2] = 1
+        classes = np.stack(
+            [pool_agents(agent[k], pooled[k], cell) for k in range(len(pooled))]
+        )
+        row0 = (grid.row0 - round(bounds[3] / GSD)) // cell
+        col0 = (round(bounds[0] / GSD) - grid.col0) // cell
+        rows, cols = classes.shape[1:]
+        r_a, r_b = max(row0, 0), min(row0 + rows, grid.rows)
+        c_a, c_b = max(col0, 0), min(col0 + cols, grid.cols)
+        if r_a >= r_b or c_a >= c_b:
+            continue
+        out[:, r_a:r_b, c_a:c_b] = classes[
+            :, r_a - row0 : r_b - row0, c_a - col0 : c_b - col0
+        ]
+    if out is None:
+        raise ValueError(f"No chip of {unit} in {chips_dir}")
+    return out
+
+
+def _agent_rows(
+    agent_path: Path, labelled: np.ndarray, prob: np.ndarray, threshold: float
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Confusion of the model's agents on the label's loss cells."""
+    import rasterio
+
+    with rasterio.open(agent_path) as src:
+        codes = src.read()
+    named = np.where((codes >= 1) & (codes <= len(AGENT_NAMES)), codes - 1, IGNORE)
+    named = named.astype("uint8")
+    counts = AgentCounts(AGENT_NAMES)
+    counts.update(named, labelled)
+    flagged = AgentCounts(AGENT_NAMES)
+    cut = int(round(threshold * 100))
+    flagged.update(np.where((prob >= cut) & (prob <= 100), named, IGNORE), labelled)
+    summary = {
+        "cells": counts.n,
+        "accuracy": counts.accuracy(),
+        "balanced_accuracy": counts.balanced_accuracy(),
+        "cells_where_flagged": flagged.n,
+        "accuracy_where_flagged": flagged.accuracy(),
+    }
+    return counts.rows(), summary
 
 
 def _score_rows(
@@ -531,6 +612,13 @@ def compare_unit(
     _write_csv(out_dir / "model_only.csv", patch_rows)
     _overview(prob, di_full, names, grid, footprints, out_dir / "overview.png")
 
+    agents: dict[str, Any] | None = None
+    agent_path = Path(prob_path).with_name(f"agent_{unit.unit}.tif")
+    if agent_path.is_file():
+        labelled = label_agent_cells(chips_dir, unit.unit, grid, load_label().pooling)
+        agent_rows, agents = _agent_rows(agent_path, labelled, prob, threshold)
+        _write_csv(out_dir / "agent_confusion.csv", agent_rows)
+
     seen = [r for r in object_rows if r["cells"]]
     summary = {
         "unit": unit.unit,
@@ -550,6 +638,7 @@ def compare_unit(
         "di_objects_half_flagged": sum(r["model_share_above"] >= 0.5 for r in seen),
         "model_only_patches": len(patch_rows),
         "model_only_ha": float(sum(r["area_ha"] for r in patch_rows)),
+        "agents": agents,
         "notes": notes,
     }
     (out_dir / "compare.json").write_text(

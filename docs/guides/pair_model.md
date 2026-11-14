@@ -48,6 +48,14 @@ The encoder starts from ImageNet weights read from a file. Its first convolution
 
 The loss is binary cross-entropy plus soft Dice over the labelled cells of a batch. The optimiser is AdamW with one warm-up epoch and a cosine schedule.
 
+## Agent of a loss
+
+A second head on the same decoder features names the agent of a loss for every cell: harvest, wind, fire, biotic mortality, conversion or other, the six codes of `<chip>_agent.tif`. It is on by default (`--no-agents` turns it off). Its target is the most common agent among the loss pixels of each loss cell. Cells without loss have no agent, and neither have loss cells on which the two vision models named different agents (about one event in seven), so the head learns only from cells where the label is sure of the agent. Its cross-entropy is added to the loss of the first head with a weight of 0.5 (`--agent-weight`).
+
+The agent head answers "if this cell is a loss, which agent", so its output is meaningful only where the first head says loss. `csdv pair predict` writes it as `agent_<unit>.tif`, the code of the most likely agent of every cell with a colour table, one band per interval. Read it under a mask of `prob_<unit>.tif`.
+
+Validation reports the share of agent cells named correctly (`val_agent_accuracy`) and the mean recall over the agents present (`val_agent_balanced_accuracy`), and writes the confusion matrix of the best epoch to `agent_confusion_val.csv`. The agents are far from balanced, and they are tied to units: fire comes almost wholly from two burn units, wind from one, biotic mortality from two. A held-out unit therefore tests the agents it happens to hold, and the accuracy over all cells mostly reflects harvest and fire. Read the recall per agent.
+
 ## Splits and scores
 
 Units are split, never chips, because chips of one unit share imagery and events. `--holdout-units` names the test units, which are neither trained nor validated on. `--val-units` names the validation units, and `--fold` with `--n-folds` takes a grouped fold of the remaining units in their place. `csdv pair train --dry-run` prints the split and checks that every chip file is there.
@@ -60,6 +68,7 @@ After every epoch the validation units are scored on whole chips without any ran
 | `config.json` | The same record without weights |
 | `metrics.csv` | One row per epoch: losses, validation scores overall and per unit, seconds, and seconds spent waiting for data |
 | `pr_val.csv` | Precision and recall at every threshold for the best epoch |
+| `agent_confusion_val.csv` | Agents of the validation cells: label in rows, model in columns, recall per agent |
 | `curves.png` | Loss and validation scores by epoch |
 
 ## Mapping a unit
@@ -79,6 +88,7 @@ The cells of the map lie on the global 0.6 m lattice of the UTM zone at multiple
 | `model_only.csv` | Patches of at least 0.3 ha at or above the threshold that no detected object touches |
 | `overview.png` | Model and DI probability for every interval, with the footprints of the label chips |
 | `events/*.png` | Close-ups of the largest detected objects, of the largest objects the model does not see, and of the largest model-only patches: earlier image, later image, model, DI, label |
+| `agent_confusion.csv` | For a model with an agent head: the agent it names on the label's loss cells, against the agent of the label |
 | `compare.json` | The headline numbers |
 
 The threshold is the one with the best F1 on the validation units (`--checkpoint`), or `--threshold`.

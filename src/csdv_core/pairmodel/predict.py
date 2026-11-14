@@ -6,7 +6,11 @@ years and forest layer) and the unit's NAIP mosaics under
 Outputs: ``prob_<unit>.tif``, a Cloud Optimized GeoTIFF of uint8 percent on
 the model's cells with one band per pair of consecutive dates (255 where a
 date has no imagery), and ``prob_forest_<unit>.tif``, the same with cells
-that were not forest at the earlier date set to 0.
+that were not forest at the earlier date set to 0. A model with an agent
+head also gives ``agent_<unit>.tif``: the code of the most likely agent of
+every cell (1 harvest, 2 wind, 3 fire, 4 biotic mortality, 5 conversion,
+6 other), whatever its loss probability, to be read where the first map
+says loss.
 
 The cells lie on the global 0.6 m lattice of the UTM zone, at multiples of
 the cell size, which is where the label chips pool to cells. The unit's own
@@ -39,6 +43,15 @@ from csdv_core.pairmodel.metrics import to_percent
 logger = logging.getLogger(__name__)
 
 NODATA = 255
+#: Colour of each agent code in ``agent_<unit>.tif``.
+AGENT_COLOURS: dict[int, tuple[int, int, int, int]] = {
+    1: (237, 161, 0, 255),
+    2: (42, 120, 214, 255),
+    3: (227, 73, 72, 255),
+    4: (27, 175, 122, 255),
+    5: (74, 58, 167, 255),
+    6: (235, 104, 52, 255),
+}
 
 __all__ = [
     "Block",
@@ -145,6 +158,7 @@ class PredictResult:
     unit: str
     prob_path: Path
     forest_path: Path | None
+    agent_path: Path | None
     intervals: list[str]
     blocks: int
     seconds: float
@@ -242,7 +256,8 @@ def predict_stack(
     device: Any,
     *,
     amp: bool = False,
-) -> np.ndarray:
+    agents: bool = False,
+) -> Any:
     """Loss percent for every consecutive pair of a stack of dates.
 
     Args:
@@ -252,10 +267,14 @@ def predict_stack(
             of the model's cell size.
         mean: Per-band mean of the checkpoint.
         std: Per-band standard deviation of the checkpoint.
+        agents: Also return the agent codes (needs a model with an agent
+            head).
 
     Returns:
         ``(dates - 1, rows / cell_px, cols / cell_px)`` uint8 percent, 255
-        where either date lacks imagery over half of the cell or more.
+        where either date lacks imagery over half of the cell or more. With
+        ``agents``, a pair: that array, and one of the same shape with the
+        code (1 to 6) of the most likely agent of each cell, 255 likewise.
     """
     import torch
     import torch.nn.functional as F
@@ -279,13 +298,25 @@ def predict_stack(
             with torch.autocast(device.type, enabled=amp):
                 features.append(model.encode(x))
         out = np.full((dates - 1, rows, cols), NODATA, dtype="uint8")
+        codes = np.full((dates - 1, rows, cols), NODATA, dtype="uint8")
         for k in range(dates - 1):
+            agent_logits = None
             with torch.autocast(device.type, enabled=amp):
-                logits = model.decode(features[k], features[k + 1])
+                if agents:
+                    logits, agent_logits = model.decode_agents(
+                        features[k], features[k + 1]
+                    )
+                else:
+                    logits = model.decode(features[k], features[k + 1])
             prob = torch.sigmoid(logits.float())[0, 0, :rows, :cols].cpu().numpy()
             usable = has_imagery[k] & has_imagery[k + 1]
             out[k][usable] = to_percent(prob)[usable]
-    return out
+            if agents:
+                if agent_logits is None:
+                    raise ValueError("The model has no agent head")
+                best = agent_logits[0, :, :rows, :cols].argmax(dim=0).cpu().numpy()
+                codes[k][usable] = (best + 1).astype("uint8")[usable]
+    return (out, codes) if agents else out
 
 
 class _BlockReader:
@@ -375,6 +406,8 @@ def predict_unit(
         len(blocks),
     )
     prob = np.full((len(intervals), grid.rows, grid.cols), NODATA, dtype="uint8")
+    with_agents = bool(getattr(model, "n_agents", 0))
+    agent = np.full(prob.shape, NODATA, dtype="uint8") if with_agents else None
     loader = DataLoader(
         _BlockReader(blocks, mosaics, unit.epsg),
         batch_size=None,
@@ -384,15 +417,24 @@ def predict_unit(
     amp = target.type == "cuda"
     for done, (item, stack) in enumerate(loader, start=1):
         block = blocks[int(item)]
-        cells = predict_stack(model, stack.numpy(), mean, std, target, amp=amp)
-        inner = cells[
-            :,
-            block.halo : block.halo + block.rows,
-            block.halo : block.halo + block.cols,
-        ]
-        prob[
-            :, block.row : block.row + block.rows, block.col : block.col + block.cols
-        ] = inner
+        result = predict_stack(
+            model, stack.numpy(), mean, std, target, amp=amp, agents=with_agents
+        )
+        inside_block = (
+            slice(None),
+            slice(block.halo, block.halo + block.rows),
+            slice(block.halo, block.halo + block.cols),
+        )
+        on_map = (
+            slice(None),
+            slice(block.row, block.row + block.rows),
+            slice(block.col, block.col + block.cols),
+        )
+        if agent is not None:
+            prob[on_map] = result[0][inside_block]
+            agent[on_map] = result[1][inside_block]
+        else:
+            prob[on_map] = result[inside_block]
         if done % 10 == 0 or done == len(blocks):
             logger.info(
                 "%d of %d blocks, %.0f s",
@@ -411,6 +453,17 @@ def predict_unit(
         resampling="AVERAGE",
         descriptions=intervals,
     )
+    agent_path = None
+    if agent is not None:
+        agent_path = write_cog(
+            out_dir / f"agent_{unit.unit}.tif",
+            agent,
+            crs=crs,
+            transform=grid.transform,
+            nodata=NODATA,
+            colormap=AGENT_COLOURS,
+            descriptions=intervals,
+        )
     forest_path = None
     if unit.has_layers:
         forest, inside = cells_at_centres(
@@ -434,5 +487,13 @@ def predict_unit(
     seconds = time.perf_counter() - clock
     logger.info("%s mapped in %.0f s: %s", unit.unit, seconds, prob_path)
     return PredictResult(
-        unit.unit, prob_path, forest_path, intervals, len(blocks), seconds, grid, notes
+        unit.unit,
+        prob_path,
+        forest_path,
+        agent_path,
+        intervals,
+        len(blocks),
+        seconds,
+        grid,
+        notes,
     )

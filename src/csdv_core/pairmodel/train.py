@@ -28,7 +28,13 @@ import numpy as np
 import rasterio  # noqa: F401  (GDAL has to load before torch, see __init__)
 
 from csdv_core.pairmodel import data as D
-from csdv_core.pairmodel.metrics import CellCounts, masked_bce_dice, to_percent
+from csdv_core.pairmodel.metrics import (
+    AgentCounts,
+    CellCounts,
+    agent_loss,
+    masked_bce_dice,
+    to_percent,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +65,8 @@ class TrainConfig:
         workers: Loader processes.
         reverse_prob: Share of training pairs fed in reverse order.
         loss_draws: Share of training draws that hold loss.
+        agents: Train a second head that names the agent of a loss.
+        agent_weight: Weight of the agent head's loss beside the loss head's.
         patience: Epochs without a better validation score before stopping.
         amp: Mixed precision on a GPU.
         seed: Seed of the split, the statistics and the loaders.
@@ -84,6 +92,8 @@ class TrainConfig:
     workers: int = 7
     reverse_prob: float = 0.2
     loss_draws: float = 0.5
+    agents: bool = True
+    agent_weight: float = 0.5
     patience: int = 8
     amp: bool = True
     seed: int = 0
@@ -200,7 +210,10 @@ def load_checkpoint(path: Path, device: Any = "cpu") -> tuple[Any, dict[str, Any
 
     ckpt = torch.load(Path(path), map_location="cpu", weights_only=False)
     model = SiamesePairNet(
-        encoder=ckpt["encoder"], cell_px=ckpt["cell_px"], weights=None
+        encoder=ckpt["encoder"],
+        cell_px=ckpt["cell_px"],
+        weights=None,
+        n_agents=int(ckpt.get("n_agents", 0)),
     )
     model.load_state_dict(ckpt["model"])
     return model.to(device).eval(), ckpt
@@ -208,25 +221,28 @@ def load_checkpoint(path: Path, device: Any = "cpu") -> tuple[Any, dict[str, Any
 
 def _validate(
     model: Any, loader: Any, device: Any, units: list[str], amp: bool
-) -> tuple[float, dict[str, CellCounts]]:
+) -> tuple[float, dict[str, CellCounts], AgentCounts]:
     import torch
 
     counts = {unit: CellCounts() for unit in units}
+    agents = AgentCounts(D.AGENT_NAMES)
     total, batches = 0.0, 0
     model.eval()
     with torch.no_grad():
-        for a, b, target, unit_ids in loader:
+        for a, b, target, agent, unit_ids in loader:
             a, b = a.to(device, non_blocking=True), b.to(device, non_blocking=True)
             target = target.to(device, non_blocking=True)
             with torch.autocast(device.type, enabled=amp):
-                logits = model(a, b)
+                logits, agent_logits = model.forward_agents(a, b)
             total += float(masked_bce_dice(logits, target))
             batches += 1
             percent = to_percent(torch.sigmoid(logits.float()).squeeze(1).cpu().numpy())
             labels = target.cpu().numpy()
             for i, unit_id in enumerate(unit_ids.tolist()):
                 counts[units[unit_id]].update(percent[i], labels[i])
-    return total / max(batches, 1), counts
+            if agent_logits is not None:
+                agents.update(agent_logits.argmax(dim=1).cpu().numpy(), agent.numpy())
+    return total / max(batches, 1), counts, agents
 
 
 def _macro_ap(counts: dict[str, CellCounts]) -> float:
@@ -341,6 +357,7 @@ def train(cfg: TrainConfig, *, resume: bool = True) -> TrainResult:
         encoder=cfg.encoder,
         cell_px=cfg.cell_px,
         weights=cfg.encoder_weights if state is None else None,
+        n_agents=len(D.AGENT_NAMES) if cfg.agents else 0,
     ).to(device)
     logger.info("%s, %.1f M parameters", cfg.encoder, count_parameters(model) / 1e6)
     optimiser = torch.optim.AdamW(
@@ -375,6 +392,8 @@ def train(cfg: TrainConfig, *, resume: bool = True) -> TrainResult:
         "config": cfg.to_json(),
         "encoder": cfg.encoder,
         "cell_px": cfg.cell_px,
+        "n_agents": len(D.AGENT_NAMES) if cfg.agents else 0,
+        "agent_names": list(D.AGENT_NAMES),
         "mean": [float(v) for v in mean],
         "std": [float(v) for v in std],
         "split": dataclasses.asdict(planned.split),
@@ -391,14 +410,17 @@ def train(cfg: TrainConfig, *, resume: bool = True) -> TrainResult:
         clock = time.perf_counter()
         waited, running, steps = 0.0, 0.0, 0
         mark = time.perf_counter()
-        for a, b, target, _ in train_loader:
+        for a, b, target, agent, _ in train_loader:
             waited += time.perf_counter() - mark
             a, b = a.to(device, non_blocking=True), b.to(device, non_blocking=True)
             target = target.to(device, non_blocking=True)
             optimiser.zero_grad(set_to_none=True)
             with torch.autocast(device.type, enabled=amp):
-                logits = model(a, b)
+                logits, agent_logits = model.forward_agents(a, b)
             loss = masked_bce_dice(logits, target)
+            if agent_logits is not None:
+                agent = agent.to(device, non_blocking=True)
+                loss = loss + cfg.agent_weight * agent_loss(agent_logits, agent)
             scaler.scale(loss).backward()
             scaler.step(optimiser)
             scaler.update()
@@ -407,7 +429,9 @@ def train(cfg: TrainConfig, *, resume: bool = True) -> TrainResult:
             steps += 1
             mark = time.perf_counter()
         train_seconds = time.perf_counter() - clock
-        val_loss, counts = _validate(model, val_loader, device, val_units, amp)
+        val_loss, counts, agent_counts = _validate(
+            model, val_loader, device, val_units, amp
+        )
         overall = CellCounts()
         for unit_counts in counts.values():
             overall = overall + unit_counts
@@ -425,6 +449,9 @@ def train(cfg: TrainConfig, *, resume: bool = True) -> TrainResult:
             "val_f1": at_half["f1"],
             "val_iou": at_half["iou"],
             "val_best_threshold": threshold,
+            "val_agent_accuracy": agent_counts.accuracy(),
+            "val_agent_balanced_accuracy": agent_counts.balanced_accuracy(),
+            "val_agent_cells": agent_counts.n,
             "lr": scheduler.get_last_lr()[0],
             "train_seconds": round(train_seconds, 1),
             "loader_wait_seconds": round(waited, 1),
@@ -435,13 +462,16 @@ def train(cfg: TrainConfig, *, resume: bool = True) -> TrainResult:
         history.append(row)
         logger.info(
             "epoch %d: train %.4f, val %.4f, AP %.3f (mean of units %.3f), "
-            "F1 %.3f, %.0f s (%.0f s waiting for data)",
+            "F1 %.3f, agent accuracy %.3f on %d cells, %.0f s (%.0f s waiting "
+            "for data)",
             epoch,
             row["train_loss"],
             val_loss,
             row["val_ap"],
             score,
             row["val_f1"],
+            row["val_agent_accuracy"],
+            agent_counts.n,
             train_seconds,
             waited,
         )
@@ -464,6 +494,8 @@ def train(cfg: TrainConfig, *, resume: bool = True) -> TrainResult:
             for unit, unit_counts in counts.items():
                 curve += [{"unit": unit, **point} for point in unit_counts.curve()]
             _write_csv(out / "pr_val.csv", curve)
+            if cfg.agents:
+                _write_csv(out / "agent_confusion_val.csv", agent_counts.rows())
         torch.save(
             {
                 **checkpoint,

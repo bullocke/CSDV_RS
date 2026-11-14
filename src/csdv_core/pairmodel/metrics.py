@@ -15,7 +15,7 @@ import numpy as np
 
 IGNORE = 255
 
-__all__ = ["CellCounts", "masked_bce_dice", "to_percent"]
+__all__ = ["AgentCounts", "CellCounts", "agent_loss", "masked_bce_dice", "to_percent"]
 
 
 def to_percent(prob: np.ndarray) -> np.ndarray:
@@ -123,3 +123,85 @@ def masked_bce_dice(logits: Any, target: Any, dice_weight: float = 1.0) -> Any:
     p = torch.sigmoid(z)
     dice = 1.0 - (2.0 * (p * y).sum() + 1.0) / (p.sum() + y.sum() + 1.0)
     return bce + dice_weight * dice
+
+
+def agent_loss(agent_logits: Any, agent: Any) -> Any:
+    """Cross-entropy of the agent head over the cells that have an agent.
+
+    Args:
+        agent_logits: ``(batch, classes, rows, cols)`` float tensor.
+        agent: ``(batch, rows, cols)`` uint8 tensor, a class index or 255.
+
+    Returns:
+        A scalar tensor. Zero (with a gradient path) when no cell has an agent.
+    """
+    import torch.nn.functional as F
+
+    if not bool((agent != IGNORE).any()):
+        return agent_logits.sum() * 0.0
+    return F.cross_entropy(agent_logits.float(), agent.long(), ignore_index=IGNORE)
+
+
+@dataclass
+class AgentCounts:
+    """Confusion matrix of the agent head: rows the label, columns the model."""
+
+    names: tuple[str, ...]
+    matrix: np.ndarray = field(default=None)  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.matrix is None:
+            n = len(self.names)
+            self.matrix = np.zeros((n, n), dtype="int64")
+
+    def update(self, predicted: np.ndarray, agent: np.ndarray) -> None:
+        """Add cells.
+
+        Args:
+            predicted: Class index the model gives each cell. Values at or
+                above the number of classes (no prediction) are left out.
+            agent: Class index of the label, 255 where there is none.
+        """
+        n = len(self.names)
+        predicted = np.asarray(predicted).ravel()
+        agent = np.asarray(agent).ravel()
+        known = (agent < n) & (predicted < n)
+        flat = agent[known].astype("int64") * n + predicted[known]
+        self.matrix += np.bincount(flat, minlength=n * n).reshape(n, n)
+
+    def __add__(self, other: AgentCounts) -> AgentCounts:
+        return AgentCounts(self.names, self.matrix + other.matrix)
+
+    @property
+    def n(self) -> int:
+        return int(self.matrix.sum())
+
+    def accuracy(self) -> float:
+        """Share of cells with an agent whose agent the model names."""
+        return float(np.trace(self.matrix) / self.n) if self.n else float("nan")
+
+    def recall(self) -> dict[str, float]:
+        """Per agent: the share of its label cells the model names correctly."""
+        totals = self.matrix.sum(axis=1)
+        return {
+            name: float(self.matrix[i, i] / totals[i]) if totals[i] else float("nan")
+            for i, name in enumerate(self.names)
+        }
+
+    def balanced_accuracy(self) -> float:
+        """Mean recall over the agents that have label cells."""
+        values = [v for v in self.recall().values() if np.isfinite(v)]
+        return float(np.mean(values)) if values else float("nan")
+
+    def rows(self) -> list[dict[str, Any]]:
+        """The matrix as table rows, with the recall of each agent."""
+        recall = self.recall()
+        out = []
+        for i, name in enumerate(self.names):
+            row: dict[str, Any] = {"label": name, "cells": int(self.matrix[i].sum())}
+            row.update(
+                {f"as_{n}": int(self.matrix[i, j]) for j, n in enumerate(self.names)}
+            )
+            row["recall"] = recall[name]
+            out.append(row)
+        return out

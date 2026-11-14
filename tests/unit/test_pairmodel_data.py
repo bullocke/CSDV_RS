@@ -28,12 +28,13 @@ def write_chip(
     dates: list[str] = DATES,
     x0: float = 0.0,
     y1: float = 0.0,
+    agent_code: int = 1,
 ) -> dict:
-    """Write the three files a loader reads of one chip, and return its table row.
+    """Write the four files a loader reads of one chip, and return its table row.
 
     The chip is forest (dark, textured) on every date. In ``loss_interval``
-    the left half is cleared (bright) and labelled loss, with an ignore band
-    two pixels wide along its edge.
+    the left half is cleared (bright) and labelled loss of agent
+    ``agent_code``, with an ignore band two pixels wide along its edge.
     """
     rng = np.random.default_rng(seed)
     n = len(dates)
@@ -65,6 +66,11 @@ def write_chip(
         folder / f"{chip_id}_change.tif", "w", count=n - 1, nodata=255, **profile
     ) as dst:
         dst.write(change)
+    agent = np.where(change == 1, agent_code, 255).astype(np.uint8)
+    with rasterio.open(
+        folder / f"{chip_id}_agent.tif", "w", count=n - 1, nodata=255, **profile
+    ) as dst:
+        dst.write(agent)
     aux = np.concatenate([np.zeros_like(change), forest])
     if loss_interval is not None:
         aux[loss_interval, :, :half] = 90
@@ -164,6 +170,7 @@ def test_forward_and_reversed_targets() -> None:
         change=change,
         forest_a=np.array([[False, True, True, True]]),
         forest_b=np.array([[True, False, False, True]]),
+        agent=np.array([[255, 3, 3, 255]], dtype=np.uint8),
     )
     assert D.pair_target(arrays).tolist() == [[0, 1, 1, 255]]
     # Reversed: nothing is loss, and the pixel that gained forest is ignore.
@@ -175,9 +182,12 @@ def test_validation_sample_is_the_whole_chip(chips: Path) -> None:
     row = index[(index["chip_id"] == "qa_c0") & (index["k"] == 1)].iloc[0]
     mean, std = D.band_stats(chips, index["chip_id"].unique())
     assert mean.shape == (4,) and (std > 0).all()
-    a, b, target = D.build_sample(
+    a, b, target, agent = D.build_sample(
         chips, row, cell_px=16, pooling=load_label().pooling, mean=mean, std=std
     )
+    # The synthetic loss is a harvest (code 1, class 0), on loss cells only.
+    assert (agent[target == 1] == 0).all()
+    assert (agent[target != 1] == 255).all()
     assert a.shape == b.shape == (4, CHIP_PX, CHIP_PX)
     assert a.dtype == np.float32
     assert target.shape == (CHIP_PX // 16, CHIP_PX // 16)
@@ -197,7 +207,7 @@ def test_cells_without_imagery_are_ignore(chips: Path) -> None:
         data = dst.read()
         data[4:8, :32, :] = 0  # the top two cell rows of the later date
         dst.write(data)
-    _, b, target = D.build_sample(
+    _, b, target, _ = D.build_sample(
         chips,
         row,
         cell_px=16,
@@ -227,7 +237,8 @@ def test_augmented_sample_is_cropped_and_seeded(chips: Path) -> None:
     for x, y in zip(one, two, strict=True):
         assert np.array_equal(x, y)
     reversed_args = {**args, "aug": D.Augment(crop_px=96, reverse_prob=1.0)}
-    _, _, target = D.build_sample(
+    _, _, target, agent = D.build_sample(
         chips, row, rng=np.random.default_rng(3), **reversed_args
     )
     assert not (target == 1).any()
+    assert (agent == 255).all()

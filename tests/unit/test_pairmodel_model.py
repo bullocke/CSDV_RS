@@ -6,7 +6,13 @@ import numpy as np
 import pytest
 import rasterio  # noqa: F401  (GDAL has to load before torch)
 
-from csdv_core.pairmodel.metrics import CellCounts, masked_bce_dice, to_percent
+from csdv_core.pairmodel.metrics import (
+    AgentCounts,
+    CellCounts,
+    agent_loss,
+    masked_bce_dice,
+    to_percent,
+)
 
 torch = pytest.importorskip("torch")
 pytest.importorskip("torchvision")
@@ -32,6 +38,38 @@ def test_the_order_of_the_dates_matters() -> None:
         assert not torch.allclose(model(a, b), model(b, a))
         joined = model.decode(model.encode(a), model.encode(b))
         assert torch.allclose(joined, model(a, b))
+
+
+def test_agent_head_gives_one_score_per_agent_and_cell() -> None:
+    model = SiamesePairNet(encoder="resnet18", n_agents=6).eval()
+    a, b = torch.randn(2, 4, 64, 96), torch.randn(2, 4, 64, 96)
+    with torch.no_grad():
+        loss, agents = model.forward_agents(a, b)
+        assert torch.allclose(loss, model(a, b))
+    assert loss.shape == (2, 1, 4, 6)
+    assert agents.shape == (2, 6, 4, 6)
+    plain = SiamesePairNet(encoder="resnet18").eval()
+    with torch.no_grad():
+        assert plain.forward_agents(a, b)[1] is None
+
+
+def test_agent_loss_and_counts() -> None:
+    logits = torch.zeros(1, 3, 1, 4)
+    logits[0, 0, 0, 0] = 9.0  # says class 0, label 0
+    logits[0, 2, 0, 1] = 9.0  # says class 2, label 1
+    logits[0, 1, 0, 2] = 9.0  # says class 1, no label
+    logits[0, 2, 0, 3] = 9.0  # says class 2, label 2
+    agent = torch.tensor([[[0, 1, 255, 2]]], dtype=torch.uint8)
+    assert float(agent_loss(logits, agent)) > 1.0
+    assert float(agent_loss(logits, torch.full_like(agent, 255))) == 0.0
+    counts = AgentCounts(("a", "b", "c"))
+    counts.update(logits.argmax(dim=1).numpy(), agent.numpy())
+    assert counts.n == 3
+    assert counts.accuracy() == pytest.approx(2 / 3)
+    assert counts.recall() == {"a": 1.0, "b": 0.0, "c": 1.0}
+    assert counts.balanced_accuracy() == pytest.approx(2 / 3)
+    assert counts.rows()[1]["as_c"] == 1
+    assert (counts + counts).n == 6
 
 
 def test_stem_takes_four_bands_from_three() -> None:

@@ -171,7 +171,7 @@ A chip is 512 by 512 px (307.2 m) on the global 0.6 m lattice, so it is the same
 
 The label rasters need only the candidates, the answers and the cell layers, so `csdv label build --no-imagery` writes them on the laptop while the four-band chips stay on CHPC. The vector labels in `labels/labels.gpkg` (layers `events`, `reviewed_areas`, `candidates` and `acquisitions`, EPSG:5070) are the source of truth. Chips can be rebuilt from them.
 
-`csdv pair` trains on these chips (`docs/guides/pair_model.md`). It reads `chips.parquet`, `_naip.tif`, `_change.tif` and `_aux.tif`, pairs consecutive dates, and takes bands by their position, not by their names.
+`csdv pair` trains on these chips (`docs/guides/pair_model.md`). It reads `chips.parquet`, `_naip.tif`, `_change.tif`, `_agent.tif` and `_aux.tif`, pairs consecutive dates, and takes bands by their position, not by their names.
 
 Windows can overlap, and a chip that lies in two windows is written once, with the labels of the first window in the order of `windows.csv`. `build` writes its tables and `labels.gpkg` anew for the windows it is given, so the last build of a run should select all of them.
 
