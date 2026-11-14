@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 
@@ -242,3 +243,255 @@ def test_augmented_sample_is_cropped_and_seeded(chips: Path) -> None:
     )
     assert not (target == 1).any()
     assert (agent == 255).all()
+
+
+def _sample_args() -> dict:
+    return {
+        "cell_px": 16,
+        "pooling": load_label().pooling,
+        "mean": np.full(4, 0.3, np.float32),
+        "std": np.full(4, 0.2, np.float32),
+    }
+
+
+def test_cached_samples_equal_the_ones_read_from_the_rasters(
+    chips: Path, tmp_path: Path
+) -> None:
+    from csdv_core.pairmodel.cache import build_cache
+
+    index = D.load_index(chips)
+    cache = tmp_path / "cache"
+    report = build_cache(chips, cache, index[["chip_id", "n_dates"]])
+    assert (report.written, report.kept) == (8, 0)
+    for window_a, window_b in ((None, None), ((8, 16, 96), (10, 13, 96))):
+        plain = D.read_pair(chips, "qa_c0", 1, 3, window_a=window_a, window_b=window_b)
+        cached = D.read_pair(
+            chips, "qa_c0", 1, 3, window_a=window_a, window_b=window_b, cache_dir=cache
+        )
+        for name in ("a", "b", "change", "forest_a", "forest_b", "agent"):
+            assert np.array_equal(getattr(plain, name), getattr(cached, name)), name
+    row = index[(index["chip_id"] == "qa_c0") & (index["k"] == 1)].iloc[0]
+    for aug in (None, D.Augment(crop_px=96)):
+        one = D.build_sample(
+            chips, row, aug=aug, rng=np.random.default_rng(5), **_sample_args()
+        )
+        two = D.build_sample(
+            chips,
+            row,
+            aug=aug,
+            rng=np.random.default_rng(5),
+            cache_dir=cache,
+            **_sample_args(),
+        )
+        for x, y in zip(one, two, strict=True):
+            assert np.array_equal(x, y)
+    with pytest.raises(ValueError, match="bands"):
+        D.read_pair(chips, "qa_c0", 1, 4, cache_dir=cache)
+
+
+def test_cache_is_kept_until_a_chip_changes(chips: Path, tmp_path: Path) -> None:
+    from csdv_core.pairmodel.cache import build_cache, cache_path
+
+    table = D.load_index(chips)[["chip_id", "n_dates"]]
+    cache = tmp_path / "cache"
+    build_cache(chips, cache, table)
+    again = build_cache(chips, cache, table)
+    assert (again.written, again.kept) == (0, 8)
+    # A chip written again, a cached array cut short and one removed.
+    write_chip(chips, "qa_c1", loss_interval=0, seed=77)
+    short = cache_path(cache, "qb_c0")
+    short.write_bytes(short.read_bytes()[:-10])
+    cache_path(cache, "qc_c0").unlink()
+    third = build_cache(chips, cache, table, workers=2)
+    assert (third.written, third.kept) == (3, 5)
+    fresh = D.read_pair(chips, "qa_c1", 0, 3, cache_dir=cache)
+    assert (fresh.change[:, : CHIP_PX // 2 - 2] == 1).all()
+    # A build for a few chips leaves the entries of the others valid.
+    build_cache(chips, cache, table.head(2))
+    assert build_cache(chips, cache, table).written == 0
+
+
+def test_agent_cells_count_the_loss_of_each_agent(chips: Path, tmp_path: Path) -> None:
+    write_chip(chips, "qe_c0", loss_interval=0, seed=5, agent_code=2)
+    cells = D.agent_cells(chips, ["qa_c0", "qa_c1", "qe_c0"], cell_px=16)
+    loss_px = CHIP_PX * (CHIP_PX // 2 - 2)
+    assert list(cells.columns) == list(D.AGENT_NAMES)
+    assert cells.loc["qa_c0", "harvest"] == pytest.approx(loss_px / 256)
+    assert cells.loc["qa_c1"].sum() == 0
+    assert cells.loc["qe_c0", "wind"] == pytest.approx(loss_px / 256)
+    assert cells.loc["qe_c0", "harvest"] == 0
+    with pytest.raises(FileNotFoundError):
+        D.agent_cells(chips, ["nowhere"], cell_px=16)
+
+
+def _lattice() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Two units of 12 by 12 chips in windows of two, with three agents."""
+    rng = np.random.default_rng(4)
+    rows, cells = [], []
+    for u, unit in enumerate(["qa", "qb"]):
+        for ix in range(0, 12, 2):
+            for iy in range(12):
+                agent = D.AGENT_NAMES[int(rng.integers(0, 3))]
+                for dx in (0, 1):
+                    chip = f"{unit}_x{ix + dx}_y{iy}"
+                    rows.append(
+                        {
+                            "chip_id": chip,
+                            "window_id": f"{unit}_w{ix}_{iy}",
+                            "unit": unit,
+                            "epsg": 26910 + u,
+                            "ix": 100 + ix + dx,
+                            "iy": 500 + iy,
+                        }
+                    )
+                    count = {name: 0.0 for name in D.AGENT_NAMES}
+                    count[agent] = float(rng.integers(1, 50))
+                    cells.append({"chip_id": chip, **count})
+    return pd.DataFrame(rows), pd.DataFrame(cells).set_index("chip_id")
+
+
+def test_blocks_keep_windows_whole_and_sides_apart() -> None:
+    chips, cells = _lattice()
+    sides = D.assign_blocks(chips, cells, block_chips=3, val_share=0.25, seed=0)
+    assert sides.equals(
+        D.assign_blocks(chips, cells, block_chips=3, val_share=0.25, seed=0)
+    )
+    assert set(sides) == {"train", "val", "dropped"}
+    table = chips.set_index("chip_id").assign(side=sides)
+    kept = table[table["side"] != "dropped"]
+    assert (kept.groupby("window_id")["side"].nunique() == 1).all()
+    val = {(r.epsg, r.ix, r.iy) for r in table[table["side"] == "val"].itertuples()}
+    for r in table[table["side"] == "train"].itertuples():
+        near = {
+            (r.epsg, r.ix + dx, r.iy + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1)
+        }
+        assert not near & val
+    # Every agent that occurs, and every unit, is on both sides.
+    by_side = cells.join(sides.rename("side")).groupby("side").sum()
+    for agent in D.AGENT_NAMES[:3]:
+        share = by_side.loc["val", agent] / cells[agent].sum()
+        assert 0.1 < share < 0.45, (agent, share)
+        assert by_side.loc["train", agent] > 0
+    assert (
+        table.groupby("unit")["side"].agg(lambda s: {"train", "val"} <= set(s))
+    ).all()
+
+
+@pytest.fixture()
+def lattice_chips(tmp_path: Path) -> Path:
+    """Three units of 4 by 4 chips on the lattice, in windows of two chips."""
+    folder = tmp_path / "lattice"
+    folder.mkdir()
+    side = CHIP_PX * 0.6
+    rows = []
+    for u, unit in enumerate(["qa", "qb", "qz"]):
+        for ix in range(4):
+            for iy in range(4):
+                row = write_chip(
+                    folder,
+                    f"{unit}_x{ix}y{iy}",
+                    loss_interval=(ix + iy) % 2,
+                    seed=100 * u + 4 * ix + iy,
+                    x0=(10 * u + ix) * side,
+                    y1=(iy + 1) * side,
+                    agent_code=1 + (ix // 2 + iy) % 3,
+                )
+                row["window_id"] = f"{unit}_w{ix // 2}_{iy}"
+                rows.append(row)
+    pd.DataFrame(rows).to_parquet(folder / "chips.parquet", index=False)
+    return folder
+
+
+def test_blocks_split_plans_both_sides_inside_every_unit(lattice_chips: Path) -> None:
+    from csdv_core.pairmodel import train as T
+
+    cfg = T.TrainConfig(
+        chips_dir=lattice_chips,
+        out_dir=lattice_chips,
+        holdout_units=("qz",),
+        split="blocks",
+        block_chips=2,
+        val_share=0.25,
+    )
+    planned = T.plan(cfg)
+    assert planned.split.train == planned.split.val == ("qa", "qb")
+    assert planned.split.test == ("qz",)
+    listed = T.split_chips(planned)
+    chips = set(listed["train"]) | set(listed["val"]) | set(listed["dropped"])
+    assert len(chips) == 32 and not any(c.startswith("qz") for c in chips)
+    assert not set(listed["train"]) & set(listed["val"])
+    assert set(planned.train_index["chip_id"]) == set(listed["train"])
+    assert set(planned.val_index["chip_id"]) == set(listed["val"])
+    for part in (planned.train_index, planned.val_index):
+        assert set(part["unit"]) == {"qa", "qb"}
+    text = T.describe(planned) + T.describe_agents(planned, lattice_chips, 16)
+    assert "training and validation share the units" in text
+    assert "val share" in text and "wind" in text
+    # The unit split is unchanged and lists no chips.
+    by_unit = T.plan(dataclasses.replace(cfg, split="units", val_units=("qb",)))
+    assert T.split_chips(by_unit) is None
+    assert set(by_unit.val_index["unit"]) == {"qb"}
+    with pytest.raises(ValueError, match="blocks split"):
+        T.plan(dataclasses.replace(cfg, val_units=("qb",)))
+
+
+def test_blocks_and_cache_from_the_command_line(
+    lattice_chips: Path, tmp_path: Path
+) -> None:
+    pytest.importorskip("torch")
+    pytest.importorskip("torchvision")
+    from click.testing import CliRunner
+
+    from csdv_core.pairmodel.cli import pair
+
+    runner = CliRunner()
+    common = ["train", "--chips-dir", str(lattice_chips), "--holdout-units", "qz"]
+    blocks = ["--split", "blocks", "--block-chips", "2", "--val-share", "0.25"]
+    dry = runner.invoke(pair, [*common, *blocks, "--dry-run"])
+    assert dry.exit_code == 0, dry.output
+    assert "Loss cells per agent" in dry.output
+    assert "training and validation share the units" in dry.output
+    clash = runner.invoke(pair, [*common, *blocks, "--val-units", "qb", "--dry-run"])
+    assert clash.exit_code != 0
+    assert "--val-units" in clash.output
+    run, cache = tmp_path / "run", tmp_path / "cache"
+    args = [
+        *common,
+        *blocks,
+        "--out-dir",
+        str(run),
+        "--cache-dir",
+        str(cache),
+        "--encoder",
+        "resnet18",
+        "--encoder-weights",
+        "none",
+        "--crop-px",
+        "96",
+        "--batch-size",
+        "4",
+        "--epochs",
+        "1",
+        "--samples-per-epoch",
+        "8",
+        "--workers",
+        "0",
+        "--device",
+        "cpu",
+    ]
+    trained = runner.invoke(pair, args)
+    assert trained.exit_code == 0, trained.output
+    record = json.loads((run / "config.json").read_text())
+    assert record["split_mode"] == "blocks"
+    listed = record["split_chips"]
+    assert listed["train"] and listed["val"]
+    assert not set(listed["train"]) & set(listed["val"])
+    assert record["split"]["train"] == record["split"]["val"] == ["qa", "qb"]
+    used = set(listed["train"]) | set(listed["val"])
+    assert {p.stem for p in cache.glob("*.npy")} == used
+    history = pd.read_csv(run / "metrics.csv")
+    assert "val_seconds" in history.columns
+    # Another split in the same run folder is refused, not mixed in.
+    other = runner.invoke(pair, [*args[:-14], "--val-share", "0.5", *args[-14:]])
+    assert other.exit_code != 0
+    assert "split differs" in other.output

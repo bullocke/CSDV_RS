@@ -30,7 +30,14 @@
 # Settings (environment, all optional):
 #   CSDV_PAIR_LABEL_DIR  Label run folder. Default $CSDV_EXPORT_DIR/label/scale_test.
 #   CSDV_PAIR_HOLDOUT    Unit that is held out and mapped. Default q4412328.
-#   CSDV_PAIR_VAL        Validation units, comma-separated.
+#   CSDV_PAIR_VAL        Validation units, comma-separated (units split only).
+#   CSDV_PAIR_SPLIT      "units" (default) validates on the units of
+#                        CSDV_PAIR_VAL. "blocks" validates on blocks of ground
+#                        inside every unit that is not held out, so every
+#                        agent is trained on and validated on.
+#   CSDV_PAIR_CACHE      Folder for decoded chips, read by the loaders. Default
+#                        a folder on node scratch (about 30 GB for a full
+#                        label run). "none" reads the chip rasters instead.
 #   CSDV_PAIR_WEIGHTS    Encoder weights. Default
 #                        $CSDV_DATA_ROOT/models/torchvision/resnet34-b627a593.pth.
 #                        Compute nodes have no internet: fetch the file on a
@@ -60,6 +67,7 @@ source "$CSDV_REPO/scripts/chpc/scratch.sh"
 LABEL_DIR="${CSDV_PAIR_LABEL_DIR:-$CSDV_EXPORT_DIR/label/scale_test}"
 HOLDOUT="${CSDV_PAIR_HOLDOUT:-q4412328}"
 VAL="${CSDV_PAIR_VAL:-q4709438,q3908654,q3508207}"
+SPLIT_MODE="${CSDV_PAIR_SPLIT:-units}"
 WEIGHTS="${CSDV_PAIR_WEIGHTS:-$CSDV_DATA_ROOT/models/torchvision/resnet34-b627a593.pth}"
 STAGES="${CSDV_PAIR_STAGES:-train predict compare}"
 RUN_TAG="${CSDV_LABEL_RUN_TAG:-default}"
@@ -68,7 +76,11 @@ EXPORT="$CSDV_EXPORT_DIR/pairmodel/$RUN_NAME"
 read -r -a TRAIN_ARGS <<<"${CSDV_PAIR_TRAIN_ARGS:-}"
 
 echo "host=$(hostname) job=${SLURM_JOB_ID:-none} started=$(date -Is)"
-echo "run=$RUN_DIR holdout=$HOLDOUT val=$VAL stages=$STAGES smoke=$SMOKE"
+echo "run=$RUN_DIR holdout=$HOLDOUT split=$SPLIT_MODE val=$VAL stages=$STAGES smoke=$SMOKE"
+if [[ "$SPLIT_MODE" != "units" && "$SPLIT_MODE" != "blocks" ]]; then
+    echo "ERROR: CSDV_PAIR_SPLIT must be units or blocks, not $SPLIT_MODE" >&2
+    exit 1
+fi
 
 if [[ ! -f "$LABEL_DIR/chips/chips.parquet" ]]; then
     echo "ERROR: no chips/chips.parquet in $LABEL_DIR. Build the labels first" \
@@ -114,18 +126,31 @@ CHIPS="$LABEL_DIR/chips"
 
 if [[ " $STAGES " == *" train "* ]]; then
     # The chips are read thousands of times, so they go to node scratch.
+    STARTED=$SECONDS
     stage_in "$LABEL_DIR/chips" "$NODE_SCRATCH/chips"
     CHIPS="$NODE_SCRATCH/chips"
     du -sh "$CHIPS"
-    SPLIT=(--chips-dir "$CHIPS" --holdout-units "$HOLDOUT" --val-units "$VAL")
+    echo "chips staged in $((SECONDS - STARTED)) s"
+    SPLIT=(--chips-dir "$CHIPS" --holdout-units "$HOLDOUT")
+    if [[ "$SPLIT_MODE" == "blocks" ]]; then
+        SPLIT+=(--split blocks)
+    else
+        SPLIT+=(--val-units "$VAL")
+    fi
     csdv pair train "${SPLIT[@]}" --encoder-weights "$WEIGHTS" --dry-run
+    # Decoded chips for the loaders, built by the training command itself.
+    CACHE="${CSDV_PAIR_CACHE:-$NODE_SCRATCH/pair_cache}"
+    CACHE_ARGS=()
+    [[ "$CACHE" != "none" ]] && CACHE_ARGS=(--cache-dir "$CACHE")
     SIZE=()
     if ((SMOKE)); then
         SIZE=(--epochs 2 --samples-per-epoch 256 --max-val-samples 128)
     fi
     csdv pair train "${SPLIT[@]}" --encoder-weights "$WEIGHTS" \
         --out-dir "$RUN_DIR" --workers "$WORKERS" \
+        ${CACHE_ARGS[@]+"${CACHE_ARGS[@]}"} \
         ${SIZE[@]+"${SIZE[@]}"} ${TRAIN_ARGS[@]+"${TRAIN_ARGS[@]}"}
+    [[ "$CACHE" != "none" ]] && du -sh "$CACHE"
     export_results
 fi
 

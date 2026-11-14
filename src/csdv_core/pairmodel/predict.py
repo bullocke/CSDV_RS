@@ -10,7 +10,9 @@ that were not forest at the earlier date set to 0. A model with an agent
 head also gives ``agent_<unit>.tif``: the code of the most likely agent of
 every cell (1 harvest, 2 wind, 3 fire, 4 biotic mortality, 5 conversion,
 6 other), whatever its loss probability, to be read where the first map
-says loss.
+says loss. ``type_<unit>_<dateA>_<dateB>.tif``, one file per interval, is
+that reading done: the agent code where the loss probability reaches the
+threshold and 0 elsewhere, with a colour table.
 
 The cells lie on the global 0.6 m lattice of the UTM zone, at multiples of
 the cell size, which is where the label chips pool to cells. The unit's own
@@ -43,7 +45,9 @@ from csdv_core.pairmodel.metrics import to_percent
 logger = logging.getLogger(__name__)
 
 NODATA = 255
-#: Colour of each agent code in ``agent_<unit>.tif``.
+#: Value of the type rasters where the map does not say loss.
+NO_LOSS = 0
+#: Colour of each agent code in the type rasters and in the close-ups.
 AGENT_COLOURS: dict[int, tuple[int, int, int, int]] = {
     1: (237, 161, 0, 255),
     2: (42, 120, 214, 255),
@@ -54,11 +58,13 @@ AGENT_COLOURS: dict[int, tuple[int, int, int, int]] = {
 }
 
 __all__ = [
+    "AGENT_COLOURS",
     "Block",
     "PredGrid",
     "PredictResult",
     "blocks_of",
     "cells_at_centres",
+    "flagged_agents",
     "predict_stack",
     "predict_unit",
     "unit_pred_grid",
@@ -153,7 +159,12 @@ class Block:
 
 @dataclass
 class PredictResult:
-    """What a mapping run produced."""
+    """What a mapping run produced.
+
+    ``type_paths`` holds one raster per interval and ``threshold`` the loss
+    probability they were cut at. Both are empty for a model without an
+    agent head.
+    """
 
     unit: str
     prob_path: Path
@@ -164,6 +175,8 @@ class PredictResult:
     seconds: float
     grid: PredGrid
     notes: list[str] = field(default_factory=list)
+    type_paths: list[Path] = field(default_factory=list)
+    threshold: float | None = None
 
 
 def unit_pred_grid(bounds: Bounds, epsg: int, cell_px: int) -> PredGrid:
@@ -237,6 +250,25 @@ def cells_at_centres(layer: np.ndarray, cell_transform: Affine, grid: PredGrid) 
     values[:] = layer[:, r[:, None], c[None, :]]
     values[:, ~inside] = 0
     return values, inside
+
+
+def flagged_agents(codes: np.ndarray, prob: np.ndarray, threshold: float) -> np.ndarray:
+    """Agent codes of the cells whose loss probability reaches a threshold.
+
+    Args:
+        codes: Agent codes (1 to 6), 255 where there is none.
+        prob: Loss probability in percent, of the same shape, 255 where
+            there is no imagery.
+        threshold: Probability (0 to 1) from which a cell counts as loss.
+            It is rounded to a whole percent, as the map is.
+
+    Returns:
+        uint8 of the same shape: the code where ``prob`` is at or above the
+        threshold, 0 on every other cell.
+    """
+    cut = int(round(threshold * 100))
+    loss = (prob != NODATA) & (prob >= cut) & (codes != NODATA)
+    return np.where(loss, codes, NO_LOSS).astype("uint8")
 
 
 def read_block(
@@ -350,6 +382,7 @@ def predict_unit(
     workers: int = 4,
     limit_blocks: int | None = None,
     device: str = "auto",
+    threshold: float | None = None,
 ) -> PredictResult:
     """Map every consecutive pair of dates of a unit.
 
@@ -364,6 +397,9 @@ def predict_unit(
         workers: Processes that read blocks.
         limit_blocks: Map only this many blocks near the centre (a quick
             run). The other cells stay 255.
+        threshold: Loss probability (0 to 1) from which a cell gets its
+            agent in the type rasters. Default: the checkpoint's best
+            threshold on the validation units, or 0.5 if it holds none.
 
     Raises:
         FileNotFoundError: If a year has no mosaic.
@@ -454,6 +490,8 @@ def predict_unit(
         descriptions=intervals,
     )
     agent_path = None
+    type_paths: list[Path] = []
+    used_threshold = None
     if agent is not None:
         agent_path = write_cog(
             out_dir / f"agent_{unit.unit}.tif",
@@ -461,9 +499,38 @@ def predict_unit(
             crs=crs,
             transform=grid.transform,
             nodata=NODATA,
-            colormap=AGENT_COLOURS,
             descriptions=intervals,
         )
+        if threshold is None:
+            used_threshold = float(ckpt.get("best_threshold", 0.5))
+            source = "the checkpoint's best on validation"
+            if "best_threshold" not in ckpt:
+                source = "the default, the checkpoint holds none"
+        else:
+            used_threshold, source = float(threshold), "given"
+        logger.info(
+            "%s: agent types where loss probability is at or above %.2f (%s)",
+            unit.unit,
+            used_threshold,
+            source,
+        )
+        types = flagged_agents(agent, prob, used_threshold)
+        # A GeoTIFF holds a colour table for a single band only, hence one
+        # file per interval.
+        for k, interval in enumerate(intervals):
+            type_paths.append(
+                write_cog(
+                    out_dir / f"type_{unit.unit}_{interval}.tif",
+                    types[k],
+                    crs=crs,
+                    transform=grid.transform,
+                    nodata=NO_LOSS,
+                    colormap={NO_LOSS: (0, 0, 0, 0), **AGENT_COLOURS},
+                    descriptions=[
+                        f"Agent of loss at or above {used_threshold:.2f}, {interval}"
+                    ],
+                )
+            )
     forest_path = None
     if unit.has_layers:
         forest, inside = cells_at_centres(
@@ -496,4 +563,6 @@ def predict_unit(
         seconds,
         grid,
         notes,
+        type_paths,
+        used_threshold,
     )

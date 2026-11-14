@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
 import rasterio  # noqa: F401  (GDAL has to load before torch, see __init__)
 
 from csdv_core.pairmodel import data as D
@@ -38,7 +39,16 @@ from csdv_core.pairmodel.metrics import (
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["TrainConfig", "TrainResult", "load_checkpoint", "plan", "train"]
+__all__ = [
+    "TrainConfig",
+    "TrainResult",
+    "describe",
+    "describe_agents",
+    "load_checkpoint",
+    "plan",
+    "split_chips",
+    "train",
+]
 
 
 @dataclass
@@ -52,6 +62,14 @@ class TrainConfig:
         val_units: Validation units (ignored when ``fold`` is set).
         fold: Use this grouped fold as validation.
         n_folds: Number of grouped folds.
+        split: ``units`` holds whole units out for validation. ``blocks``
+            validates on blocks of ground inside every unit that is not
+            held out (:func:`csdv_core.pairmodel.data.assign_blocks`), so
+            that every agent is trained on and validated on.
+        block_chips: Side of a block of the ``blocks`` split, in chips.
+        val_share: Share of the ``blocks`` split aimed at for validation.
+        cache_dir: Folder for decoded chips
+            (:mod:`csdv_core.pairmodel.cache`). None reads the chip rasters.
         encoder: ``resnet34`` or ``resnet18``.
         encoder_weights: torchvision state dict of the encoder, or None for
             a random start.
@@ -80,6 +98,10 @@ class TrainConfig:
     val_units: tuple[str, ...] = ()
     fold: int | None = None
     n_folds: int = 5
+    split: str = "units"
+    block_chips: int = 8
+    val_share: float = 0.2
+    cache_dir: Path | None = None
     encoder: str = "resnet34"
     encoder_weights: Path | None = None
     cell_px: int = 16
@@ -122,30 +144,95 @@ class TrainResult:
 
 @dataclass
 class _Plan:
+    """A split of the index.
+
+    Attributes:
+        index: Every sample of the chip folder.
+        split: Units of each part. With the ``blocks`` split the training
+            and validation units are the same.
+        train_index: Training samples.
+        val_index: Validation samples.
+        sides: With the ``blocks`` split, ``train``, ``val`` or ``dropped``
+            per chip outside the held-out units. None otherwise.
+        agent_cells: Loss cells per agent and chip, when they were counted.
+    """
+
     index: Any
     split: D.Split
     train_index: Any
     val_index: Any
+    sides: Any = None
+    agent_cells: Any = None
+
+
+def _plan_blocks(cfg: TrainConfig, index: Any) -> _Plan:
+    """Split by blocks of ground inside every unit that is not held out."""
+    if cfg.val_units or cfg.fold is not None:
+        raise ValueError(
+            "The blocks split chooses its own validation ground. "
+            "Leave out the validation units and the fold."
+        )
+    known = sorted(index["unit"].unique())
+    unknown = sorted(set(cfg.holdout_units) - set(known))
+    if unknown:
+        raise ValueError(f"Units not in the chips: {', '.join(unknown)}")
+    rest = tuple(u for u in known if u not in set(cfg.holdout_units))
+    chips = index[index["unit"].isin(rest)].drop_duplicates("chip_id")
+    cells = D.agent_cells(cfg.chips_dir, chips["chip_id"].tolist(), cfg.cell_px)
+    sides = D.assign_blocks(
+        chips,
+        cells,
+        block_chips=cfg.block_chips,
+        val_share=cfg.val_share,
+        seed=cfg.seed,
+    )
+    side = index["chip_id"].map(sides)
+    train_index = index[side == "train"].reset_index(drop=True)
+    val_index = index[side == "val"].reset_index(drop=True)
+    if train_index.empty or val_index.empty:
+        raise ValueError("The blocks split left training or validation empty")
+    split = D.Split(rest, rest, tuple(sorted(cfg.holdout_units)))
+    return _Plan(index, split, train_index, val_index, sides, cells)
 
 
 def plan(cfg: TrainConfig) -> _Plan:
-    """Read the index and split it, without touching the imagery."""
+    """Read the index and split it, without touching the imagery.
+
+    Raises:
+        ValueError: If the split is unknown or cannot be made.
+    """
     index = D.load_index(cfg.chips_dir)
-    split = D.make_split(
-        sorted(index["unit"].unique()),
-        holdout=cfg.holdout_units,
-        val_units=cfg.val_units,
-        fold=cfg.fold,
-        n_folds=cfg.n_folds,
-        seed=cfg.seed,
-    )
-    train_index = index[index["unit"].isin(split.train)].reset_index(drop=True)
-    val_index = index[index["unit"].isin(split.val)].reset_index(drop=True)
-    if cfg.max_val_samples and len(val_index) > cfg.max_val_samples:
-        val_index = val_index.sample(
+    if cfg.split == "blocks":
+        planned = _plan_blocks(cfg, index)
+    elif cfg.split == "units":
+        split = D.make_split(
+            sorted(index["unit"].unique()),
+            holdout=cfg.holdout_units,
+            val_units=cfg.val_units,
+            fold=cfg.fold,
+            n_folds=cfg.n_folds,
+            seed=cfg.seed,
+        )
+        train_index = index[index["unit"].isin(split.train)].reset_index(drop=True)
+        val_index = index[index["unit"].isin(split.val)].reset_index(drop=True)
+        planned = _Plan(index, split, train_index, val_index)
+    else:
+        raise ValueError(f"Unknown split {cfg.split!r}: use units or blocks")
+    if cfg.max_val_samples and len(planned.val_index) > cfg.max_val_samples:
+        planned.val_index = planned.val_index.sample(
             cfg.max_val_samples, random_state=cfg.seed
         ).reset_index(drop=True)
-    return _Plan(index, split, train_index, val_index)
+    return planned
+
+
+def split_chips(planned: _Plan) -> dict[str, list[str]] | None:
+    """Chips of each side of a ``blocks`` split, or None for a unit split."""
+    if planned.sides is None:
+        return None
+    return {
+        side: sorted(planned.sides.index[planned.sides == side])
+        for side in ("train", "val", "dropped")
+    }
 
 
 def describe(planned: _Plan) -> str:
@@ -157,8 +244,15 @@ def describe(planned: _Plan) -> str:
     ):
         with_loss = int((part["loss_share"] >= 0.01).sum())
         lines.append(
-            f"{name}: {len(units)} units, {part['chip_id'].nunique()} chips, "
+            f"{name}: {part['unit'].nunique()} units, "
+            f"{part['chip_id'].nunique()} chips, "
             f"{len(part)} samples, {with_loss} with loss ({', '.join(units)})"
+        )
+    if planned.sides is not None:
+        dropped = int((planned.sides == "dropped").sum())
+        lines.append(
+            f"blocks: training and validation share the units. {dropped} "
+            "training chips beside validation ground are left out"
         )
     held = planned.index[planned.index["unit"].isin(planned.split.test)]
     lines.append(
@@ -166,6 +260,33 @@ def describe(planned: _Plan) -> str:
         f"{len(held)} samples ({', '.join(planned.split.test)})"
     )
     return "\n".join(lines)
+
+
+def describe_agents(planned: _Plan, chips_dir: Path, cell_px: int) -> str:
+    """Loss cells per agent on each side of a planned run, as a table.
+
+    Counts the agent rasters of every chip when the plan has not done so,
+    which takes about half a minute for a full label run.
+    """
+    chip_ids = sorted(planned.index["chip_id"].unique())
+    cells = planned.agent_cells
+    if cells is None or not set(chip_ids) <= set(cells.index):
+        cells = D.agent_cells(chips_dir, chip_ids, cell_px)
+    parts = {
+        "train": planned.train_index,
+        "val": planned.val_index,
+        "test": planned.index[planned.index["unit"].isin(planned.split.test)],
+    }
+    table = pd.DataFrame(
+        {
+            name: cells.loc[sorted(part["chip_id"].unique())].sum()
+            for name, part in parts.items()
+        }
+    )
+    both = (table["train"] + table["val"]).replace(0, np.nan)
+    table["val share"] = (table["val"] / both).round(2)
+    table[["train", "val", "test"]] = table[["train", "val", "test"]].round(0)
+    return "Loss cells per agent:\n" + table.to_string()
 
 
 def _git_commit() -> str:
@@ -304,6 +425,18 @@ def train(cfg: TrainConfig, *, resume: bool = True) -> TrainResult:
         )
     if cfg.encoder_weights is not None and not Path(cfg.encoder_weights).is_file():
         raise FileNotFoundError(f"No encoder weights at {cfg.encoder_weights}")
+    if planned.sides is not None:
+        logger.info("\n%s", describe_agents(planned, Path(cfg.chips_dir), cfg.cell_px))
+    if cfg.cache_dir is not None:
+        # Before the device is set up: the build starts processes.
+        from csdv_core.pairmodel.cache import build_cache
+
+        build_cache(
+            cfg.chips_dir,
+            cfg.cache_dir,
+            pd.concat([planned.train_index, planned.val_index])[["chip_id", "n_dates"]],
+            workers=max(cfg.workers, 1),
+        )
     out = Path(cfg.out_dir)
     out.mkdir(parents=True, exist_ok=True)
     device = _device(cfg.device)
@@ -326,7 +459,13 @@ def train(cfg: TrainConfig, *, resume: bool = True) -> TrainResult:
 
     val_units = list(planned.split.val)
     aug = D.Augment(crop_px=cfg.crop_px, reverse_prob=cfg.reverse_prob)
-    common = {"cell_px": cfg.cell_px, "pooling": pooling, "mean": mean, "std": std}
+    common = {
+        "cell_px": cfg.cell_px,
+        "pooling": pooling,
+        "mean": mean,
+        "std": std,
+        "cache_dir": cfg.cache_dir,
+    }
     train_set = D.PairDataset(
         planned.train_index, cfg.chips_dir, aug=aug, seed=cfg.seed, **common
     )
@@ -397,11 +536,18 @@ def train(cfg: TrainConfig, *, resume: bool = True) -> TrainResult:
         "mean": [float(v) for v in mean],
         "std": [float(v) for v in std],
         "split": dataclasses.asdict(planned.split),
+        "split_mode": cfg.split,
+        "split_chips": split_chips(planned),
         "pooling": pooling.model_dump(),
         "chips_sha1": _sha1(Path(cfg.chips_dir) / "chips.parquet"),
         "git_commit": _git_commit(),
         "torch": torch.__version__,
     }
+    if state is not None and state.get("split_chips") != record["split_chips"]:
+        raise ValueError(
+            f"The split differs from the one stored in {last_path}. "
+            "Train into a new run folder, or pass --no-resume."
+        )
     (out / "config.json").write_text(json.dumps(record, indent=1), encoding="utf-8")
 
     epoch = start - 1
@@ -429,9 +575,11 @@ def train(cfg: TrainConfig, *, resume: bool = True) -> TrainResult:
             steps += 1
             mark = time.perf_counter()
         train_seconds = time.perf_counter() - clock
+        clock = time.perf_counter()
         val_loss, counts, agent_counts = _validate(
             model, val_loader, device, val_units, amp
         )
+        val_seconds = time.perf_counter() - clock
         overall = CellCounts()
         for unit_counts in counts.values():
             overall = overall + unit_counts
@@ -455,6 +603,7 @@ def train(cfg: TrainConfig, *, resume: bool = True) -> TrainResult:
             "lr": scheduler.get_last_lr()[0],
             "train_seconds": round(train_seconds, 1),
             "loader_wait_seconds": round(waited, 1),
+            "val_seconds": round(val_seconds, 1),
         }
         for unit, unit_counts in counts.items():
             row[f"ap_{unit}"] = unit_counts.average_precision()
@@ -463,7 +612,7 @@ def train(cfg: TrainConfig, *, resume: bool = True) -> TrainResult:
         logger.info(
             "epoch %d: train %.4f, val %.4f, AP %.3f (mean of units %.3f), "
             "F1 %.3f, agent accuracy %.3f on %d cells, %.0f s (%.0f s waiting "
-            "for data)",
+            "for data), validation %.0f s",
             epoch,
             row["train_loss"],
             val_loss,
@@ -474,6 +623,7 @@ def train(cfg: TrainConfig, *, resume: bool = True) -> TrainResult:
             agent_counts.n,
             train_seconds,
             waited,
+            val_seconds,
         )
         better = np.isfinite(score) and score > best_score
         if better:

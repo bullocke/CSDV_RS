@@ -159,10 +159,15 @@ def write_cog(
         compress: ``DEFLATE`` for codes and heights, ``JPEG`` for RGB imagery
             (then pass ``mask`` and ``nodata=None``).
         resampling: Overview resampling, ``NEAREST`` for codes.
-        colormap: Colour table of band 1.
+        colormap: Colour table of the band. A GeoTIFF keeps a colour table
+            only when it has a single band, so ``data`` must have one.
         mask: 2-D validity mask (255 valid, 0 not), stored as an internal mask.
         scale: Value scale written to the band metadata (e.g. 0.25 m per step).
         descriptions: Band descriptions.
+
+    Raises:
+        ValueError: If ``colormap`` is given with more than one band. GDAL
+            would drop the table without a word.
     """
     import rasterio
     import rasterio.shutil
@@ -171,6 +176,11 @@ def write_cog(
     if data.ndim == 2:
         data = data[np.newaxis]
     count, height, width = data.shape
+    if colormap is not None and count > 1:
+        raise ValueError(
+            f"A colour table needs a single band, and {path.name} has {count}. "
+            "Write one file per band, or leave the colour table out."
+        )
     profile = {
         "driver": "GTiff",
         "height": height,

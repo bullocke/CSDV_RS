@@ -10,7 +10,8 @@ Outputs, in the output folder:
 - ``di_objects.csv``: the model's probability inside every detected object.
 - ``model_only.csv``: patches the model flags that no detected object touches.
 - ``overview.png``: model and DI probability of every interval.
-- ``events/*.png``: close-ups (earlier image, later image, model, DI, label).
+- ``events/*.png``: close-ups (earlier image, later image, model, DI, label
+  and, for a map with agents, the agent of the cells the model flags).
 - ``agent_confusion.csv``: for a map with agents, the agent the model names
   on the label's loss cells against the agent of the label.
 - ``compare.json``: the headline numbers.
@@ -26,6 +27,7 @@ import csv
 import json
 import logging
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -37,7 +39,12 @@ from csdv_core.label.lattice import GSD, Bounds
 from csdv_core.label.pooling import pool_change
 from csdv_core.pairmodel.data import AGENT_NAMES, pool_agents
 from csdv_core.pairmodel.metrics import AgentCounts, CellCounts
-from csdv_core.pairmodel.predict import PredGrid, cells_at_centres
+from csdv_core.pairmodel.predict import (
+    AGENT_COLOURS,
+    PredGrid,
+    cells_at_centres,
+    flagged_agents,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +53,11 @@ IGNORE = 255
 NO_CHIP = 254
 #: Smallest patch reported in ``model_only.csv``, hectares.
 MIN_PATCH_HA = 0.3
+#: Colour in the close-ups of label cells that are background.
+PALE = (214, 210, 198, 255)
+#: Colour in the close-ups of cells the model does not flag. It is lighter
+#: than the grey of cells without a value, so that the two can be told apart.
+UNFLAGGED = (247, 246, 242, 255)
 
 __all__ = [
     "CompareResult",
@@ -198,14 +210,28 @@ def label_agent_cells(
     return out
 
 
-def _agent_rows(
-    agent_path: Path, labelled: np.ndarray, prob: np.ndarray, threshold: float
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Confusion of the model's agents on the label's loss cells."""
+def _agent_codes(path: Path, shape: tuple[int, ...]) -> np.ndarray:
+    """The agent codes of ``agent_<unit>.tif``, which has to match the map.
+
+    Raises:
+        ValueError: If the raster and the map differ in bands or cells.
+    """
     import rasterio
 
-    with rasterio.open(agent_path) as src:
+    with rasterio.open(path) as src:
         codes = src.read()
+    if codes.shape != shape:
+        raise ValueError(
+            f"{path.name} has the shape {codes.shape}, the map {shape}. "
+            "They have to come from the same run of `csdv pair predict`."
+        )
+    return codes
+
+
+def _agent_rows(
+    codes: np.ndarray, labelled: np.ndarray, prob: np.ndarray, threshold: float
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Confusion of the model's agents on the label's loss cells."""
     named = np.where((codes >= 1) & (codes <= len(AGENT_NAMES)), codes - 1, IGNORE)
     named = named.astype("uint8")
     counts = AgentCounts(AGENT_NAMES)
@@ -383,12 +409,60 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 
 
 def _label_image(target: np.ndarray) -> np.ndarray:
-    """RGB image of label cells: loss red, background pale, ignore grey."""
-    image = np.full((*target.shape, 3), 255, dtype="uint8")
-    image[target == 0] = (214, 210, 198)
-    image[target == 1] = (227, 73, 72)
-    image[target == IGNORE] = (155, 154, 148)
+    """RGBA image of label cells: loss red, background pale, ignore grey.
+
+    Cells that no chip covers are fully transparent, so that whatever lies
+    under the image shows there.
+    """
+    image = np.zeros((*target.shape, 4), dtype="uint8")
+    image[target == 0] = PALE
+    image[target == 1] = (227, 73, 72, 255)
+    image[target == IGNORE] = (155, 154, 148, 255)
     return image
+
+
+def _type_image(types: np.ndarray, has_value: np.ndarray) -> np.ndarray:
+    """RGBA image of the agents of flagged cells.
+
+    Args:
+        types: Agent codes of the flagged cells, 0 elsewhere
+            (:func:`~csdv_core.pairmodel.predict.flagged_agents`).
+        has_value: Cells where the map has a loss probability.
+
+    Returns:
+        ``(rows, cols, 4)`` uint8: the colour of the agent on flagged cells,
+        near white on the other cells with a value, transparent where the
+        map has none.
+    """
+    image = np.zeros((*types.shape, 4), dtype="uint8")
+    image[has_value] = UNFLAGGED
+    for code, colour in AGENT_COLOURS.items():
+        image[types == code] = colour
+    return image
+
+
+def _draw_footprints(
+    ax: Any,
+    footprints: Sequence[Bounds],
+    *,
+    colour: str = "cyan",
+    linewidth: float = 0.4,
+) -> None:
+    """Outline the label chips on an axis in map coordinates."""
+    from matplotlib.patches import Rectangle
+
+    for box in footprints:
+        ax.add_patch(
+            Rectangle(
+                (box[0], box[1]),
+                box[2] - box[0],
+                box[3] - box[1],
+                fill=False,
+                edgecolor=colour,
+                linewidth=linewidth,
+                zorder=2,
+            )
+        )
 
 
 def _overview(
@@ -403,7 +477,6 @@ def _overview(
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from matplotlib.patches import Rectangle
 
     left, bottom, right, top = grid.bounds
     extent = (left, right, bottom, top)
@@ -426,17 +499,7 @@ def _overview(
                 cmap="magma",
                 interpolation="nearest",
             )
-            for box in footprints:
-                ax.add_patch(
-                    Rectangle(
-                        (box[0], box[1]),
-                        box[2] - box[0],
-                        box[3] - box[1],
-                        fill=False,
-                        edgecolor="cyan",
-                        linewidth=0.4,
-                    )
-                )
+            _draw_footprints(ax, footprints)
             ax.set_title(f"{title}, {name.replace('_', ' to ')}", fontsize=9)
             ax.set_xticks([])
             ax.set_yticks([])
@@ -464,26 +527,64 @@ def _panel_bounds(x: float, y: float, side_m: float, grid: PredGrid) -> Bounds:
     return (left, top - cells * cell, left + cells * cell, top)
 
 
-def _panel(
+@dataclass(frozen=True)
+class _PanelLayers:
+    """The layers of a unit that every close-up is cut from.
+
+    Attributes:
+        names: Band names of the map, ``<dateA>_<dateB>``.
+        prob: Loss probability of the model in percent, ``(intervals, rows,
+            cols)``.
+        di: DI probability in percent on the same cells.
+        target: Label cells (see :func:`label_cells`).
+        grid: The cells of the map.
+        footprints: Bounds of the label chips.
+        agent_codes: Agent codes of ``agent_<unit>.tif`` on the same cells,
+            or None for a map without agents.
+        threshold: Loss probability from which a cell shows its agent.
+    """
+
+    names: list[str]
+    prob: np.ndarray
+    di: np.ndarray
+    target: np.ndarray
+    grid: PredGrid
+    footprints: Sequence[Bounds] = ()
+    agent_codes: np.ndarray | None = None
+    threshold: float = 0.5
+
+
+def _panel_figure(
     title: str,
     bounds: Bounds,
     k: int,
-    names: list[str],
-    mosaics: list[list[str]],
-    prob: np.ndarray,
-    di: np.ndarray,
-    target: np.ndarray,
-    grid: PredGrid,
+    images: Sequence[np.ndarray],
+    layers: _PanelLayers,
     outline: Any,
-    path: Path,
-) -> None:
+) -> Any:
+    """One close-up: both dates, the model, the DI, the label and the agent.
+
+    Args:
+        title: Title of the figure.
+        bounds: Extent of the close-up.
+        k: Index of the interval.
+        images: The earlier and the later image over ``bounds``, each
+            ``(rows, cols, 3)`` uint8.
+        layers: The layers of the unit.
+        outline: Geometry of the detected object, or None.
+
+    Returns:
+        The figure. It has five axes, and a sixth with the agent of the
+        flagged cells when the map has agents. The caller saves and closes
+        it.
+    """
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch, Rectangle
 
-    from csdv_core.label.naip import warp_sources
-
+    grid = layers.grid
     extent = (bounds[0], bounds[2], bounds[1], bounds[3])
     rows, cols = grid.cell_window(bounds)
     left, _, _, top = grid.bounds
@@ -493,15 +594,16 @@ def _panel(
         top - rows.stop * grid.cell_m,
         top - rows.start * grid.cell_m,
     )
-    fig, axes = plt.subplots(1, 5, figsize=(17, 3.9))
-    dates = names[k].split("_")
+    n_axes = 5 if layers.agent_codes is None else 6
+    # The legend of the sixth axis hangs under it, in a strip of its own.
+    height = 3.9 if layers.agent_codes is None else 4.25
+    fig, axes = plt.subplots(1, n_axes, figsize=(3.4 * n_axes, height))
+    dates = layers.names[k].split("_")
     for j in (0, 1):
-        image = warp_sources(mosaics[k + j], grid.epsg, bounds)[0]
-        step = max(1, image.shape[1] // 900)
-        rgb = np.moveaxis(image[:3, ::step, ::step], 0, -1)
-        axes[j].imshow(rgb, extent=extent, interpolation="bilinear")
+        axes[j].imshow(images[j], extent=extent, interpolation="bilinear")
         axes[j].set_title(dates[j], fontsize=9)
-    for j, (values, name) in enumerate(((prob, "Model (%)"), (di, "DI (%)")), start=2):
+    sources = ((layers.prob, "Model (%)"), (layers.di, "DI (%)"))
+    for j, (values, name) in enumerate(sources, start=2):
         shown = np.ma.masked_greater(values[k][rows, cols], 100)
         axes[j].set_facecolor("0.8")
         axes[j].imshow(
@@ -513,10 +615,58 @@ def _panel(
             interpolation="nearest",
         )
         axes[j].set_title(name, fontsize=9)
-    axes[4].imshow(
-        _label_image(target[k][rows, cols]), extent=cell_extent, interpolation="nearest"
+    # Hatching under the label image shows where no chip lies, since those
+    # cells of the image are transparent.
+    axes[4].add_patch(
+        Rectangle(
+            (bounds[0], bounds[1]),
+            bounds[2] - bounds[0],
+            bounds[3] - bounds[1],
+            facecolor="0.93",
+            edgecolor="0.6",
+            hatch="////",
+            linewidth=0.0,
+            zorder=0,
+        )
     )
-    axes[4].set_title("Label (red loss, grey ignore, white none)", fontsize=9)
+    axes[4].imshow(
+        _label_image(layers.target[k][rows, cols]),
+        extent=cell_extent,
+        interpolation="nearest",
+        zorder=1,
+    )
+    _draw_footprints(axes[4], layers.footprints, colour="0.15", linewidth=0.8)
+    axes[4].set_title("Label (red loss, grey ignore, hatched no label)", fontsize=9)
+    if layers.agent_codes is not None:
+        percent = layers.prob[k][rows, cols]
+        types = flagged_agents(
+            layers.agent_codes[k][rows, cols], percent, layers.threshold
+        )
+        axes[5].set_facecolor("0.8")
+        axes[5].imshow(
+            _type_image(types, percent <= 100),
+            extent=cell_extent,
+            interpolation="nearest",
+        )
+        cut = int(round(layers.threshold * 100))
+        axes[5].set_title(f"Model type (loss at or above {cut}%)", fontsize=9)
+        present = [code for code in AGENT_COLOURS if (types == code).any()]
+        axes[5].legend(
+            handles=[
+                Patch(
+                    facecolor=tuple(c / 255 for c in AGENT_COLOURS[code]),
+                    label=AGENT_NAMES[code - 1].replace("_", " "),
+                )
+                for code in present or AGENT_COLOURS
+            ],
+            loc="upper center",
+            bbox_to_anchor=(0.5, -0.01),
+            ncol=3,
+            fontsize=7,
+            frameon=False,
+            handlelength=1.2,
+            columnspacing=1.0,
+        )
     for ax in axes:
         if outline is not None:
             for part in getattr(outline, "geoms", [outline]):
@@ -526,9 +676,37 @@ def _panel(
         ax.set_xticks([])
         ax.set_yticks([])
     fig.suptitle(title, fontsize=10)
-    fig.tight_layout()
-    fig.savefig(path, dpi=110)
-    plt.close(fig)
+    fig.tight_layout(rect=(0.0, 1.0 - 3.9 / height, 1.0, 1.0))
+    return fig
+
+
+def _panel(
+    title: str,
+    bounds: Bounds,
+    k: int,
+    mosaics: list[list[str]],
+    layers: _PanelLayers,
+    outline: Any,
+    path: Path,
+) -> None:
+    """Read both dates of a close-up from the mosaics, draw it and save it."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from csdv_core.label.naip import warp_sources
+
+    images = []
+    for paths in mosaics[k : k + 2]:
+        image = warp_sources(paths, layers.grid.epsg, bounds)[0]
+        step = max(1, image.shape[1] // 900)
+        images.append(np.moveaxis(image[:3, ::step, ::step], 0, -1))
+    fig = _panel_figure(title, bounds, k, images, layers, outline)
+    try:
+        fig.savefig(path, dpi=110)
+    finally:
+        plt.close(fig)
 
 
 def compare_unit(
@@ -613,10 +791,12 @@ def compare_unit(
     _overview(prob, di_full, names, grid, footprints, out_dir / "overview.png")
 
     agents: dict[str, Any] | None = None
+    agent_codes: np.ndarray | None = None
     agent_path = Path(prob_path).with_name(f"agent_{unit.unit}.tif")
     if agent_path.is_file():
+        agent_codes = _agent_codes(agent_path, prob.shape)
         labelled = label_agent_cells(chips_dir, unit.unit, grid, load_label().pooling)
-        agent_rows, agents = _agent_rows(agent_path, labelled, prob, threshold)
+        agent_rows, agents = _agent_rows(agent_codes, labelled, prob, threshold)
         _write_csv(out_dir / "agent_confusion.csv", agent_rows)
 
     seen = [r for r in object_rows if r["cells"]]
@@ -657,12 +837,17 @@ def compare_unit(
                 objects,
                 seen,
                 patch_rows,
-                names,
                 mosaics,
-                prob,
-                di_full,
-                target,
-                grid,
+                _PanelLayers(
+                    names,
+                    prob,
+                    di_full,
+                    target,
+                    grid,
+                    footprints,
+                    agent_codes,
+                    threshold,
+                ),
                 (n_objects, n_model_only, n_di_only),
             )
         else:
@@ -686,14 +871,12 @@ def _draw_panels(
     objects: Any,
     object_rows: list[dict[str, Any]],
     patch_rows: list[dict[str, Any]],
-    names: list[str],
     mosaics: list[list[str]],
-    prob: np.ndarray,
-    di: np.ndarray,
-    target: np.ndarray,
-    grid: PredGrid,
+    layers: _PanelLayers,
     counts: tuple[int, int, int],
 ) -> int:
+    """Draw the close-ups of the chosen events. Returns how many were drawn."""
+    names, grid = layers.names, layers.grid
     folder.mkdir(parents=True, exist_ok=True)
     n_objects, n_model_only, n_di_only = counts
     by_area = sorted(object_rows, key=lambda r: -r["area_ha"])
@@ -725,12 +908,8 @@ def _draw_panels(
                 text,
                 bounds,
                 k,
-                names,
                 mosaics,
-                prob,
-                di,
-                target,
-                grid,
+                layers,
                 outline,
                 folder / f"{kind}_{k + 1}_{ident}.png",
             )

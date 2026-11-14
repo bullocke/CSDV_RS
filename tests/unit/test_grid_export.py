@@ -21,10 +21,12 @@ from csdv_core.grid.export import (
     encode_onset,
     export_run,
     onset_colormap,
+    write_cog,
 )
 from csdv_core.grid.units import GridPaths
 
 CRS = "EPSG:26919"
+COLOURS = {1: (237, 161, 0, 255), 2: (42, 120, 214, 255)}
 
 
 def test_encode_onset():
@@ -54,6 +56,40 @@ def test_encode_max_probability():
 def test_encode_chm_steps_clips_and_masks():
     heights = np.ma.masked_array([0.1, 12.3, 80.0, 5.0], mask=[0, 0, 0, 1])
     np.testing.assert_array_equal(encode_chm(heights), [0, 49, 254, NODATA_U8])
+
+
+def test_write_cog_refuses_a_colour_table_on_several_bands(tmp_path):
+    codes = np.ones((3, 8, 8), dtype=np.uint8)
+    path = tmp_path / "codes.tif"
+    with pytest.raises(ValueError, match="single band"):
+        write_cog(
+            path,
+            codes,
+            crs=CRS,
+            transform=from_origin(290000, 4890000, 9.6, 9.6),
+            colormap=COLOURS,
+        )
+    assert not path.exists()
+
+
+def test_write_cog_keeps_the_colour_table_of_a_single_band(tmp_path):
+    codes = np.zeros((8, 8), dtype=np.uint8)
+    codes[:4] = 1
+    codes[4:, :4] = 2
+    path = write_cog(
+        tmp_path / "codes.tif",
+        codes,
+        crs=CRS,
+        transform=from_origin(290000, 4890000, 9.6, 9.6),
+        nodata=0,
+        colormap=COLOURS,
+    )
+    with rasterio.open(path) as src:
+        assert src.count == 1 and src.nodata == 0
+        table = src.colormap(1)
+        np.testing.assert_array_equal(src.read(1), codes)
+    assert table[1] == COLOURS[1] and table[2] == COLOURS[2]
+    assert table[0][3] == 0  # GDAL makes the nodata entry transparent
 
 
 def _write(path, data, *, nodata=None, transform=None, mask=None):

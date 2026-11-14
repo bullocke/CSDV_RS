@@ -246,6 +246,249 @@ def test_blocked_map_equals_a_single_pass(unit, monkeypatch) -> None:
     assert (second <= 100).all()  # the mosaics cover the whole map
 
 
+class _LocalAgentModel(_LocalModel):
+    """The same with an agent head: fire where the later date is brighter."""
+
+    n_agents = 6
+
+    def decode_agents(self, fa, fb):
+        logits = self.decode(fa, fb)
+        agents = torch.zeros(logits.shape[0], 6, *logits.shape[2:])
+        agents[:, 2] = logits[:, 0]  # harvest (class 0) wins where it is negative
+        return logits, agents
+
+
+def test_flagged_agents_keeps_codes_at_or_above_the_threshold() -> None:
+    codes = np.array([[1, 2, 3, 255, 5, 6]], dtype="uint8")
+    prob = np.array([[44, 45, 255, 90, 100, 0]], dtype="uint8")
+    flagged = P.flagged_agents(codes, prob, 0.45)
+    assert flagged.dtype == np.uint8 and flagged.shape == codes.shape
+    # 44 is below, 45 is exactly at the threshold, 255 in either array is no value.
+    assert flagged.tolist() == [[0, 2, 0, 0, 5, 0]]
+    # The threshold is rounded to a whole percent, as the map is.
+    assert np.array_equal(P.flagged_agents(codes, prob, 0.449), flagged)
+    assert P.flagged_agents(codes, prob, 0.46).tolist() == [[0, 0, 0, 0, 5, 0]]
+    # At 0 every cell with imagery and a code counts, and no other.
+    assert P.flagged_agents(codes, prob, 0.0).tolist() == [[1, 2, 0, 0, 5, 6]]
+    assert P.flagged_agents(codes, prob, 1.0).tolist() == [[0, 0, 0, 0, 5, 0]]
+
+
+def test_type_rasters_hold_the_agent_of_flagged_cells(unit, monkeypatch) -> None:
+    from csdv_core.pairmodel import train as T
+    from csdv_core.pairmodel.cli import pair
+
+    ckpt = {"mean": [0.3] * 4, "std": [0.2] * 4}
+    monkeypatch.setattr(
+        T,
+        "load_checkpoint",
+        lambda path, device="cpu": (_LocalAgentModel().eval(), ckpt),
+    )
+    result = P.predict_unit(
+        Path("unused.pt"),
+        unit["run_dir"],
+        unit["data_root"],
+        unit["out"] / "default",
+        block_cells=64,
+        halo_cells=0,
+        workers=0,
+        device="cpu",
+    )
+    assert result.threshold == 0.5  # this checkpoint holds no threshold
+    names = [
+        f"type_{UNIT}_{a}_{b}.tif" for a, b in zip(DATES[:-1], DATES[1:], strict=True)
+    ]
+    assert [path.name for path in result.type_paths] == names
+    assert result.agent_path is not None
+    with rasterio.open(result.agent_path) as src:
+        codes = src.read()
+        assert src.count == 2 and src.nodata == 255
+        with pytest.raises(ValueError):  # several bands, so no colour table
+            src.colormap(1)
+    with rasterio.open(result.prob_path) as src:
+        prob = src.read()
+    for k, path in enumerate(result.type_paths):
+        with rasterio.open(path) as src:
+            assert src.count == 1 and src.nodata == 0 and src.dtypes[0] == "uint8"
+            table = src.colormap(1)
+            kind = src.read(1)
+        assert all(table[code] == colour for code, colour in P.AGENT_COLOURS.items())
+        assert table[0][3] == 0
+        assert np.array_equal(kind, P.flagged_agents(codes[k], prob[k], 0.5))
+
+    # A stricter threshold from the command line leaves the clearing alone.
+    checkpoint = unit["out"] / "stand_in.pt"
+    checkpoint.write_bytes(b"")
+    mapped = CliRunner().invoke(
+        pair,
+        [
+            "predict",
+            "--checkpoint",
+            str(checkpoint),
+            "--unit",
+            UNIT,
+            "--runs-dir",
+            str(unit["runs"]),
+            "--data-root",
+            str(unit["data_root"]),
+            "--out-dir",
+            str(unit["out"] / "strict"),
+            "--block-cells",
+            "64",
+            "--halo-cells",
+            "0",
+            "--workers",
+            "0",
+            "--device",
+            "cpu",
+            "--threshold",
+            "0.9",
+        ],
+    )
+    assert mapped.exit_code == 0, mapped.output
+    assert "at or above 0.90: 2 type rasters" in mapped.output
+    kinds = []
+    for name in names:
+        with rasterio.open(unit["out"] / "strict" / name) as src:
+            kinds.append(src.read(1))
+    assert not kinds[0].any()
+    assert (kinds[1][8:14, 8:14] == 3).all()  # fire, where 2016 is brighter
+    assert np.count_nonzero(kinds[1]) == 36
+
+
+def test_label_image_is_transparent_where_no_chip_lies() -> None:
+    from csdv_core.pairmodel import compare as C
+
+    target = np.array([[0, 1], [C.IGNORE, C.NO_CHIP]], dtype="uint8")
+    image = C._label_image(target)
+    assert image.shape == (2, 2, 4) and image.dtype == np.uint8
+    assert image[..., 3].tolist() == [[255, 255], [255, 0]]
+    assert tuple(image[0, 1]) == (227, 73, 72, 255)
+    assert len({tuple(pixel) for pixel in image.reshape(-1, 4)}) == 4
+
+
+@pytest.fixture()
+def layers():
+    """Layers of a map of 25 by 25 cells with one chip and a loss of two agents."""
+    from csdv_core.pairmodel import compare as C
+
+    grid = P.unit_pred_grid(GRID.bounds, 26910, 16)
+    rng = np.random.default_rng(0)
+    prob = rng.integers(0, 40, (2, grid.rows, grid.cols), dtype=np.uint8)
+    prob[1, 8:14, 8:14] = 95
+    prob[:, 0] = 255
+    codes = np.ones(prob.shape, dtype="uint8")
+    codes[1, 8:14, 11:14] = 3
+    codes[prob == 255] = 255
+    target = np.full(prob.shape, C.NO_CHIP, dtype="uint8")
+    target[:, 8:16, 8:16] = 0
+    target[1, 8:14, 8:12] = 1
+    left, _, _, top = grid.bounds
+    chip = (left + 8 * 9.6, top - 16 * 9.6, left + 16 * 9.6, top - 8 * 9.6)
+    return C._PanelLayers(
+        names=[f"{a}_{b}" for a, b in zip(DATES[:-1], DATES[1:], strict=True)],
+        prob=prob,
+        di=prob.copy(),
+        target=target,
+        grid=grid,
+        footprints=[chip],
+        agent_codes=codes,
+        threshold=0.5,
+    )
+
+
+def _draw(layers, k: int = 1):
+    from csdv_core.pairmodel import compare as C
+
+    rng = np.random.default_rng(1)
+    images = [rng.integers(0, 255, (40, 40, 3), dtype=np.uint8) for _ in range(2)]
+    return C._panel_figure("An event", layers.grid.bounds, k, images, layers, None)
+
+
+def test_close_up_shows_the_agent_of_flagged_cells(layers) -> None:
+    import dataclasses
+
+    import matplotlib.pyplot as plt
+
+    fig = _draw(layers)
+    try:
+        assert len(fig.axes) == 6
+        assert fig.get_size_inches()[0] == pytest.approx(6 * 3.4)
+        assert [ax.get_title() for ax in fig.axes[:4]] == [
+            "2014-07-01",
+            "2016-07-01",
+            "Model (%)",
+            "DI (%)",
+        ]
+        label_ax, type_ax = fig.axes[4], fig.axes[5]
+        assert "hatched no label" in label_ax.get_title()
+        hatched = [patch for patch in label_ax.patches if patch.get_hatch()]
+        outlines = [patch for patch in label_ax.patches if not patch.get_fill()]
+        assert len(hatched) == 1 and len(outlines) == 1
+        left, bottom, right, top = layers.grid.bounds
+        assert hatched[0].get_bbox().extents == pytest.approx(
+            (left, bottom, right, top)
+        )
+        assert outlines[0].get_bbox().extents == pytest.approx(layers.footprints[0])
+        # The label image lies over the hatching and is clear where no chip is.
+        label_image = label_ax.images[0]
+        assert label_image.get_zorder() > hatched[0].get_zorder()
+        assert label_image.get_array()[0, 0, 3] == 0
+        assert label_image.get_array()[8, 8, 3] == 255
+
+        assert type_ax.get_title() == "Model type (loss at or above 50%)"
+        shown = np.asarray(type_ax.images[0].get_array())
+        assert tuple(shown[8, 8]) == P.AGENT_COLOURS[1]
+        assert tuple(shown[8, 12]) == P.AGENT_COLOURS[3]
+        assert shown[0, 0, 3] == 0  # no imagery
+        assert shown[3, 3, 3] == 255 and tuple(shown[3, 3]) not in set(
+            P.AGENT_COLOURS.values()
+        )
+        legend = type_ax.get_legend()
+        assert [text.get_text() for text in legend.get_texts()] == ["harvest", "fire"]
+        assert all(ax.get_legend() is None for ax in fig.axes[:5])
+    finally:
+        plt.close(fig)
+
+    # Nothing is flagged in the first interval: the legend names every agent.
+    fig = _draw(layers, k=0)
+    try:
+        texts = [t.get_text() for t in fig.axes[5].get_legend().get_texts()]
+        assert texts == [
+            "harvest",
+            "wind",
+            "fire",
+            "biotic mortality",
+            "conversion",
+            "other",
+        ]
+    finally:
+        plt.close(fig)
+
+    # The threshold of the comparison decides what is flagged.
+    fig = _draw(dataclasses.replace(layers, threshold=0.96))
+    try:
+        assert len(fig.axes[5].get_legend().get_texts()) == 6
+        assert "96%" in fig.axes[5].get_title()
+    finally:
+        plt.close(fig)
+
+
+def test_close_up_without_an_agent_raster_keeps_five_axes(layers) -> None:
+    import dataclasses
+
+    import matplotlib.pyplot as plt
+
+    fig = _draw(dataclasses.replace(layers, agent_codes=None))
+    try:
+        assert len(fig.axes) == 5
+        assert tuple(fig.get_size_inches()) == pytest.approx((17.0, 3.9))
+        assert fig.axes[-1].get_title().startswith("Label")
+        assert all(ax.get_legend() is None for ax in fig.axes)
+        assert len(fig.axes[4].patches) == 2  # the hatching and one chip
+    finally:
+        plt.close(fig)
+
+
 def test_a_quick_map_of_a_few_blocks_can_still_be_compared(unit, monkeypatch) -> None:
     from csdv_core.pairmodel import train as T
     from csdv_core.pairmodel.compare import compare_unit
@@ -401,8 +644,25 @@ def test_train_predict_compare_from_the_command_line(unit) -> None:
     assert prob.is_file()
     with rasterio.open(run / "map" / f"agent_{UNIT}.tif") as src:
         codes = src.read()
-        assert src.count == 2 and src.colormap(1)[3] == (227, 73, 72, 255)
+        assert src.count == 2 and src.nodata == 255
     assert set(np.unique(codes)) <= {1, 2, 3, 4, 5, 6, 255}
+    # One type raster per interval: the agent where the loss probability
+    # reaches the checkpoint's threshold, 0 elsewhere, with a colour table.
+    best = torch.load(run / "best.pt", map_location="cpu", weights_only=False)
+    cut = round(best["best_threshold"] * 100)
+    assert f"at or above {best['best_threshold']:.2f}" in mapped.output
+    with rasterio.open(prob) as src:
+        percent = src.read()
+        intervals = src.descriptions
+    assert len(list((run / "map").glob("type_*.tif"))) == len(intervals) == 2
+    for k, interval in enumerate(intervals):
+        with rasterio.open(run / "map" / f"type_{UNIT}_{interval}.tif") as src:
+            assert src.count == 1 and src.nodata == 0
+            assert src.colormap(1)[3] == (227, 73, 72, 255)
+            kind = src.read(1)
+        flagged = (percent[k] != 255) & (percent[k] >= cut)
+        assert np.array_equal(kind > 0, flagged)
+        assert np.array_equal(kind[flagged], codes[k][flagged])
 
     compared = runner.invoke(
         pair,

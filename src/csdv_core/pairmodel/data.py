@@ -1,9 +1,10 @@
 """csdv_core.pairmodel.data: pair samples from labelled chips.
 
 Inputs: a chip folder of a label run (``chips.parquet`` and, per chip,
-``_naip.tif``, ``_change.tif`` and ``_aux.tif``).
-Outputs: an index with one row per chip and interval, splits by unit,
-sampling weights, and samples as arrays (date A, date B, target on cells).
+``_naip.tif``, ``_change.tif``, ``_agent.tif`` and ``_aux.tif``).
+Outputs: an index with one row per chip and interval, splits by unit or by
+blocks of ground inside the units, sampling weights, and samples as arrays
+(date A, date B, target on cells).
 
 Everything up to :class:`PairDataset` needs NumPy and rasterio only, so the
 samples can be drawn and looked at on a machine without PyTorch.
@@ -48,6 +49,8 @@ __all__ = [
     "PairArrays",
     "PairDataset",
     "Split",
+    "agent_cells",
+    "assign_blocks",
     "band_stats",
     "build_sample",
     "load_index",
@@ -138,7 +141,9 @@ def load_index(chips_dir: Path, *, min_valid: float = 0.05) -> pd.DataFrame:
         Columns ``chip_id``, ``unit``, ``window_id``, ``k`` (interval index),
         ``n_dates``, ``date_a``, ``date_b``, ``native_a``, ``native_b``
         (metres, NaN when unknown), ``chip_px`` (side of the chip),
-        ``loss_share`` and ``valid_share`` (of all pixels of the chip).
+        ``loss_share`` and ``valid_share`` (of all pixels of the chip),
+        ``epsg`` and ``ix``, ``iy`` (the chip's column and row on the
+        lattice of its UTM zone, counted in chips).
 
     Raises:
         ValueError: If a chip is listed twice.
@@ -158,6 +163,9 @@ def load_index(chips_dir: Path, *, min_valid: float = 0.05) -> pd.DataFrame:
                 _json_list(chip.partial), _json_list(chip.full), strict=True
             )
         ]
+        chip_px = math.isqrt(int(chip.pixels))
+        bounds = _json_list(chip.bounds)
+        side = chip_px * GSD
         for k in range(len(dates) - 1):
             valid = background[k] + loss[k]
             rows.append(
@@ -171,9 +179,12 @@ def load_index(chips_dir: Path, *, min_valid: float = 0.05) -> pd.DataFrame:
                     "date_b": dates[k + 1],
                     "native_a": _native(native, k),
                     "native_b": _native(native, k + 1),
-                    "chip_px": math.isqrt(int(chip.pixels)),
+                    "chip_px": chip_px,
                     "loss_share": loss[k] / chip.pixels,
                     "valid_share": valid / chip.pixels,
+                    "epsg": int(chip.epsg),
+                    "ix": round(bounds[0] / side),
+                    "iy": round(bounds[1] / side),
                 }
             )
     index = pd.DataFrame(rows)
@@ -249,6 +260,117 @@ def make_split(
     return Split(tuple(train), tuple(val), tuple(sorted(holdout)))
 
 
+def agent_cells(chips_dir: Path, chip_ids: Sequence[str], cell_px: int) -> pd.DataFrame:
+    """Loss cells per agent of every chip, summed over its intervals.
+
+    Counted on the 0.6 m agent rasters and divided by the pixels of a cell,
+    which is within a few percent of the count on pooled cells and needs no
+    imagery.
+
+    Returns:
+        One row per chip (index ``chip_id``) and one column per name of
+        :data:`AGENT_NAMES`.
+
+    Raises:
+        FileNotFoundError: If an agent raster is missing.
+    """
+    import rasterio
+
+    rows = []
+    for chip_id in chip_ids:
+        path = Path(chips_dir) / f"{chip_id}_agent.tif"
+        if not path.is_file():
+            raise FileNotFoundError(f"No agent raster {path}")
+        with rasterio.open(path) as src:
+            codes = src.read()
+        counts = np.bincount(codes.ravel(), minlength=256)
+        rows.append(counts[1 : len(AGENT_NAMES) + 1] / float(cell_px**2))
+    return pd.DataFrame(
+        np.array(rows).reshape(len(rows), len(AGENT_NAMES)),
+        index=pd.Index(list(chip_ids), name="chip_id"),
+        columns=list(AGENT_NAMES),
+    )
+
+
+def assign_blocks(
+    chips: pd.DataFrame,
+    cells: pd.DataFrame,
+    *,
+    block_chips: int = 8,
+    val_share: float = 0.2,
+    seed: int = 0,
+) -> pd.Series:
+    """Give every chip a side, by blocks of ground inside the units.
+
+    The lattice of each unit is cut into square blocks of ``block_chips``
+    chips. A window belongs to the block of its lower-left chip, so its
+    chips stay together. Whole blocks go to validation until validation
+    holds about ``val_share`` of the loss cells of every agent and of the
+    chips of every unit: blocks are taken in order of their largest share,
+    and one joins validation when that brings the totals closer to the
+    target. Training chips that touch a validation chip are dropped.
+
+    Args:
+        chips: One row per chip with ``chip_id``, ``window_id``, ``unit``,
+            ``epsg``, ``ix`` and ``iy`` (see :func:`load_index`).
+        cells: Loss cells per agent of every chip (:func:`agent_cells`).
+        block_chips: Side of a block, in chips.
+        val_share: Share aimed at for validation.
+        seed: Seed of the order among blocks of equal size.
+
+    Returns:
+        ``train``, ``val`` or ``dropped`` per chip, indexed by ``chip_id``.
+    """
+    chips = chips.drop_duplicates("chip_id").reset_index(drop=True)
+    corner = chips.groupby("window_id")[["ix", "iy"]].transform("min")
+    block = (
+        chips["unit"].astype(str)
+        + ":"
+        + (corner["ix"] // block_chips).astype(str)
+        + ":"
+        + (corner["iy"] // block_chips).astype(str)
+    )
+    counts = cells.reindex(chips["chip_id"]).fillna(0.0).to_numpy(dtype="float64")
+    units = sorted(chips["unit"].unique())
+    in_unit = np.stack([(chips["unit"] == u).to_numpy(dtype="float64") for u in units])
+    per_chip = np.concatenate([counts, in_unit.T], axis=1)
+    totals = per_chip.sum(axis=0)
+    used = totals > 0
+    names = sorted(block.unique())
+    codes = block.map({name: i for i, name in enumerate(names)}).to_numpy()
+    shares = np.zeros((len(names), per_chip.shape[1]))
+    np.add.at(shares, codes, per_chip)
+    shares[:, used] /= totals[used]
+    rng = np.random.default_rng(seed)
+    order = np.lexsort((rng.random(len(names)), -shares.max(axis=1)))
+    target = np.where(used, val_share, 0.0)
+    held = np.zeros(per_chip.shape[1])
+    in_val = np.zeros(len(names), dtype=bool)
+    for i in order:
+        if ((held + shares[i] - target) ** 2).sum() < ((held - target) ** 2).sum():
+            held += shares[i]
+            in_val[i] = True
+    side = np.where(in_val[codes], "val", "train").astype(object)
+    val_cells = {
+        (e, x, y)
+        for e, x, y in zip(
+            chips["epsg"][side == "val"],
+            chips["ix"][side == "val"],
+            chips["iy"][side == "val"],
+            strict=True,
+        )
+    }
+    for i, (e, x, y) in enumerate(
+        zip(chips["epsg"], chips["ix"], chips["iy"], strict=True)
+    ):
+        if side[i] != "train":
+            continue
+        near = ((e, x + dx, y + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1))
+        if any(cell in val_cells for cell in near):
+            side[i] = "dropped"
+    return pd.Series(side, index=pd.Index(chips["chip_id"], name="chip_id"))
+
+
 def sample_weights(
     index: pd.DataFrame,
     *,
@@ -293,6 +415,7 @@ def read_pair(
     *,
     window_a: tuple[int, int, int] | None = None,
     window_b: tuple[int, int, int] | None = None,
+    cache_dir: Path | None = None,
 ) -> PairArrays:
     """Read interval ``k`` of a chip.
 
@@ -301,10 +424,20 @@ def read_pair(
         window_a: ``(row, col, size)`` of a square crop of date A and of the
             labels. Default: the whole chip.
         window_b: The same for date B. Default: ``window_a``.
+        cache_dir: Read from this decoded cache instead of the chip rasters
+            (:mod:`csdv_core.pairmodel.cache`). The arrays are the same.
 
     Raises:
         ValueError: If the files do not hold ``n_dates`` dates.
     """
+    if cache_dir is not None:
+        from csdv_core.pairmodel.cache import read_cached
+
+        a, b, change, forest, agent = read_cached(
+            cache_dir, chip_id, k, n_dates, window_a, window_b
+        )
+        return PairArrays(a, b, change, forest[0] == 1, forest[1] == 1, agent)
+
     import rasterio
     from rasterio.windows import Window
 
@@ -452,6 +585,7 @@ def build_sample(
     std: np.ndarray,
     aug: Augment | None = None,
     rng: np.random.Generator | None = None,
+    cache_dir: Path | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """One sample of the index, ready for the model.
 
@@ -464,6 +598,7 @@ def build_sample(
         std: Per-band standard deviation, the same scale.
         aug: Augmentation. None for validation: the whole chip, as it is.
         rng: Random generator, required with ``aug``.
+        cache_dir: Decoded cache to read from, see :func:`read_pair`.
 
     Returns:
         ``(a, b, target, agent)``: two float32 ``(4, rows, cols)`` images,
@@ -497,6 +632,7 @@ def build_sample(
         int(row.n_dates),
         window_a=window_a,
         window_b=window_b,
+        cache_dir=cache_dir,
     )
     target = pool_target(
         pair_target(arrays, reverse=reverse), arrays.a, arrays.b, cell_px, pooling
@@ -577,9 +713,11 @@ class PairDataset:
         aug: Augment | None = None,
         units: Sequence[str] = (),
         seed: int = 0,
+        cache_dir: Path | None = None,
     ) -> None:
         self.index = index.reset_index(drop=True)
         self.chips_dir = Path(chips_dir)
+        self.cache_dir = None if cache_dir is None else Path(cache_dir)
         self.cell_px = cell_px
         self.pooling = pooling
         self.mean = np.asarray(mean, dtype="float32")
@@ -615,6 +753,7 @@ class PairDataset:
             std=self.std,
             aug=self.aug,
             rng=self._generator() if self.aug is not None else None,
+            cache_dir=self.cache_dir,
         )
         return (
             torch.from_numpy(a),

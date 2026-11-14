@@ -45,6 +45,35 @@ def pair() -> None:
 @click.option("--fold", type=int, default=None, help="Validate on this grouped fold.")
 @click.option("--n-folds", type=int, default=5, show_default=True)
 @click.option(
+    "--split",
+    type=click.Choice(["units", "blocks"]),
+    default="units",
+    show_default=True,
+    help="units: validate on whole units. blocks: validate on blocks of ground "
+    "inside every unit that is not held out, so every agent is on both sides.",
+)
+@click.option(
+    "--block-chips",
+    type=int,
+    default=8,
+    show_default=True,
+    help="Side of a block of the blocks split, in chips.",
+)
+@click.option(
+    "--val-share",
+    type=float,
+    default=0.2,
+    show_default=True,
+    help="Share of the blocks split aimed at for validation.",
+)
+@click.option(
+    "--cache-dir",
+    default=None,
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Folder for decoded chips, built at the start and read by the "
+    "loaders (about 12 MB per chip). Cuts the wait for data.",
+)
+@click.option(
     "--encoder",
     type=click.Choice(["resnet34", "resnet18"]),
     default="resnet34",
@@ -94,6 +123,10 @@ def train_cmd(
     val_units,
     fold,
     n_folds,
+    split,
+    block_chips,
+    val_share,
+    cache_dir,
     encoder,
     encoder_weights,
     cell_m,
@@ -118,6 +151,11 @@ def train_cmd(
     from csdv_core.pairmodel import train as T
 
     _setup_logging()
+    if split == "blocks" and (val_units or fold is not None):
+        raise click.UsageError(
+            "--split blocks chooses its own validation ground: "
+            "leave out --val-units and --fold."
+        )
     if not dry_run and out_dir is None:
         raise click.UsageError("--out-dir is required to train.")
     if not dry_run and encoder_weights is None:
@@ -134,6 +172,10 @@ def train_cmd(
         val_units=_units(val_units),
         fold=fold,
         n_folds=n_folds,
+        split=split,
+        block_chips=block_chips,
+        val_share=val_share,
+        cache_dir=cache_dir,
         encoder=encoder,
         encoder_weights=weights,
         cell_px=round(float(cell_m) / D.GSD),
@@ -154,9 +196,9 @@ def train_cmd(
     if dry_run:
         try:
             planned = T.plan(cfg)
-        except ValueError as exc:
+            click.echo(T.describe(planned))
+        except (FileNotFoundError, ValueError) as exc:
             raise click.ClickException(str(exc)) from exc
-        click.echo(T.describe(planned))
         missing = D.missing_files(chips_dir, sorted(planned.index["chip_id"].unique()))
         if missing:
             raise click.ClickException(
@@ -166,6 +208,7 @@ def train_cmd(
             )
         if weights is not None and not weights.is_file():
             raise click.ClickException(f"No encoder weights at {weights}")
+        click.echo(T.describe_agents(planned, chips_dir, cfg.cell_px))
         click.echo("Every chip file is there.")
         return
     try:
@@ -230,6 +273,13 @@ def _with(options):
 @click.option("--workers", type=int, default=4, show_default=True)
 @click.option("--limit-blocks", type=int, default=None, help="Quick run on N blocks.")
 @click.option("--device", default="auto", show_default=True)
+@click.option(
+    "--threshold",
+    type=click.FloatRange(0.0, 1.0),
+    default=None,
+    help="Loss probability from which a cell gets its agent in the type rasters. "
+    "Default: the checkpoint's best threshold on validation.",
+)
 def predict_cmd(
     checkpoint,
     unit,
@@ -242,6 +292,7 @@ def predict_cmd(
     workers,
     limit_blocks,
     device,
+    threshold,
 ) -> None:
     """Map loss probability for every pair of consecutive dates of a unit."""
     from csdv_core.pairmodel.predict import predict_unit
@@ -262,6 +313,7 @@ def predict_cmd(
             workers=workers,
             limit_blocks=limit_blocks,
             device=device,
+            threshold=threshold,
         )
     except FileNotFoundError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -269,6 +321,11 @@ def predict_cmd(
         f"{result.unit}: {len(result.intervals)} intervals, {result.blocks} blocks, "
         f"{result.seconds:.0f} s. {result.prob_path}"
     )
+    if result.type_paths:
+        click.echo(
+            f"Agent of loss at or above {result.threshold:.2f}: "
+            f"{len(result.type_paths)} type rasters beside it."
+        )
     for note in result.notes:
         click.echo(note)
 
