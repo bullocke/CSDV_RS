@@ -652,6 +652,24 @@ def build_cmd(windows, with_imagery, stage, **where) -> None:
     )
     status = pd.Series([c["status"] for c in cands]).value_counts().to_dict()
     click.echo(f"{len(chips)} chips, {len(events)} events. Candidates: {status}")
+    # Said in so many words, because a build on answers from before the
+    # polygon calls looks complete and silently leaves every outline unextended.
+    answered = sum(1 for rec in records if rec.get("kind") == "polygon")
+    drawn = sum(
+        1
+        for event in events
+        if str(event.get("geometry_source", "")).endswith("polygon")
+    )
+    click.echo(
+        f"{answered} polygon answers read, {drawn} of {len(events)} events use a "
+        "model polygon."
+    )
+    if events and not answered:
+        click.echo(
+            "WARNING: the answers hold no polygon. If polygons were asked for, "
+            "push answers.jsonl again and build again.",
+            err=True,
+        )
     if shared:
         click.echo(
             f"{shared} chips lie in two windows and keep the labels of the first."

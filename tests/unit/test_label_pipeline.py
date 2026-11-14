@@ -359,6 +359,9 @@ def test_cli_steps(run: LabelRun, label_export: Path, tmp_path: Path) -> None:
     result = cli.invoke(main, ["label", "build", *where, "--no-imagery"])
     assert result.exit_code == 0, result.output
     assert "1 events" in result.output
+    # The answers of this run hold verdicts only, and the build says so.
+    assert "0 polygon answers read, 0 of 1 events use a model polygon" in result.output
+    assert "the answers hold no polygon" in result.output
     assert len(list((run.root / "chips").glob("*_reason.tif"))) == 4
     import geopandas as gpd
 
