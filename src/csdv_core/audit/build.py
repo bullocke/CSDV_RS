@@ -35,6 +35,22 @@ PAGE_FILES = ("index.html", "app.js", "style.css")
 LOSS_RGB = (255, 60, 60)
 IGNORE_RGB = (235, 235, 235)
 NO_LABEL = 254
+BUNDLE_README = """Label audit: {n} items
+
+1. Open index.html in Chrome, Edge or Firefox, full screen. No install and
+   no internet are needed.
+2. Give your name or initials when asked. The first screen of each block
+   explains the question and the keys.
+3. Judge with the keyboard. You can close the browser at any time: your
+   answers stay in this browser and the page goes on where you stopped.
+   Use the same browser and do not clear its site data in between.
+4. When the page says that all items are judged (or earlier, to be safe),
+   press "Download answers" at the top right and send back the file
+   answers_<name>.jsonl.
+
+Keys: arrow keys flick between dates, Z reopens the previous item,
+/ adds a note, Backspace goes back one step.
+"""
 _PLACE = re.compile(r"area in (.+?)\. North is up")
 
 __all__ = [
@@ -379,6 +395,7 @@ def bundle_site(
     _write_entries(
         out_dir, {"name": f"{meta['name']}_{suffix}", "n_items": len(kept)}, kept
     )
+    (out_dir / "README.txt").write_text(BUNDLE_README.format(n=len(kept)))
     missing = [item for item in wanted if item not in built]
     log.info("Bundle %s: %d items, %d not built yet", out_dir, len(kept), len(missing))
     return missing

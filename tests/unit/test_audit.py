@@ -411,7 +411,7 @@ def test_bundle_holds_the_shared_items_only(label_dir, tmp_path):
     assert {e["id"] for e in entries} >= built
     assert {e["id"] for e in entries} | set(missing) == set(shared["item"])
     assert {p.name for p in (out / "img").iterdir()} == {e["id"] for e in entries}
-    for name in ("index.html", "app.js", "style.css"):
+    for name in ("index.html", "app.js", "style.css", "README.txt"):
         assert (out / name).exists()
     first = out / entries[0]["imgs"][0]
     assert first.exists() and first.stat().st_nlink == 1
