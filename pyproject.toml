@@ -80,6 +80,7 @@ csdv_core = [
     "config/*.yaml",
     "examples/vocab/*.yaml",
     "review/*.vue",
+    "audit/page/*",
     "label/prompts/*.txt",
 ]
 

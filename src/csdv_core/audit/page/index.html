@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Label audit</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="bar">
+  <span id="progress"></span>
+  <span id="pace"></span>
+  <span id="where"></span>
+  <span id="status"></span>
+  <span id="who"></span>
+  <button id="download" type="button" title="Save every answer so far as one file">Download answers</button>
+</header>
+<main id="main">
+  <div id="grid" hidden></div>
+  <div id="viewer" hidden>
+    <div id="strip"></div>
+    <div id="stage"><div id="canvas"></div></div>
+  </div>
+  <div id="message" hidden></div>
+</main>
+<footer id="hints"></footer>
+<script src="items.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
