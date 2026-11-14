@@ -556,6 +556,43 @@ def test_a_chip_in_two_windows_is_written_once(
     assert set(shared["window_id"]) == {"w1"}
 
 
+def test_a_shared_chip_takes_its_imagery_from_the_window_that_owns_it(
+    run: LabelRun, label_export: Path, tmp_path: Path
+) -> None:
+    # w2 is the south-west chip of w1, so its only chip belongs to w1.
+    second = ROW.copy()
+    second["window_id"] = "w2"
+    second["nx"] = 1
+    second["ny"] = 1
+    pd.DataFrame([ROW, second]).to_csv(run.root / "windows.csv", index=False)
+    where = ["--label-dir", str(run.root), "--export-dir", str(label_export)]
+    data = ["--data-root", str(tmp_path / "data"), "--naip-source", "local"]
+    cli = CliRunner()
+    result = cli.invoke(main, ["label", "render", *where, *data])
+    assert result.exit_code == 0, result.output
+    # Windows are dated from their own quad. Give w2 another date for 2018.
+    meta_path = run.root / "stacks" / "w2" / "meta.json"
+    meta = json.loads(meta_path.read_text())
+    meta["years"]["2018"]["date"] = "2018-10-15"
+    meta_path.write_text(json.dumps(meta))
+    result = cli.invoke(main, ["label", "build", *where])
+    assert result.exit_code == 0, result.output
+    assert "1 chips lie in two windows" in result.output
+    chips = pd.read_parquet(run.root / "chips" / "chips.parquet")
+    assert len(chips) == 4 and set(chips["window_id"]) == {"w1"}
+    for chip in chips.itertuples():
+        stem = run.root / "chips" / chip.chip_id
+        with rasterio.open(f"{stem}_naip.tif") as src:
+            naip_dates = [name.rsplit("_", 1)[0] for name in src.descriptions[::4]]
+        with rasterio.open(f"{stem}_change.tif") as src:
+            intervals = list(src.descriptions)
+        assert naip_dates == json.loads(chip.dates)
+        assert "2018-10-15" not in naip_dates
+        assert intervals == [
+            f"{a}_{b}" for a, b in zip(naip_dates[:-1], naip_dates[1:], strict=True)
+        ]
+
+
 def test_render_reports_how_the_dates_were_found(
     run: LabelRun, label_export: Path, tmp_path: Path
 ) -> None:

@@ -68,14 +68,27 @@ def _write(
         dst.descriptions = tuple(names)
 
 
-def write_naip_chips(window: Window, stack: WindowStack, out_dir: Path) -> int:
-    """Write ``<chip_id>_naip.tif`` for every chip of a window.
+def write_naip_chips(
+    window: Window,
+    stack: WindowStack,
+    out_dir: Path,
+    *,
+    only: set[str] | None = None,
+) -> int:
+    """Write ``<chip_id>_naip.tif`` for the chips of a window.
 
     Needs the imagery only, so it can run where the mosaics are.
+
+    Args:
+        only: Chip IDs to write. A chip that lies in two windows belongs to
+            the first, which also gives it its label rasters and its dates.
+            Windows are dated from their own quad, so the same chip written
+            from the second window could carry other band names than its
+            labels. Default: every chip of the window.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     names = [f"{d}_{b}" for d in stack.dates for b in BAND_NAMES]
-    chips = window.chips()
+    chips = [c for c in window.chips() if only is None or c.chip_id in only]
     for chip in chips:
         naip = stack.crop(chip.bounds)
         naip = naip.reshape(-1, naip.shape[-2], naip.shape[-1])

@@ -424,6 +424,7 @@ def render_cmd(unit, windows, kind, naip_source, data_root, with_chips, check, *
         click.echo(f"{verdicts} verdicts of these windows in {run.answers}")
     total = 0
     skipped: list[str] = []
+    chips_written: set[str] = set()
     for n, row in enumerate(table.itertuples(), start=1):
         count = render_window(run, row, kind=kind, source=source, data_root=root)
         total += count
@@ -432,12 +433,16 @@ def render_cmd(unit, windows, kind, naip_source, data_root, with_chips, check, *
             skipped.append(str(row.window_id))
             continue
         if with_chips:
+            # A chip in two windows is written from the first, as `build` does.
             window = run.window(row)
+            mine = {c.chip_id for c in window.chips()} - chips_written
             write_naip_chips(
                 window,
                 load_stack(run.root / "stacks" / window.window_id),
                 run.root / "chips",
+                only=mine,
             )
+            chips_written |= mine
         logging.getLogger(__name__).info(
             "%d/%d %s: %d %s requests", n, len(table), row.window_id, count, kind
         )
@@ -622,7 +627,9 @@ def build_cmd(windows, with_imagery, stage, **where) -> None:
         written.update(r["chip_id"] for r in rows)
         chips += rows
         if stack is not None:
-            write_naip_chips(window, stack, run.root / "chips")
+            write_naip_chips(
+                window, stack, run.root / "chips", only={r["chip_id"] for r in rows}
+            )
             intervals += D.interval_rows(stack, window, built.labels, run.cfg)
             suspects += D.suspect_rows(stack, window, built.labels)
         kept += D.event_rows(window, built.labels, built.judged, run.cfg)
