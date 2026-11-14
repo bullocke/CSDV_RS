@@ -1,0 +1,25 @@
+# Units of the label run `scale_test`, for maps of the pair model beyond the
+# first held-out unit (scripts/chpc/submit_pair_sites.sh, pull_pair_sites.sh
+# and the figure script of the scale test).
+#
+# Columns: unit, batch, place, notes. `batch` is "yes" for the units that the
+# scripts take by default. `place` is the name printed on the figures. The
+# notes give what the labels of the unit hold most (events by agent).
+unit,batch,place,notes
+q4412328,yes,Oregon Coast Range,Industrial Douglas-fir clearcuts. Harvest 85
+q3208840,yes,Alabama pine plantations,Loblolly plantations. Harvest 167
+q3508207,yes,"Blue Ridge, North Carolina",2024 Hurricane Helene. Wind 74 and harvest 19
+q3508321,yes,"Great Smoky Mountains, Tennessee",National park with little harvest. Fire 40 and conversion 18
+q3912112,yes,"Sierra Nevada foothills, California",2018 Camp Fire. Fire 432
+q4010549,yes,"Grand County, Colorado",2020 East Troublesome Fire after bark beetle. Fire 257 and harvest 99
+q4107127,yes,Rhode Island oak forest,Spongy moth mortality. Biotic mortality 58 and conversion 57
+q3708104,yes,Southern West Virginia,Surface mining. Conversion 44 and harvest 26
+q4709438,yes,Northern Minnesota,Aspen harvest. Harvest 41 with wind 18 and biotic mortality 17
+q4506921,yes,Northern Maine,Industrial spruce-fir. Harvest 116
+q3511151,yes,"Flagstaff, Arizona",Ponderosa thinning. Harvest 102 and conversion 46
+q3709154,no,Missouri Ozarks,Oak harvest. Harvest 40
+q3907420,no,New Jersey Pinelands,Pine beetle and fire. Fire 12 and conversion 10
+q3908654,no,Southern Indiana,Small harvests. Harvest 28
+q4407152,no,"White Mountains, New Hampshire",Little disturbance. 4 events
+q4407462,no,"Adirondacks, New York",Little disturbance. Harvest 21
+q4612245,no,Washington Cascades,Industrial Douglas-fir. Harvest 67

@@ -44,6 +44,13 @@
 #                        login node first (the command is printed when it is
 #                        missing).
 #   CSDV_PAIR_STAGES     Steps to run. Default "train predict compare".
+#   CSDV_PAIR_CHECKPOINT Checkpoint for the map and the comparison. Default
+#                        best.pt of this run. With the checkpoint of another
+#                        run and CSDV_PAIR_STAGES="predict compare", the job
+#                        maps CSDV_PAIR_HOLDOUT with that model and trains
+#                        nothing (scripts/chpc/submit_pair_sites.sh). The
+#                        comparison is then a test only where that model did
+#                        not train on the unit.
 #   CSDV_PAIR_TRAIN_ARGS Further options for `csdv pair train`.
 #   CSDV_LABEL_RUN_TAG   Run tag of the disturbance runs. Default "default".
 #
@@ -72,11 +79,22 @@ WEIGHTS="${CSDV_PAIR_WEIGHTS:-$CSDV_DATA_ROOT/models/torchvision/resnet34-b627a5
 STAGES="${CSDV_PAIR_STAGES:-train predict compare}"
 RUN_TAG="${CSDV_LABEL_RUN_TAG:-default}"
 RUN_DIR="$CSDV_RESULTS_ROOT/pairmodel/$RUN_NAME"
+CHECKPOINT="${CSDV_PAIR_CHECKPOINT:-$RUN_DIR/best.pt}"
 EXPORT="$CSDV_EXPORT_DIR/pairmodel/$RUN_NAME"
 read -r -a TRAIN_ARGS <<<"${CSDV_PAIR_TRAIN_ARGS:-}"
 
 echo "host=$(hostname) job=${SLURM_JOB_ID:-none} started=$(date -Is)"
 echo "run=$RUN_DIR holdout=$HOLDOUT split=$SPLIT_MODE val=$VAL stages=$STAGES smoke=$SMOKE"
+echo "checkpoint=$CHECKPOINT"
+if [[ " $STAGES " == *" train "* && "$CHECKPOINT" != "$RUN_DIR/best.pt" ]]; then
+    echo "ERROR: CSDV_PAIR_CHECKPOINT names another run, so this job must not train." \
+        "Set CSDV_PAIR_STAGES=\"predict compare\"." >&2
+    exit 1
+fi
+if [[ " $STAGES " != *" train "* && ! -f "$CHECKPOINT" ]]; then
+    echo "ERROR: no checkpoint at $CHECKPOINT" >&2
+    exit 1
+fi
 if [[ "$SPLIT_MODE" != "units" && "$SPLIT_MODE" != "blocks" ]]; then
     echo "ERROR: CSDV_PAIR_SPLIT must be units or blocks, not $SPLIT_MODE" >&2
     exit 1
@@ -110,6 +128,9 @@ fi
 
 scratch_init
 mkdir -p "$RUN_DIR" "$EXPORT"
+# Which model made this map, for the figures on the laptop.
+printf '{"unit": "%s", "checkpoint": "%s", "model_run": "%s"}\n' \
+    "$HOLDOUT" "$CHECKPOINT" "$(basename "$(dirname "$CHECKPOINT")")" >"$RUN_DIR/site.json"
 
 # Copy what has been written so far, without the checkpoints, to the export
 # folder. Called after every step, so a failure later still leaves the
@@ -160,7 +181,7 @@ if [[ " $STAGES " == *" predict "* ]]; then
     LIMIT=()
     ((SMOKE)) && LIMIT=(--limit-blocks 6)
     # The mosaics are read where they are, as the render job does.
-    csdv pair predict --checkpoint "$RUN_DIR/best.pt" "${WHERE[@]}" \
+    csdv pair predict --checkpoint "$CHECKPOINT" "${WHERE[@]}" \
         --data-root "$CSDV_DATA_ROOT" --out-dir "$RUN_DIR/map" \
         --workers "$WORKERS" ${LIMIT[@]+"${LIMIT[@]}"}
     export_results
@@ -170,7 +191,7 @@ if [[ " $STAGES " == *" compare "* ]]; then
     PANELS=12
     ((SMOKE)) && PANELS=2
     csdv pair compare --prob "$RUN_DIR/map/prob_$HOLDOUT.tif" --chips-dir "$CHIPS" \
-        "${WHERE[@]}" --checkpoint "$RUN_DIR/best.pt" --data-root "$CSDV_DATA_ROOT" \
+        "${WHERE[@]}" --checkpoint "$CHECKPOINT" --data-root "$CSDV_DATA_ROOT" \
         --out-dir "$RUN_DIR/compare" --panels "$PANELS"
     export_results
 fi

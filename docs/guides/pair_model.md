@@ -87,6 +87,29 @@ For a model with an agent head it also writes `type_<unit>_<dateA>_<dateB>.tif`,
 
 The cells of the map lie on the global 0.6 m lattice of the UTM zone at multiples of the cell size, which is where the label chips pool to cells. The grid of a unit starts anywhere on the 0.6 m lattice, so the map covers the unit's extent snapped outward, and the 19.2 m layers of the disturbance run are sampled at the centre of each map cell.
 
+## Mapping several units
+
+`scripts/chpc/submit_pair_sites.sh` submits one job per unit of `config/pair/sites.csv` (the rows with `batch` set to `yes`), and `scripts/chpc/pull_pair_sites.sh` copies every result to the laptop in one connection.
+
+```bash
+# CHPC
+git pull && source scripts/chpc/env.sh
+scripts/chpc/submit_pair_sites.sh --dry-run        # prints the sbatch commands
+scripts/chpc/submit_pair_sites.sh                  # mode look, model first_look_blocks2
+
+# Laptop, when squeue is empty
+scripts/chpc/pull_pair_sites.sh
+```
+
+| Mode | What a job does | Run folder | GPU time per unit | What the map is |
+|---|---|---|---|---|
+| `look` (default) | Maps the unit with the model of `--model` and compares it with the unit's labels. No training | `look_<unit>` | About 15 minutes | A view of what the model does there. The model trained on label chips inside the unit (5 to 10% of its ground), so the scores of the comparison are not a test |
+| `holdout` | Trains with the unit held out (split by blocks), then maps and compares it | `holdout_<unit>` | About 50 minutes | An independent test of the unit. A type whose labels lie mostly in that unit is hardly trained |
+
+A unit that the model run held out and mapped itself is skipped in both modes, because that run is already its held-out map. A unit whose run has a comparison in the export folder is skipped too, so the command can be given again after a failed job. `--units q3912112,q4010549` takes other units than the list.
+
+The jobs run `scripts/slurm/run_pair_first_look.sbatch`. In the `look` mode it gets `CSDV_PAIR_STAGES="predict compare"` and `CSDV_PAIR_CHECKPOINT`, the checkpoint of the model run. Every run folder holds `site.json`, which names the unit and the model run behind the map.
+
 ## Comparison
 
 `csdv pair compare` sets a map beside the disturbance run and the label chips of the unit.
