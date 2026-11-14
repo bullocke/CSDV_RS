@@ -1,4 +1,4 @@
-"""csdv_core.audit.cli: ``csdv audit``: draw, build, app."""
+"""csdv_core.audit.cli: ``csdv audit``: draw, build, app, bundle, score."""
 
 from __future__ import annotations
 
@@ -115,7 +115,10 @@ def draw_cmd(
     is_flag=True,
     help="Copy the request images instead of hard-linking them.",
 )
-def build_cmd(label_dir: Path, audit_dir: Path, name: str, copy: bool) -> None:
+@click.option("--refresh-labels", is_flag=True, help="Draw the label overlays again.")
+def build_cmd(
+    label_dir: Path, audit_dir: Path, name: str, copy: bool, refresh_labels: bool
+) -> None:
     """Write the page and the images of every item that can be built.
 
     Window items need the stacks of their windows. The windows still missing
@@ -128,7 +131,14 @@ def build_cmd(label_dir: Path, audit_dir: Path, name: str, copy: bool) -> None:
 
     _setup_logging()
     items = read_items(audit_dir / "items.csv")
-    report = build_site(label_dir, audit_dir, items, name=name, link=not copy)
+    report = build_site(
+        label_dir,
+        audit_dir,
+        items,
+        name=name,
+        link=not copy,
+        refresh_labels=refresh_labels,
+    )
     click.echo(f"{len(report.built)} items built in {audit_dir / 'site'}")
     for name, windows in (
         ("stack_windows.txt", report.missing_stacks),
@@ -171,3 +181,85 @@ def app_cmd(audit_dir: Path, interpreter: str | None, host: str, port: int) -> N
         click.echo("Stopped.")
     finally:
         server.server_close()
+
+
+@audit.command("bundle")
+@_audit_opt
+@click.option(
+    "--out-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    required=True,
+    help="Folder to write and share. Opened from disk, no install needed.",
+)
+@click.option(
+    "--all-items",
+    is_flag=True,
+    help="Every built item. Default: the items every interpreter judges.",
+)
+def bundle_cmd(audit_dir: Path, out_dir: Path, all_items: bool) -> None:
+    """Copy the page and the shared items into a folder for other interpreters.
+
+    They open index.html in a browser, judge with the keyboard, press
+    "Download answers" and send the file back. Put it in answers/ and run
+    ``csdv audit score``.
+    """
+    from csdv_core.audit.build import bundle_site
+    from csdv_core.audit.draw import read_items
+
+    _setup_logging()
+    items = read_items(audit_dir / "items.csv")
+    try:
+        missing = bundle_site(audit_dir, out_dir, items, shared_only=not all_items)
+    except FileExistsError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Bundle written to {out_dir}")
+    if missing:
+        click.echo(
+            f"{len(missing)} items are not built yet and are not in the bundle "
+            f"({missing[0]} to {missing[-1]}). Pull their stacks, build, and "
+            "bundle into a new folder."
+        )
+
+
+@audit.command("score")
+@_audit_opt
+@click.option(
+    "--answers",
+    "answer_paths",
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Answers files. Default: every answers/*.jsonl of the audit.",
+)
+def score_cmd(audit_dir: Path, answer_paths: tuple[Path, ...]) -> None:
+    """Rates per stratum and agreement between interpreters.
+
+    Writes score/judged.csv (every answer beside its key), score/rates.csv
+    and score/agreement.csv. Do not open them before your own audit is done:
+    they hold the key.
+    """
+    from csdv_core.audit import score as S
+    from csdv_core.audit.draw import read_items
+
+    _setup_logging()
+    paths = list(answer_paths) or sorted((audit_dir / "answers").glob("*.jsonl"))
+    if not paths:
+        raise click.ClickException(f"No answers in {audit_dir / 'answers'}")
+    items = read_items(audit_dir / "items.csv")
+    judged = S.judged_table(items, S.load_answers(paths))
+    if judged.empty:
+        raise click.ClickException("No answer matches an item of this audit.")
+    out = audit_dir / "score"
+    out.mkdir(exist_ok=True)
+    rates = S.rates(judged)
+    agreement = S.agreement(judged)
+    judged.to_csv(out / "judged.csv", index=False)
+    rates.to_csv(out / "rates.csv", index=False)
+    agreement.to_csv(out / "agreement.csv", index=False)
+    click.echo(rates.round(3).to_string(index=False))
+    if not agreement.empty:
+        agreed = int(agreement["all_agree"].sum())
+        click.echo(
+            f"{len(agreement)} items judged by more than one interpreter, "
+            f"{agreed} with the same answer from all."
+        )
+    click.echo(f"Tables: {out}")

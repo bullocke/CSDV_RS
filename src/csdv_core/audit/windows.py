@@ -16,7 +16,7 @@ import pandas as pd
 import rasterio
 from PIL import Image
 
-from csdv_core.audit.build import label_overlay_image
+from csdv_core.audit.build import label_overlay_image, save_overlay
 from csdv_core.label.render import BANDS, stretch_limits, to_rgb
 
 log = logging.getLogger(__name__)
@@ -41,7 +41,11 @@ def stack_years(label_dir: Path, window_id: str) -> dict[str, Path] | None:
 
 
 def window_item(
-    row: pd.Series, label_dir: Path, site: Path, chips: pd.DataFrame
+    row: pd.Series,
+    label_dir: Path,
+    site: Path,
+    chips: pd.DataFrame,
+    refresh: bool = False,
 ) -> dict | None:
     """Render a window item and return its page entry.
 
@@ -73,18 +77,17 @@ def window_item(
     labels = []
     for number in range(2, len(dates) + 1):
         name = f"label_{number}.png"
-        if not (folder / name).exists():
+        if refresh or not (folder / name).exists():
             overlay = label_overlay_image(
                 unit_chips,
                 label_dir / "chips",
                 view,
                 dates[number - 2],
                 dates[number - 1],
-                veil_unlabelled=True,
             )
             if overlay is None:
                 continue
-            overlay.save(folder / name)
+            save_overlay(overlay, folder / name)
         labels.append({"image": number, "png": f"img/{row['item']}/{name}"})
     return {
         "id": row["item"],

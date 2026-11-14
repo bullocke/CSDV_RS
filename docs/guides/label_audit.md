@@ -17,6 +17,9 @@ csdv audit build --label-dir $LABEL --audit-dir $AUDIT --name scale_test
 
 # 3. Judge. Stop with Ctrl+C at any time. The page resumes where you stopped.
 csdv audit app --audit-dir $AUDIT --interpreter eb
+
+# 4. When you are done: rates per stratum, and agreement between interpreters.
+csdv audit score --audit-dir $AUDIT
 ```
 
 `draw` refuses to overwrite `items.csv`. A sample is drawn once, because answers refer to its item names. `--extend` with larger sizes, the same seed and the same excluded windows adds items after the existing ones.
@@ -68,5 +71,29 @@ Candidate items reuse the request images of the label run, so block 1 needs noth
 scripts/chpc/pull_label_run.sh scale_test --no-requests --stacks-from $AUDIT/stack_windows.txt
 csdv audit build --label-dir $LABEL --audit-dir $AUDIT --name scale_test
 ```
+
+`csdv audit build --refresh-labels` draws the label overlays again, for example after the labels were rebuilt.
+
+## Other interpreters
+
+```bash
+csdv audit bundle --audit-dir $AUDIT --out-dir audit_shared
+```
+
+The folder holds the page and the items every interpreter judges (the first 30 accepted events and the first 30 windows, as far as they are built). It needs no install: an interpreter opens `index.html` in a browser, gives a name once, judges with the keyboard, presses "Download answers" and sends back the file `answers_<name>.jsonl`. Answers stay in that browser between sessions. `index.html?who=NAME` sets the name without the dialog. Put the returned files in `answers/` and run `csdv audit score`.
+
+## Scores
+
+`csdv audit score` writes three tables to `score/`. They hold the key, so open them only when your own audit is done.
+
+| File | Content |
+|---|---|
+| `judged.csv` | Every answer beside the key of its item |
+| `rates.csv` | Per interpreter and stratum: the share of items with loss, and for accepted events the share with loss in the labelled interval, with the label's agent, and with a label extent that holds. Each rate has its count, an exact (Clopper-Pearson) 95% interval and a rate weighted by inclusion probability |
+| `agreement.csv` | Items judged by more than one interpreter, with every answer and whether all agree |
+
+"Cannot tell" answers are left out of a rate and counted beside it. The weight of an item is the inverse of the probability that its window entered the label sample, times the share of its sub-stratum that the interpreter judged.
+
+## Answer format
 
 An answer line holds `item`, `kind`, `answer` (`none`, `loss` or `unsure`), `seconds`, `note`, `interpreter` and `saved`. A candidate answer adds `loss_at` (image number), `more_at`, `type` and `outline`. A window answer adds `marks`, each with `x` and `y` as fractions of the image from its top-left corner and the `image` number.

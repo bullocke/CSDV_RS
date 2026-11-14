@@ -37,7 +37,15 @@ IGNORE_RGB = (235, 235, 235)
 NO_LABEL = 254
 _PLACE = re.compile(r"area in (.+?)\. North is up")
 
-__all__ = ["BuildReport", "build_site", "label_overlay_image", "write_page"]
+__all__ = [
+    "BuildReport",
+    "build_site",
+    "bundle_site",
+    "label_overlay_image",
+    "read_entries",
+    "save_overlay",
+    "write_page",
+]
 
 
 @dataclass
@@ -77,6 +85,13 @@ def _place(src: Path, dst: Path, link: bool) -> None:
     shutil.copy2(src, dst)
 
 
+def save_overlay(overlay: Image.Image, path: Path) -> None:
+    """Write an overlay in one step, so a page in use never reads half of it."""
+    partial = path.with_suffix(".tmp")
+    overlay.save(partial, format="PNG")
+    partial.replace(path)
+
+
 def _requests(label_dir: Path, window_id: str) -> dict[str, dict]:
     """Verdict requests of a window by candidate."""
     out = {}
@@ -95,13 +110,14 @@ def label_overlay_image(
     view: list[float],
     date_a: str,
     date_b: str,
-    veil_unlabelled: bool = False,
+    veil_unlabelled: bool = True,
 ) -> Image.Image | None:
     """The label of one interval over a view, as a transparent image.
 
-    Loss is a light red fill with a solid edge and ignored ground is hatched.
-    Background stays clear. Ground without a label stays clear too, or is
-    darkened when ``veil_unlabelled`` is set.
+    Loss is a light red fill, with a solid edge where it meets labelled
+    ground of another kind. Ignored ground is hatched and background stays
+    clear. Ground without a label (outside every chip) is darkened, unless
+    ``veil_unlabelled`` is off.
 
     Args:
         chips: Rows of ``chips.parquet`` (``chip_id``, ``epsg``, ``bounds``
@@ -154,7 +170,9 @@ def label_overlay_image(
     ignore = label == 255
     rgba = np.zeros((px, px, 4), dtype=np.uint8)
     rgba[loss] = (*LOSS_RGB, 70)
-    edge = loss & ~ndimage.binary_erosion(loss, iterations=2, border_value=1)
+    # No edge where loss simply runs out of the labelled ground.
+    other = ~loss & (label != NO_LABEL)
+    edge = loss & ndimage.binary_dilation(other, iterations=2)
     rgba[edge] = (*LOSS_RGB, 255)
     rr, cc = np.indices(label.shape)
     # A light line beside a dark one, so the hatch shows on any ground.
@@ -172,6 +190,7 @@ def _candidate_item(
     chips: pd.DataFrame,
     requests: dict[str, dict[str, dict]],
     link: bool,
+    refresh: bool = False,
 ) -> dict:
     """Place the images of a candidate item and return its page entry."""
     window = row["window_id"]
@@ -193,7 +212,7 @@ def _candidate_item(
         if number > len(dates):
             continue
         name = f"label_{number}.png"
-        if not (folder / name).exists():
+        if refresh or not (folder / name).exists():
             overlay = label_overlay_image(
                 unit_chips,
                 label_dir / "chips",
@@ -203,7 +222,7 @@ def _candidate_item(
             )
             if overlay is None:
                 continue
-            overlay.save(folder / name)
+            save_overlay(overlay, folder / name)
         labels.append({"image": number, "png": f"img/{row['item']}/{name}"})
     match = _PLACE.search(request.get("prompt", ""))
     return {
@@ -226,6 +245,7 @@ def build_site(
     *,
     name: str = "audit",
     link: bool = True,
+    refresh_labels: bool = False,
 ) -> BuildReport:
     """Write the page, the images of every item that can be built, and
     ``items.js``.
@@ -237,6 +257,8 @@ def build_site(
         name: Name of the audit, kept in the page for its stored answers.
         link: Hard-link request images instead of copying them where the
             file system allows it.
+        refresh_labels: Draw the label overlays again. Images are left as
+            they are.
 
     Returns:
         What was built and which windows still lack imagery.
@@ -253,9 +275,11 @@ def build_site(
     for _, row in items.sort_values(["block", "order"]).iterrows():
         try:
             if row["kind"] == "cand":
-                entry = _candidate_item(row, label_dir, site, chips, requests, link)
+                entry = _candidate_item(
+                    row, label_dir, site, chips, requests, link, refresh_labels
+                )
             else:
-                entry = window_item(row, label_dir, site, chips)
+                entry = window_item(row, label_dir, site, chips, refresh_labels)
                 if entry is None:
                     missing = (
                         report.missing_reserve
@@ -270,15 +294,7 @@ def build_site(
             continue
         entries.append(entry)
         report.built.append(row["item"])
-    meta = {"name": name, "n_items": len(entries)}
-    text = (
-        "window.AUDIT_META = "
-        + json.dumps(meta)
-        + ";\nwindow.AUDIT_ITEMS = "
-        + json.dumps(entries, indent=0)
-        + ";\n"
-    )
-    (site / "items.js").write_text(text)
+    _write_entries(site, {"name": name, "n_items": len(entries)}, entries)
     log.info(
         "Built %d items, %d windows without imagery, %d left out",
         len(report.built),
@@ -286,3 +302,62 @@ def build_site(
         len(report.skipped),
     )
     return report
+
+
+_META = "window.AUDIT_META = "
+_ITEMS = ";\nwindow.AUDIT_ITEMS = "
+
+
+def _write_entries(site: Path, meta: dict, entries: list[dict]) -> None:
+    """Write ``items.js``. A script, not JSON, so the page opens from disk."""
+    text = _META + json.dumps(meta) + _ITEMS + json.dumps(entries, indent=0) + ";\n"
+    (site / "items.js").write_text(text)
+
+
+def read_entries(site: Path) -> tuple[dict, list[dict]]:
+    """The audit's name and item entries of a built page."""
+    text = (Path(site) / "items.js").read_text()
+    meta, entries = text[len(_META) :].split(_ITEMS, 1)
+    return json.loads(meta), json.loads(entries.rstrip().rstrip(";"))
+
+
+def bundle_site(
+    audit_dir: Path, out_dir: Path, items: pd.DataFrame, *, shared_only: bool = True
+) -> list[str]:
+    """Copy the page with a subset of the built items into a folder to share.
+
+    The folder is self-contained: an interpreter opens ``index.html`` from
+    disk, answers stay in the browser, and "Download answers" saves them as
+    one file to send back.
+
+    Args:
+        audit_dir: Folder of the audit, with a built ``site``.
+        out_dir: Folder to write. It must not hold another bundle.
+        items: The audit items.
+        shared_only: Keep only the items every interpreter judges.
+
+    Returns:
+        Wanted items that are not built yet (for example windows whose
+        imagery has not been pulled), which the bundle lacks.
+
+    Raises:
+        FileExistsError: If ``out_dir`` already holds a page.
+    """
+    site, out_dir = Path(audit_dir) / "site", Path(out_dir)
+    if (out_dir / "items.js").exists():
+        raise FileExistsError(f"{out_dir} already holds a bundle")
+    meta, entries = read_entries(site)
+    wanted = items[items["shared"]] if shared_only else items
+    wanted = wanted.sort_values(["block", "order"])["item"].tolist()
+    built = {entry["id"]: entry for entry in entries}
+    kept = [built[item] for item in wanted if item in built]
+    write_page(out_dir)
+    for entry in kept:
+        shutil.copytree(site / "img" / entry["id"], out_dir / "img" / entry["id"])
+    suffix = "shared" if shared_only else "all"
+    _write_entries(
+        out_dir, {"name": f"{meta['name']}_{suffix}", "n_items": len(kept)}, kept
+    )
+    missing = [item for item in wanted if item not in built]
+    log.info("Bundle %s: %d items, %d not built yet", out_dir, len(kept), len(missing))
+    return missing

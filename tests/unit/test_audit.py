@@ -17,7 +17,13 @@ from PIL import Image
 from rasterio.transform import from_origin
 from shapely.geometry import Point
 
-from csdv_core.audit.build import build_site, label_overlay_image
+from csdv_core.audit import score as S
+from csdv_core.audit.build import (
+    build_site,
+    bundle_site,
+    label_overlay_image,
+    read_entries,
+)
 from csdv_core.audit.draw import (
     AuditDesign,
     draw_items,
@@ -309,6 +315,18 @@ def test_overlay_marks_loss_and_ignore_only(label_dir):
     assert alpha[10, 10] == 255
     assert alpha[0:8, :].max() == 0
     assert alpha[40:50, :].max() > 0
+    # Ground outside every chip is veiled, and loss gets no edge against it.
+    wide = [view[0] - 12.0, view[1], view[2] - 12.0, view[3], PX]
+    shifted = np.asarray(
+        label_overlay_image(chips, label_dir / "chips", wide, DATES[1], DATES[2])
+    )
+    assert (shifted[:, :19, 3] == 150).all() and (shifted[:, :19, :3] == 0).all()
+    clear = np.asarray(
+        label_overlay_image(
+            chips, label_dir / "chips", wide, DATES[1], DATES[2], veil_unlabelled=False
+        )
+    )
+    assert clear[:, :19, 3].max() == 0
     # No chip holds an interval between dates that are not consecutive.
     assert (
         label_overlay_image(chips, label_dir / "chips", view, DATES[0], DATES[2])
@@ -373,3 +391,138 @@ def test_server_refuses_a_bad_answer(served):
             _post(f"{base}/answer", payload)
         assert err.value.code == 400
     assert not answers.exists()
+
+
+def test_bundle_holds_the_shared_items_only(label_dir, tmp_path):
+    items = draw_items(label_dir, DESIGN)
+    audit_dir = tmp_path / "audit"
+    build_site(label_dir, audit_dir, items, name="test")
+    out = tmp_path / "bundle"
+    missing = bundle_site(audit_dir, out, items)
+    meta, entries = read_entries(out)
+    shared = items[items["shared"]]
+    built = set(shared.loc[shared["kind"] == "cand", "item"])
+    assert meta["name"] == "test_shared"
+    assert {e["id"] for e in entries} >= built
+    assert {e["id"] for e in entries} | set(missing) == set(shared["item"])
+    assert {p.name for p in (out / "img").iterdir()} == {e["id"] for e in entries}
+    for name in ("index.html", "app.js", "style.css"):
+        assert (out / name).exists()
+    first = out / entries[0]["imgs"][0]
+    assert first.exists() and first.stat().st_nlink == 1
+    with pytest.raises(FileExistsError):
+        bundle_site(audit_dir, out, items)
+
+
+def _answers(tmp_path: Path, name: str, records: list[dict]) -> Path:
+    path = tmp_path / f"{name}.jsonl"
+    lines = [
+        json.dumps({"interpreter": name, "saved": f"2026-01-01T00:00:{i:02d}", **r})
+        for i, r in enumerate(records)
+    ]
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
+
+def test_exact_interval_matches_known_values():
+    low, high = S.exact_interval(0, 60)
+    assert low == 0.0 and high == pytest.approx(0.0596, abs=1e-3)
+    low, high = S.exact_interval(58, 60)
+    assert low == pytest.approx(0.885, abs=2e-3) and high == pytest.approx(
+        0.996, abs=2e-3
+    )
+    assert S.exact_interval(5, 5) == (pytest.approx(0.478, abs=2e-3), 1.0)
+    assert all(np.isnan(v) for v in S.exact_interval(0, 0))
+
+
+def test_rates_weigh_items_by_inclusion_probability(tmp_path):
+    items = pd.DataFrame(
+        {
+            "item": ["C001", "C002", "C003", "C004", "C005"],
+            "block": 1,
+            "kind": "cand",
+            "stratum": ["accepted"] * 3 + ["rejected"] * 2,
+            "sub": ["accepted_other_fire"] * 2
+            + ["accepted_diffuse_wind", "rejected", "rejected"],
+            "agent": ["fire", "fire", "wind", "", ""],
+            "label_images": ["3", "4", "2,4", "", ""],
+            "window_incl_prob": [0.5, 0.5, 0.1, 0.5, 0.5],
+            "n_population": [10, 10, 4, 20, 20],
+            "shared": [True, True, False, False, False],
+        }
+    )
+    eb = _answers(
+        tmp_path,
+        "eb",
+        [
+            {
+                "item": "C001",
+                "answer": "loss",
+                "loss_at": 3,
+                "more_at": [],
+                "type": "fire",
+                "outline": "good",
+                "seconds": 20,
+            },
+            {"item": "C002", "answer": "none", "seconds": 10},
+            {"item": "C002", "void": True},
+            {
+                "item": "C002",
+                "answer": "loss",
+                "loss_at": 3,
+                "more_at": [],
+                "type": "harvest",
+                "outline": "large",
+                "seconds": 30,
+            },
+            {
+                "item": "C003",
+                "answer": "loss",
+                "loss_at": 3,
+                "more_at": [4],
+                "type": "wind",
+                "outline": "good",
+                "seconds": 40,
+            },
+            {"item": "C004", "answer": "none", "seconds": 5},
+            {"item": "C005", "answer": "unsure", "seconds": 60},
+            {"item": "X999", "answer": "none", "seconds": 1},
+        ],
+    )
+    other = _answers(
+        tmp_path,
+        "other",
+        [
+            {
+                "item": "C001",
+                "answer": "loss",
+                "loss_at": 3,
+                "more_at": [],
+                "type": "fire",
+                "outline": "good",
+                "seconds": 15,
+            },
+            {"item": "C002", "answer": "none", "seconds": 12},
+        ],
+    )
+    judged = S.judged_table(items, S.load_answers([eb, other]))
+    mine = judged[judged["interpreter"] == "eb"].set_index("item")
+    assert len(mine) == 5
+    assert mine.loc["C002", "answer"] == "loss"
+    assert mine["same_interval"].tolist()[:3] == [True, False, True]
+    assert mine["same_type"].tolist()[:3] == [True, False, True]
+    # Two of ten judged in a sub-stratum whose windows had probability 0.5.
+    assert mine.loc["C001", "weight"] == pytest.approx(1 / (0.5 * 2 / 10))
+    assert mine.loc["C003", "weight"] == pytest.approx(1 / (0.1 * 1 / 4))
+    table = S.rates(judged).set_index(["interpreter", "stratum", "measure"])
+    seen = table.loc[("eb", "accepted", "loss seen")]
+    assert (seen["n"], seen["k"]) == (3, 3)
+    interval = table.loc[("eb", "accepted", "loss in labelled interval")]
+    assert (interval["n"], interval["k"]) == (3, 2)
+    assert interval["weighted_rate"] == pytest.approx((10 + 40) / (10 + 10 + 40))
+    assert table.loc[("eb", "accepted", "label extent holds"), "k"] == 2
+    rejected = table.loc[("eb", "rejected", "loss seen")]
+    assert (rejected["n"], rejected["k"], rejected["unsure"]) == (1, 0, 1)
+    both = S.agreement(judged).set_index("item")
+    assert set(both.index) == {"C001", "C002"}
+    assert both.loc["C001", "all_agree"] and not both.loc["C002", "all_agree"]

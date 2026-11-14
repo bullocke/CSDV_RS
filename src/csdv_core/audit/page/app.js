@@ -111,7 +111,9 @@
         stored = {};
       }
       state.records = stored.records || [];
-      state.interpreter = stored.interpreter || "";
+      // index.html?who=NAME names the interpreter without the dialog.
+      const who = /[?&]who=([^&]+)/.exec(location.search);
+      state.interpreter = stored.interpreter || (who ? decodeURIComponent(who[1]) : "");
       if (!state.interpreter) {
         state.interpreter = (window.prompt("Your name or initials") || "anonymous").trim();
       }
@@ -260,11 +262,11 @@
       );
       buttons.push(hintButton("⌫", "back", back, true));
       hints(
-        "The label (red) says loss between image " +
+        "The label says loss (red) between image " +
           (label.image - 1) +
           " and " +
           label.image +
-          ". Does its extent hold?",
+          ". Hatched is left out, dark has no label. Does the red extent hold?",
         buttons
       );
     }
