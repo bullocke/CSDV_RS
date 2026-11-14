@@ -58,6 +58,10 @@ viewer = [
 # Disturbance labels with vision models (csdv_core.label). pyarrow writes the
 # chip table. Binary deps (rasterio, geopandas, pillow) come from environment.yml.
 label = ["httpx", "pillow", "pyarrow", "pystac-client", "planetary-computer"]
+# Pair model for canopy loss (csdv_core.pairmodel). On CHPC both come from the
+# CUDA wheels that scripts/chpc/create_env.sh installs. On a laptop use the CPU
+# wheels: pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+pairmodel = ["torch", "torchvision"]
 dev = [
     "pytest",
     "pytest-cov",

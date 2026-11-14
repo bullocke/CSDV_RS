@@ -29,6 +29,12 @@ export NAIPCHM_REPO_DIR="$CSDV_REPO/../naip-chm"
 # lines of every script, including the data transfer jobs.
 export CSDV_SBATCH_CPU="--account=EDIT --partition=EDIT --qos=EDIT"
 
+# EDIT: the same for one GPU, used by scripts/slurm/run_pair_first_look.sbatch:
+#   sbatch $CSDV_SBATCH_GPU scripts/slurm/run_pair_first_look.sbatch ...
+# Any card with 11 GB or more will do. Avoid granite-gpu-guest: its Blackwell
+# cards are not supported by the cu126 build of PyTorch.
+export CSDV_SBATCH_GPU="--account=EDIT --partition=EDIT --qos=EDIT --gres=gpu:1"
+
 export CSDV_ENV=csdv-gpu
 export CSDV_DATA_ROOT="$CSDV_STORE/data"
 export CSDV_RESULTS_ROOT="$CSDV_STORE/results"
