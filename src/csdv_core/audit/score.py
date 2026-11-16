@@ -128,7 +128,10 @@ def rates(judged: pd.DataFrame) -> pd.DataFrame:
     the label's agent (among those with loss) and the share whose label
     extent holds. For rejected candidates and disagreements it is the share
     with loss. For windows it is the share with loss on ground labelled
-    background.
+    background. For model-only patches (block 3) it is the share with loss,
+    the share whose loss lies in the interval the model flagged, and the share
+    whose cause is the model's agent: ground where the model sees loss and the
+    candidate set had nothing to judge.
     """
     rows = []
     for (name, stratum), part in judged.groupby(["interpreter", "stratum"]):
@@ -145,6 +148,9 @@ def rates(judged: pd.DataFrame) -> pd.DataFrame:
                     lambda v: v == "good" if isinstance(v, str) else np.nan
                 )
                 found.append(_rate(loss, holds, "label extent holds"))
+        elif stratum == "model_only":
+            found.append(_rate(sure, sure["same_interval"], "loss in model interval"))
+            found.append(_rate(loss, loss["same_type"], "cause equals model agent"))
         for row in found:
             rows.append(
                 {

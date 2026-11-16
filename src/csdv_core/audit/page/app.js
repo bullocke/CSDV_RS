@@ -46,6 +46,16 @@
       "if there is none. Otherwise click on each loss the label missed, in the first " +
       "image that shows it, then press <b>Enter</b>.</p>" +
       "<p>Arrow keys flick between dates, the wheel zooms, T hides the label.</p>",
+    3:
+      "<h1>Block 3: more outlined areas</h1>" +
+      "<p>The same question as block 1, on other ground. Look inside the yellow outline, " +
+      "which may follow a grid of small squares.</p>" +
+      "<p>Did live forest canopy disappear between two dates, over about 0.1 ha or more? " +
+      "Press the number of the <b>first image in which the loss is visible</b>, or <b>0</b> " +
+      "if there is none.</p>" +
+      "<p>Not a loss: differences of colour, shadow, season or haze, leafless trees, " +
+      "regrowth, ground that was already open in image 1, and dead trees that fall or " +
+      "are removed later.</p>",
   };
 
   const $ = (id) => document.getElementById(id);

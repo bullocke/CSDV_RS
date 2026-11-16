@@ -263,3 +263,280 @@ def score_cmd(audit_dir: Path, answer_paths: tuple[Path, ...]) -> None:
             f"{agreed} with the same answer from all."
         )
     click.echo(f"Tables: {out}")
+
+
+# --------------------------------------------------------------------------
+# Fifth stratum: patches only the model flags (block 3)
+# --------------------------------------------------------------------------
+
+_stratum_opt = click.option(
+    "--out-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    required=True,
+    help="Folder of the stratum (patches.gpkg, requests/). On CHPC: "
+    "$CSDV_EXPORT_DIR/audit/model_only.",
+)
+
+
+def _batch_units() -> list[str]:
+    """Units with ``batch`` set to yes in config/pair/sites.csv."""
+    import pandas as pd
+
+    from csdv_core.io.paths import _repo_root
+
+    path = _repo_root() / "config" / "pair" / "sites.csv"
+    sites = pd.read_csv(path, comment="#")
+    return sites.loc[sites["batch"].astype(str).eq("yes"), "unit"].astype(str).tolist()
+
+
+@audit.group("model-only")
+def model_only() -> None:
+    """The fifth stratum: patches the model flags that no candidate touches.
+
+    Drawn from maps of units the model never trained on (the holdout runs),
+    rendered like block 1, and added to the audit as block 3. See
+    docs/guides/label_audit.md.
+    """
+
+
+@model_only.command("draw")
+@_label_opt
+@_stratum_opt
+@click.option(
+    "--pair-dir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Folder of the pair-model runs. Default: $CSDV_EXPORT_DIR/pairmodel.",
+)
+@click.option(
+    "--units",
+    default=None,
+    help="Comma-separated units. Default: " "the batch units of config/pair/sites.csv.",
+)
+@click.option(
+    "--run-pattern",
+    default="holdout_{unit}",
+    show_default=True,
+    help="Run folder of each unit.",
+)
+@click.option(
+    "--fallback-run",
+    default="first_look_blocks2",
+    show_default=True,
+    help="Run used for a unit without its own run folder, if it mapped the "
+    "unit (the run that held Oregon out).",
+)
+@click.option(
+    "--exclude-shown/--keep-shown",
+    default=True,
+    show_default=True,
+    help="Leave out patches that have a close-up in the run's compare/events/.",
+)
+@click.option("--n-per-unit", type=int, default=2, show_default=True)
+@click.option("--reserve", type=int, default=1, show_default=True)
+@click.option("--seed", type=int, default=0, show_default=True)
+@click.option(
+    "--allow-missing",
+    is_flag=True,
+    help="Draw although some units have no map. The stratum is drawn once, "
+    "so those units can never join it.",
+)
+def model_only_draw(
+    label_dir: Path,
+    out_dir: Path,
+    pair_dir: Path | None,
+    units: str | None,
+    run_pattern: str,
+    fallback_run: str,
+    exclude_shown: bool,
+    n_per_unit: int,
+    reserve: int,
+    seed: int,
+    allow_missing: bool,
+) -> None:
+    """Draw the model-only patches once and write patches.gpkg."""
+    import geopandas as gpd
+    import pandas as pd
+
+    from csdv_core.audit import model_only as M
+    from csdv_core.review.config import default_export_dir
+
+    _setup_logging()
+    path = out_dir / "patches.gpkg"
+    if path.exists():
+        raise click.UsageError(f"{path} exists. The stratum is drawn once.")
+    pair_dir = pair_dir or default_export_dir() / "pairmodel"
+    wanted = [u.strip() for u in units.split(",")] if units else _batch_units()
+    design = M.ModelOnlyDesign(n_per_unit=n_per_unit, reserve=reserve, seed=seed)
+    frames, used, missing = [], {}, []
+    for unit in wanted:
+        run_dir = pair_dir / run_pattern.format(unit=unit)
+        if not (run_dir / "map" / f"prob_forest_{unit}.tif").exists():
+            run_dir = pair_dir / fallback_run
+        if not (run_dir / "map" / f"prob_forest_{unit}.tif").exists():
+            missing.append(unit)
+            continue
+        cand_path = label_dir / "candidates" / f"{unit}.gpkg"
+        if not cand_path.exists():
+            raise click.ClickException(f"{cand_path} is missing.")
+        shown = M.shown_patches(run_dir, unit) if exclude_shown else set()
+        pop = M.patch_population(
+            run_dir, unit, gpd.read_file(cand_path), design, exclude=shown
+        )
+        pop["run"] = run_dir.name
+        used[unit] = run_dir.name
+        if not pop.empty:
+            frames.append(M.to_sample_crs(pop))
+    if missing:
+        where = ", ".join(missing)
+        if not allow_missing:
+            raise click.ClickException(
+                f"No map for {where} in {run_pattern} or {fallback_run}. Wait "
+                "for their holdout runs, or pass --allow-missing."
+            )
+        click.echo(f"Left out, no map: {where}")
+    if not frames:
+        raise click.ClickException("No patch in any unit.")
+    population = gpd.GeoDataFrame(pd.concat(frames), crs=M.SAMPLE_EPSG)
+    drawn = M.draw_patches(population, design)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    drawn.drop(columns=["key"]).to_file(path, layer="patches")
+    population.drop(columns="geometry").to_csv(out_dir / "population.csv", index=False)
+    (out_dir / "patches.txt").write_text("".join(f"{p}\n" for p in drawn["patch"]))
+    counts = population.groupby("unit").size()
+    for unit, run in used.items():
+        click.echo(f"{unit}: {int(counts.get(unit, 0))} patches in {run}")
+    click.echo(
+        f"{int((~drawn['reserve']).sum())} target and {int(drawn['reserve'].sum())} "
+        f"reserve patches written to {path}"
+    )
+
+
+@model_only.command("render")
+@_label_opt
+@_stratum_opt
+@click.option(
+    "--export-dir",
+    default=None,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Export folder with runs/<tag>/<unit>/. Default: $CSDV_EXPORT_DIR.",
+)
+@click.option("--run-tag", default="default", show_default=True)
+@click.option(
+    "--runs-dir",
+    default=None,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Folder with one disturbance run folder per unit. On CHPC: "
+    "$CSDV_RESULTS_ROOT/disturbance, with --run-subdir.",
+)
+@click.option("--run-subdir", default="", help="Sub-folder of each unit folder.")
+@click.option(
+    "--naip-source",
+    type=click.Choice(["local", "remote"]),
+    default="local",
+    show_default=True,
+)
+@click.option(
+    "--data-root",
+    default=None,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Root of the local mosaics. Default: $CSDV_DATA_ROOT.",
+)
+@click.option("--limit", type=int, default=None, help="Render the first N only.")
+@click.option("--keep-stacks", is_flag=True, help="Keep the yearly GeoTIFFs.")
+def model_only_render(
+    label_dir: Path,
+    out_dir: Path,
+    export_dir: Path | None,
+    run_tag: str,
+    runs_dir: Path | None,
+    run_subdir: str,
+    naip_source: str,
+    data_root: Path | None,
+    limit: int | None,
+    keep_stacks: bool,
+) -> None:
+    """Render every date of each drawn patch, outlined as in block 1."""
+    import geopandas as gpd
+
+    from csdv_core.audit.model_only import render_patches
+    from csdv_core.config import load_label
+    from csdv_core.io.paths import project_paths
+    from csdv_core.label.pipeline import LabelRun
+    from csdv_core.review.config import default_export_dir
+
+    _setup_logging()
+    patches = gpd.read_file(out_dir / "patches.gpkg", layer="patches")
+    if limit:
+        patches = patches.head(limit)
+    if runs_dir is None:
+        runs_dir = (export_dir or default_export_dir()) / "runs" / run_tag
+    run = LabelRun(
+        root=label_dir,
+        runs_dir=runs_dir,
+        run_tag=run_tag,
+        run_subdir=run_subdir,
+        cfg=load_label(),
+    )
+    failed = render_patches(
+        patches,
+        out_dir,
+        run,
+        source="local" if naip_source == "local" else None,
+        data_root=data_root or project_paths().data_root,
+        keep_stacks=keep_stacks,
+    )
+    done = sum(
+        (out_dir / "requests" / p / "requests.jsonl").exists() for p in patches["patch"]
+    )
+    click.echo(f"{done} of {len(patches)} patches rendered in {out_dir / 'requests'}")
+    if failed:
+        click.echo(f"Imagery incomplete, not rendered: {', '.join(failed)}")
+
+
+@model_only.command("add")
+@_audit_opt
+@click.option(
+    "--model-only",
+    "stratum_dir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    required=True,
+    help="Pulled folder of the stratum (patches.gpkg, requests/).",
+)
+def model_only_add(audit_dir: Path, stratum_dir: Path) -> None:
+    """Add the rendered patches to the audit as block 3.
+
+    Existing items keep their names and order, and items.csv is backed up
+    first. The request images are copied into the audit's model_only/
+    folder. Then run `csdv audit build`.
+    """
+    import shutil
+
+    import geopandas as gpd
+
+    from csdv_core.audit.build import MODEL_ONLY_DIR
+    from csdv_core.audit.draw import read_items
+    from csdv_core.audit.model_only import BLOCK, append_items
+
+    _setup_logging()
+    path = audit_dir / "items.csv"
+    items = read_items(path)
+    patches = gpd.read_file(stratum_dir / "patches.gpkg", layer="patches")
+    target = audit_dir / MODEL_ONLY_DIR
+    shutil.copytree(stratum_dir / "requests", target / "requests", dirs_exist_ok=True)
+    shutil.copy2(stratum_dir / "patches.gpkg", target / "patches.gpkg")
+    result = append_items(items, patches, target)
+    added = len(result) - len(items)
+    if not added:
+        click.echo("No new patch to add.")
+        return
+    backup = path.with_name("items_before_block3.csv")
+    if not backup.exists():
+        shutil.copy2(path, backup)
+    result.to_csv(path, index=False)
+    block = result[result["block"] == BLOCK]
+    click.echo(
+        f"{added} items added as block {BLOCK} "
+        f"({int((~block['reserve']).sum())} target, {int(block['reserve'].sum())} "
+        f"reserve). Earlier items unchanged: {len(items)}. Backup: {backup.name}"
+    )

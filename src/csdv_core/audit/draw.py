@@ -39,6 +39,8 @@ STRATUM_STATUSES = {
     "disagree": ("disagree", "date_disputed"),
 }
 SEEDED_STRATA = ("di", "other", "quiet")
+#: First letter of the item names of each block.
+BLOCK_LETTERS = {1: "C", 2: "B", 3: "M"}
 ITEM_COLUMNS = [
     "item",
     "block",
@@ -61,6 +63,7 @@ ITEM_COLUMNS = [
 ]
 
 __all__ = [
+    "BLOCK_LETTERS",
     "DIFFUSE_TYPES",
     "ITEM_COLUMNS",
     "AuditDesign",
@@ -252,7 +255,7 @@ def _ordered(items: pd.DataFrame, design: AuditDesign) -> pd.DataFrame:
     for block, part in items.groupby("block", sort=True):
         part = part.copy()
         part["order"] = range(1, len(part) + 1)
-        letter = "C" if block == 1 else "B"
+        letter = BLOCK_LETTERS[int(block)]
         part["item"] = [f"{letter}{i:03d}" for i in part["order"]]
         pool = part["stratum"].isin(["accepted", "background"]) & ~part["reserve"]
         part["shared"] = False
@@ -313,9 +316,10 @@ def extend_items(old: pd.DataFrame, new: pd.DataFrame) -> pd.DataFrame:
     parts = [old]
     for block, part in fresh.groupby("block", sort=True):
         part = part.copy()
-        start = int(old.loc[old["block"] == block, "order"].max() or 0)
+        orders = old.loc[old["block"] == block, "order"]
+        start = int(orders.max()) if len(orders) else 0
         part["order"] = range(start + 1, start + len(part) + 1)
-        letter = "C" if block == 1 else "B"
+        letter = BLOCK_LETTERS[int(block)]
         part["item"] = [f"{letter}{i:03d}" for i in part["order"]]
         part["shared"] = False
         parts.append(part)

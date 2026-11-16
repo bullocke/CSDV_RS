@@ -84,6 +84,31 @@ csdv audit bundle --audit-dir $AUDIT --out-dir audit_shared
 
 The folder holds the page and the items every interpreter judges (the first 30 accepted events and the first 30 windows, as far as they are built). It needs no install: an interpreter opens `index.html` in a browser, gives a name once, judges with the keyboard, presses "Download answers" and sends back the file `answers_<name>.jsonl`. Answers stay in that browser between sessions. `index.html?who=NAME` sets the name without the dialog. Put the returned files in `answers/` and run `csdv audit score`.
 
+## Fifth stratum: patches only the model flags
+
+The four strata of blocks 1 and 2 judge what the candidate set found. They cannot show what it missed. Block 3 looks at ground where a pair model trained on the labels reports loss and no candidate of any source (`di`, `weak`, `chm`) touches it, in any interval. The maps come from units the model never trained on: the holdout runs `pairmodel/holdout_<unit>/`, and `first_look_blocks2` for Oregon.
+
+A patch is a group of 8-connected cells at or above the run's threshold (from `compare/compare.json`) in one interval, as in `model_only.csv`. It enters the population when it covers at least 0.3 ha, at least half of its cells were forest at the earlier date (`prob_forest_<unit>.tif`), and it touches no candidate. Patches that already have a close-up in the run's `compare/events/` are left out, because the interpreter may have seen them. Each unit gives two patches and one in reserve, taken by the smallest keys of the seed as in the other strata.
+
+The page shows a patch as block 1 shows a candidate: every date with the patch outlined, and the same three keys (first image with loss, cause, no outline question). The outline follows the cells of the map, so it is blocky. Block 3 follows block 2, and its reserve comes after every target item. Do not open the `compare/events/` close-ups or `overview.png` of a holdout run before block 3 is judged.
+
+```bash
+# CHPC, when every holdout run is done (scripts/chpc/submit_pair_sites.sh --mode holdout)
+CSDV_MODEL_ONLY_LIMIT=1 sbatch $CSDV_SBATCH_CPU --output="$CSDV_LOG_DIR/%x-%j.out" \
+    scripts/slurm/run_audit_model_only.sbatch          # draws all, renders one
+sbatch $CSDV_SBATCH_CPU --output="$CSDV_LOG_DIR/%x-%j.out" \
+    scripts/slurm/run_audit_model_only.sbatch          # renders the rest
+
+# Laptop
+scripts/chpc/pull_exports.sh audit/model_only
+csdv audit model-only add --audit-dir AUDIT --model-only results/chpc_exports/audit/model_only
+csdv audit build --label-dir LABEL --audit-dir AUDIT
+```
+
+The draw refuses to run while a unit has no map, because the stratum is drawn once. `add` keeps every existing item as it is, writes a backup `items_before_block3.csv`, copies the request images into `AUDIT/model_only/`, and names the new items `M001` onwards. `patches.gpkg` and `population.csv` hold the key of block 3.
+
+`csdv audit score` reports for block 3 the share of patches with loss, the share whose loss lies in the interval the model flagged, and the share whose cause is the model's agent. The weight of a patch is the number of patches of its unit over the number judged there. Read with the population count, the share with loss estimates how much real forest loss the candidate set misses where the model sees it. It says nothing about loss that neither the candidates nor the model flag.
+
 ## Scores
 
 `csdv audit score` writes three tables to `score/`. They hold the key, so open them only when your own audit is done.

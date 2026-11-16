@@ -52,8 +52,11 @@ Keys: arrow keys flick between dates, Z reopens the previous item,
 / adds a note, Backspace goes back one step.
 """
 _PLACE = re.compile(r"area in (.+?)\. North is up")
+#: Folder of the audit that holds the request images of model-only patches.
+MODEL_ONLY_DIR = "model_only"
 
 __all__ = [
+    "MODEL_ONLY_DIR",
     "BuildReport",
     "build_site",
     "bundle_site",
@@ -229,7 +232,12 @@ def _candidate_item(
     link: bool,
     refresh: bool = False,
 ) -> dict:
-    """Place the images of a candidate item and return its page entry."""
+    """Place the images of a candidate item and return its page entry.
+
+    A model-only patch (kind ``patch``) is shown as a candidate without a
+    label overlay. Its request images are in ``<label_dir>/requests``, where
+    ``label_dir`` is then the folder of the stratum.
+    """
     window = row["window_id"]
     if window not in requests:
         requests[window] = _requests(label_dir, window)
@@ -244,6 +252,8 @@ def _candidate_item(
     view = request["view"]
     labels = []
     numbers = [int(n) for n in str(row["label_images"]).split(",") if n]
+    if row["kind"] == "patch":
+        numbers = []
     unit_chips = chips[chips["unit"] == row["unit"]]
     for number in numbers:
         if number > len(dates):
@@ -308,12 +318,23 @@ def build_site(
     chips = pd.read_parquet(label_dir / "chips" / "chips.parquet")
     report = BuildReport()
     requests: dict[str, dict[str, dict]] = {}
+    patch_requests: dict[str, dict[str, dict]] = {}
     entries = []
     for _, row in items.sort_values(["block", "order"]).iterrows():
         try:
             if row["kind"] == "cand":
                 entry = _candidate_item(
                     row, label_dir, site, chips, requests, link, refresh_labels
+                )
+            elif row["kind"] == "patch":
+                entry = _candidate_item(
+                    row,
+                    audit_dir / MODEL_ONLY_DIR,
+                    site,
+                    chips,
+                    patch_requests,
+                    link,
+                    refresh_labels,
                 )
             else:
                 entry = window_item(row, label_dir, site, chips, refresh_labels)

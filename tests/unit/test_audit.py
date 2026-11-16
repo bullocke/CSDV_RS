@@ -531,3 +531,256 @@ def test_rates_weigh_items_by_inclusion_probability(tmp_path):
     both = S.agreement(judged).set_index("item")
     assert set(both.index) == {"C001", "C002"}
     assert both.loc["C001", "all_agree"] and not both.loc["C002", "all_agree"]
+
+
+# --------------------------------------------------------------------------
+# Fifth stratum: model-only patches (block 3)
+# --------------------------------------------------------------------------
+
+CELL = 9.6
+MAP_DATES = ["2012-06-01_2014-06-01", "2014-06-01_2016-06-01"]
+
+
+def _write_map(path: Path, data: np.ndarray, names: list[str] | None = None) -> None:
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        height=data.shape[1],
+        width=data.shape[2],
+        count=data.shape[0],
+        dtype="uint8",
+        crs="EPSG:26916",
+        transform=from_origin(0.0, 960.0, CELL, CELL),
+        nodata=255,
+    ) as dst:
+        dst.write(data)
+        for k, name in enumerate(names or []):
+            dst.set_band_description(k + 1, name)
+
+
+@pytest.fixture()
+def pair_run(tmp_path: Path) -> Path:
+    """A map of 100 by 100 cells with four flagged patches in band 1.
+
+    Patch a: 6 x 6 cells on forest, far from any candidate (kept).
+    Patch b: 6 x 6 cells on forest, beside a candidate (left out).
+    Patch c: 6 x 6 cells, not forest at the earlier date (left out).
+    Patch d: 2 x 2 cells, under 0.3 ha (left out).
+    Band 2 holds one more kept patch.
+    """
+    run = tmp_path / "pairmodel" / "holdout_q0000001"
+    (run / "map").mkdir(parents=True)
+    (run / "compare" / "events").mkdir(parents=True)
+    (run / "compare" / "compare.json").write_text(json.dumps({"threshold": 0.8}))
+    prob = np.full((2, 100, 100), 10, dtype=np.uint8)
+    for r, c in ((10, 10), (10, 50), (60, 10)):
+        prob[0, r : r + 6, c : c + 6] = 95
+    prob[0, 80:82, 80:82] = 95
+    prob[1, 40:46, 40:46] = 90
+    forest = prob.copy()
+    forest[0, 60:66, 10:16] = 0
+    agent = np.full((2, 100, 100), 1, dtype=np.uint8)
+    agent[1, 40:46, 40:46] = 3
+    _write_map(run / "map" / "prob_q0000001.tif", prob, MAP_DATES)
+    _write_map(run / "map" / "prob_forest_q0000001.tif", forest, MAP_DATES)
+    _write_map(run / "map" / "agent_q0000001.tif", agent, MAP_DATES)
+    return run
+
+
+def _candidates_beside_b() -> gpd.GeoDataFrame:
+    # Patch b spans cells 50..55 by rows 10..15: x 480-537.6, y 806.4-864.
+    from shapely.geometry import box
+
+    return gpd.GeoDataFrame(
+        {"cand_id": ["c1"], "source": ["weak"]},
+        geometry=[box(540.0, 820.0, 560.0, 840.0)],
+        crs="EPSG:26916",
+    )
+
+
+def test_model_only_population_keeps_untouched_forest_patches(pair_run):
+    from csdv_core.audit import model_only as M
+
+    pop = M.patch_population(pair_run, "q0000001", _candidates_beside_b())
+    assert sorted(pop["patch"]) == ["q0000001_1-1", "q0000001_2-1"]
+    row = pop.set_index("patch").loc["q0000001_2-1"]
+    assert row["agent"] == "fire"
+    assert row["interval"] == MAP_DATES[1]
+    assert row["area_ha"] == pytest.approx(36 * CELL**2 / 10_000)
+    assert pop.geometry.area.sum() == pytest.approx(72 * CELL**2)
+    seen = M.patch_population(
+        pair_run,
+        "q0000001",
+        _candidates_beside_b(),
+        exclude={"q0000001_1-1"},
+    )
+    assert list(seen["patch"]) == ["q0000001_2-1"]
+
+
+def test_shown_patches_reads_the_close_up_names(pair_run):
+    from csdv_core.audit import model_only as M
+
+    (pair_run / "compare" / "events" / "model_only_2_2-41.png").write_bytes(b"")
+    (pair_run / "compare" / "events" / "object_3.png").write_bytes(b"")
+    assert M.shown_patches(pair_run, "q0000001") == {"q0000001_2-41"}
+
+
+def test_model_only_draw_is_seeded_per_unit():
+    from csdv_core.audit import model_only as M
+
+    frame = gpd.GeoDataFrame(
+        {
+            "patch": [f"u{u}_1-{i}" for u in (1, 2) for i in range(5)],
+            "unit": [f"u{u}" for u in (1, 2) for _ in range(5)],
+        },
+        geometry=[Point(i, 0) for i in range(10)],
+        crs="EPSG:5070",
+    )
+    design = M.ModelOnlyDesign(n_per_unit=2, reserve=1)
+    drawn = M.draw_patches(frame, design)
+    again = M.draw_patches(frame.sample(frac=1.0, random_state=3), design)
+    assert sorted(drawn["patch"]) == sorted(again["patch"])
+    assert drawn.groupby("unit").size().tolist() == [3, 3]
+    assert drawn.groupby("unit")["reserve"].sum().tolist() == [1, 1]
+    assert set(drawn["n_population"]) == {5}
+
+
+def _stratum(tmp_path: Path, patches: list[tuple[str, str, bool]]) -> Path:
+    """Request images of model-only patches: (patch, interval, reserve)."""
+    root = tmp_path / "model_only"
+    for patch, _, _ in patches:
+        folder = root / "requests" / patch
+        folder.mkdir(parents=True)
+        images = [f"{patch}_v{i}.jpg" for i in range(len(DATES))]
+        for name in images:
+            Image.new("RGB", (PX, PX), (90, 40, 40)).save(folder / name)
+        record = {
+            "cand_id": patch,
+            "kind": "verdict",
+            "prompt": "of the same area in a test county. North is up.",
+            "images": images,
+            "dates": DATES,
+            "view": _view(0),
+        }
+        (folder / "requests.jsonl").write_text(json.dumps(record) + "\n")
+    return root
+
+
+def _patch_table(patches: list[tuple[str, str, bool]]) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "patch": [p for p, _, _ in patches],
+            "unit": "q0000001",
+            "interval": [i for _, i, _ in patches],
+            "agent": "harvest",
+            "n_population": 7,
+            "rank": range(1, len(patches) + 1),
+            "reserve": [r for _, _, r in patches],
+        }
+    )
+
+
+def test_model_only_items_join_as_block_3_without_renaming(label_dir, tmp_path):
+    from csdv_core.audit import model_only as M
+
+    items = draw_items(label_dir, DESIGN)
+    patches = [
+        ("q0000001_1-1", "2012-06-01_2014-06-01", False),
+        ("q0000001_2-1", "2014-06-01_2016-06-01", False),
+        ("q0000001_1-9", "2014-06-01_2018-06-01", True),
+    ]
+    stratum = _stratum(tmp_path, patches)
+    out = M.append_items(items, _patch_table(patches), stratum)
+    assert out.head(len(items)).equals(items)
+    block = out[out["block"] == 3].set_index("cand_id")
+    assert sorted(block["item"]) == ["M001", "M002", "M003"]
+    assert block.loc["q0000001_1-9", "reserve"]
+    assert block.loc["q0000001_1-9", "order"] == 3
+    # The later date of the interval, as an image number of the request.
+    assert block.loc["q0000001_1-1", "label_images"] == "2"
+    assert block.loc["q0000001_1-9", "label_images"] == "4"
+    assert block["stratum"].eq("model_only").all()
+    assert out["item"].is_unique
+    # A second call adds nothing.
+    assert len(M.append_items(out, _patch_table(patches), stratum)) == len(out)
+
+
+def test_extend_names_a_new_block_by_its_letter(label_dir):
+    items = draw_items(label_dir, DESIGN)
+    extra = items[items["block"] == 1].head(2).copy()
+    extra["block"] = 3
+    extra["cand_id"] = ["new-a", "new-b"]
+    out = extend_items(items, pd.concat([items, extra]))
+    assert out[out["block"] == 3]["item"].tolist() == ["M001", "M002"]
+
+
+def test_build_shows_patches_as_candidates_without_labels(label_dir, tmp_path):
+    from csdv_core.audit import model_only as M
+    from csdv_core.audit.build import MODEL_ONLY_DIR
+
+    items = draw_items(label_dir, DESIGN)
+    audit_dir = tmp_path / "audit"
+    patches = [("q0000001_1-1", "2012-06-01_2014-06-01", False)]
+    stratum = _stratum(audit_dir, patches)
+    assert stratum == audit_dir / MODEL_ONLY_DIR
+    items = M.append_items(items, _patch_table(patches), stratum)
+    build_site(label_dir, audit_dir, items, name="test")
+    entries = {e["id"]: e for e in _entries(audit_dir / "site")}
+    entry = entries["M001"]
+    assert entry["kind"] == "cand" and entry["block"] == 3
+    assert entry["labels"] == []
+    assert len(entry["imgs"]) == len(DATES)
+    text = (audit_dir / "site" / "items.js").read_text()
+    assert "q0000001" not in text and "model_only" not in text
+
+
+def test_rates_report_the_model_only_stratum(tmp_path):
+    items = pd.DataFrame(
+        {
+            "item": ["M001", "M002", "M003"],
+            "block": 3,
+            "kind": "patch",
+            "stratum": "model_only",
+            "sub": ["u1", "u1", "u2"],
+            "agent": ["harvest", "fire", "harvest"],
+            "label_images": ["3", "2", "4"],
+            "window_incl_prob": 1.0,
+            "n_population": [10, 10, 4],
+            "shared": False,
+        }
+    )
+    eb = _answers(
+        tmp_path,
+        "eb",
+        [
+            {
+                "item": "M001",
+                "answer": "loss",
+                "loss_at": 3,
+                "more_at": [],
+                "type": "harvest",
+                "seconds": 20,
+            },
+            {"item": "M002", "answer": "none", "seconds": 10},
+            {
+                "item": "M003",
+                "answer": "loss",
+                "loss_at": 2,
+                "more_at": [],
+                "type": "fire",
+                "seconds": 30,
+            },
+        ],
+    )
+    table = S.rates(S.judged_table(items, S.load_answers([eb]))).set_index(
+        ["stratum", "measure"]
+    )
+    seen = table.loc[("model_only", "loss seen")]
+    assert (seen["n"], seen["k"]) == (3, 2)
+    # Weights: 10/2 for each of u1, 4/1 for u2.
+    assert seen["weighted_rate"] == pytest.approx((5 + 4) / (5 + 5 + 4))
+    interval = table.loc[("model_only", "loss in model interval")]
+    assert (interval["n"], interval["k"]) == (3, 1)
+    cause = table.loc[("model_only", "cause equals model agent")]
+    assert (cause["n"], cause["k"]) == (2, 1)
