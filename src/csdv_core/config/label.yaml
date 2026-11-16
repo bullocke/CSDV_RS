@@ -40,6 +40,15 @@ views:
   jpeg_quality: 92
 
 routing:
+  # Fire perimeters with an ignition date (`ig_date`), such as MTBS: a path,
+  # absolute or relative to the label run folder, or null. A loss whose agent
+  # the two models dispute gets the agent fire when one model said fire and
+  # at least `fire_perimeter_share` of the candidate lies inside perimeters
+  # that ignited within the interval of its first loss. Agreed agents and the
+  # loss label are never changed. Adopted 2026-11-16 for the scale test
+  # (csdv_core.label.fire).
+  fire_perimeters: null
+  fire_perimeter_share: 0.5
   # Stated confidence both models need for a joint "no loss" to count as a
   # confident rejection.
   reject_confidence: 3

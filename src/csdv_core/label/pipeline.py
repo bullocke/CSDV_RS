@@ -86,11 +86,37 @@ class LabelRun:
     models: tuple[str, str] = ("gem37", "terra")
     cfg: LabelConfig = field(default_factory=load_label)
     _units: dict[str, UnitInputs] = field(default_factory=dict, repr=False)
+    _fire: Any = field(default=None, repr=False)
     _cands: dict[str, gpd.GeoDataFrame] = field(default_factory=dict, repr=False)
 
     @property
     def answers(self) -> Path:
         return self.root / "answers.jsonl"
+
+    def fire_perimeters(self) -> Any:
+        """The fire perimeters of ``routing.fire_perimeters``, or None.
+
+        Raises:
+            FileNotFoundError: If the configured file is missing, so that a
+                build never runs without a rule it was asked to apply.
+        """
+        name = self.cfg.routing.fire_perimeters
+        if not name:
+            return None
+        if self._fire is None:
+            from csdv_core.label.fire import FirePerimeters
+
+            path = Path(name)
+            if not path.is_absolute():
+                path = self.root / path
+            if not path.exists():
+                raise FileNotFoundError(
+                    f"routing.fire_perimeters names {path}, which does not exist"
+                )
+            self._fire = FirePerimeters.read(
+                path, self.cfg.routing.fire_perimeter_share
+            )
+        return self._fire
 
     def unit(self, unit_id: str) -> UnitInputs:
         if unit_id not in self._units:
@@ -371,6 +397,15 @@ def build_window(
             )
             return None
         dates = dates or [parts.unit.dates[y] for y in parts.unit.years]
+    perimeters = run.fire_perimeters()
+    if perimeters is not None:
+        from csdv_core.label.fire import settle_fire_agent
+
+        image_dates = list(parts.stack.dates) if parts.stack is not None else dates
+        for cand in judged:
+            cand.routed = settle_fire_agent(
+                cand.routed, cand.geometry, parts.unit.epsg, image_dates, perimeters
+            )
     cell_ndvi = None
     if run.cfg.rules.never_green_ndvi is not None:
         cell_ndvi = window_cell_ndvi(run, parts)

@@ -66,6 +66,9 @@ class Routed:
         confidence: The lower of the two stated confidences.
         outline_fit: What each model said about the outline.
         affected_share: What each model said about the share affected.
+        change_types: The change type of each model.
+        agent_source: None when ``agent`` is the models' agreed group, else
+            what set it (``fire_perimeter``, see :mod:`csdv_core.label.fire`).
     """
 
     status: str
@@ -78,6 +81,7 @@ class Routed:
     outline_fit: tuple[str | None, str | None] = (None, None)
     affected_share: tuple[str | None, str | None] = (None, None)
     change_types: tuple[str | None, str | None] = field(default=(None, None))
+    agent_source: str | None = None
 
     @property
     def has_loss(self) -> bool:

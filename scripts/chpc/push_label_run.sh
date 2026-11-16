@@ -3,8 +3,9 @@
 # windows can be rendered there from the NAIP mosaics. Run locally.
 #
 # Sent: windows.csv, units.csv, candidates/ and, when they exist, answers.jsonl
-# (the polygon images are rendered from the verdicts) and config.yaml (the
-# thresholds this run changes, for the label build). Nothing else leaves this
+# (the polygon images are rendered from the verdicts), config.yaml (the
+# thresholds this run changes, for the label build) and fire_perimeters.gpkg
+# (routing.fire_perimeters of config.yaml). Nothing else leaves this
 # machine: no API key, no ledger, no response cache.
 #
 # Usage:
@@ -46,6 +47,6 @@ DEST="$CSDV_CHPC_HOST:$CSDV_CHPC_EXPORTS/label/$NAME/"
 echo "$LABEL_DIR -> $DEST"
 rsync -avh --partial --mkpath ${DRY[@]+"${DRY[@]}"} \
     --include='windows.csv' --include='units.csv' --include='answers.jsonl' \
-    --include='config.yaml' \
+    --include='config.yaml' --include='fire_perimeters.gpkg' \
     --include='candidates/' --include='candidates/*.gpkg' --exclude='*' \
     "${LABEL_DIR%/}/" "$DEST"

@@ -80,6 +80,8 @@ mkdir -p "$WORK"
 cp "$LABEL_DIR/windows.csv" "$LABEL_DIR/answers.jsonl" "$WORK/"
 [[ -f "$LABEL_DIR/units.csv" ]] && cp "$LABEL_DIR/units.csv" "$WORK/"
 [[ -d "$LABEL_DIR/candidates" ]] && rsync -a "$LABEL_DIR/candidates/" "$WORK/candidates/"
+# Fire perimeters named by routing.fire_perimeters in config.yaml, if any.
+[[ -f "$LABEL_DIR/fire_perimeters.gpkg" ]] && cp "$LABEL_DIR/fire_perimeters.gpkg" "$WORK/"
 # The stacks are read where they are. Only chips/ and labels/ are copied
 # back, so the link itself never reaches the label run folder.
 ln -s "$LABEL_DIR/stacks" "$WORK/stacks"
