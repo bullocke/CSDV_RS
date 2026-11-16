@@ -130,6 +130,21 @@ In a close-up the label panel shows loss in red, ignored cells in grey and label
 
 Chips carry the flight date of their own quarter quad and the map carries the unit's median date, so their intervals are matched by position in the series, never by name.
 
+## Crops for close-ups
+
+The 0.6 m NAIP mosaics stay on CHPC. `csdv pair crops` cuts chosen boxes out of them, one four-band GeoTIFF per box and year, so that close-up figures can be drawn on the laptop at full resolution. The boxes are a CSV with `unit`, `box`, `epsg`, `minx`, `miny`, `maxx`, `maxy` (in the unit's UTM zone) and `years` (space-separated), at most 3 km on a side.
+
+```bash
+# Laptop: send the boxes
+rsync -av boxes.csv "$CSDV_CHPC_HOST:$CSDV_CHPC_EXPORTS/pair_crops/<name>/"
+# CHPC
+sbatch $CSDV_SBATCH_CPU --output="$CSDV_LOG_DIR/%x-%j.out" scripts/slurm/run_pair_crops.sbatch <name>
+# Laptop
+scripts/chpc/pull_exports.sh pair_crops/<name>
+```
+
+The crops land in `pair_crops/<name>/<unit>/<box>_<year>.tif`. A year without a mosaic is named at the end of the log and skipped.
+
 ## Reading the scores
 
 The labels descend from the candidates of the disturbance run (detected objects, weak objects and CHM loss). Agreement with the labels therefore favours what those sources flag, and the DI scores well against labels that it proposed. The held-out unit removes the model's memory of the ground, not this dependence. The patches in `model_only.csv` are where the map says something the labels cannot, and they have to be looked at. The blind audit of the label run is the independent measure.

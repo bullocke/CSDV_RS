@@ -412,3 +412,40 @@ def compare_cmd(
     )
     for note in result.notes:
         click.echo(note)
+
+
+@pair.command("crops")
+@click.option(
+    "--boxes",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    required=True,
+    help="CSV with unit, box, epsg, minx, miny, maxx, maxy, years "
+    "(space-separated).",
+)
+@click.option(
+    "--out-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    required=True,
+    help="Folder of the crops. On CHPC: $CSDV_EXPORT_DIR/pair_crops/<name>.",
+)
+@click.option(
+    "--data-root",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Root of the local mosaics. Default: $CSDV_DATA_ROOT.",
+)
+def crops_cmd(boxes: Path, out_dir: Path, data_root: Path | None) -> None:
+    """0.6 m NAIP crops of chosen boxes, one GeoTIFF per box and year.
+
+    For close-up figures on a machine without the mosaics. Pull the folder
+    with scripts/chpc/pull_exports.sh pair_crops/<name>.
+    """
+    from csdv_core.io.paths import project_paths
+    from csdv_core.pairmodel.crops import read_boxes, write_crops
+
+    _setup_logging()
+    table = read_boxes(boxes)
+    report = write_crops(table, data_root or project_paths().data_root, out_dir)
+    click.echo(f"{len(report.written)} crops in {out_dir}")
+    if report.missing:
+        click.echo(f"No mosaic for: {', '.join(sorted(set(report.missing)))}")
