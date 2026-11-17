@@ -56,6 +56,7 @@ dependencies:
   # Imagery search and access (Microsoft Planetary Computer)
   - pystac-client
   - planetary-computer
+  - adlfs  # reads Planetary Computer GeoParquet item tables (abfs://)
 
   # Tabular caches (stand metrics, satellite observations) are written as
   # parquet, which pandas cannot do without an engine.

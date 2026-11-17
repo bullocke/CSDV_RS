@@ -22,6 +22,21 @@ def _units(text: str | None) -> tuple[str, ...]:
     return tuple(u.strip() for u in (text or "").split(",") if u.strip())
 
 
+def _run_draws(items: tuple[str, ...]) -> dict[str, float]:
+    """``("stable_forest=0.15",)`` as ``{"stable_forest": 0.15}``."""
+    out: dict[str, float] = {}
+    for item in items:
+        name, sep, share = item.partition("=")
+        try:
+            value = float(share)
+        except ValueError:
+            value = -1.0
+        if not sep or not name.strip() or not 0 < value < 1:
+            raise click.BadParameter(f"{item!r}: expected RUN=SHARE with 0 < SHARE < 1")
+        out[name.strip()] = value
+    return out
+
+
 @click.group()
 def pair() -> None:
     """Siamese pair model for canopy loss between two NAIP dates."""
@@ -106,6 +121,13 @@ def pair() -> None:
     help="Train a second head that names the agent of a loss.",
 )
 @click.option("--agent-weight", type=float, default=0.5, show_default=True)
+@click.option(
+    "--run-draws",
+    multiple=True,
+    metavar="RUN=SHARE",
+    help="Share of draws for the samples without loss of a label run of a merged "
+    "chip folder (`csdv pair merge-chips`), e.g. stable_forest=0.15. Repeatable.",
+)
 @click.option("--patience", type=int, default=8, show_default=True)
 @click.option("--seed", type=int, default=0, show_default=True)
 @click.option("--max-val-samples", type=int, default=None)
@@ -139,6 +161,7 @@ def train_cmd(
     reverse_prob,
     agents,
     agent_weight,
+    run_draws,
     patience,
     seed,
     max_val_samples,
@@ -188,6 +211,7 @@ def train_cmd(
         reverse_prob=reverse_prob,
         agents=agents,
         agent_weight=agent_weight,
+        run_draws=_run_draws(run_draws),
         patience=patience,
         seed=seed,
         max_val_samples=max_val_samples,
@@ -449,3 +473,44 @@ def crops_cmd(boxes: Path, out_dir: Path, data_root: Path | None) -> None:
     click.echo(f"{len(report.written)} crops in {out_dir}")
     if report.missing:
         click.echo(f"No mosaic for: {', '.join(sorted(set(report.missing)))}")
+
+
+@pair.command("merge-chips")
+@click.option(
+    "--out",
+    "out_dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    required=True,
+    help="New label folder for the merged chips (pass it as the label folder of "
+    "training). On CHPC: $CSDV_EXPORT_DIR/label/<name>.",
+)
+@click.option(
+    "--run",
+    "runs",
+    multiple=True,
+    required=True,
+    metavar="NAME=LABEL_DIR",
+    help="A label run and its folder (the one that holds chips/), in order of "
+    "precedence. Repeatable.",
+)
+def merge_chips_cmd(out_dir: Path, runs: tuple[str, ...]) -> None:
+    """Merge the chips of several label runs into one folder for training."""
+    from csdv_core.pairmodel.merge import merge_chips
+
+    _setup_logging()
+    named: dict[str, Path] = {}
+    for item in runs:
+        name, sep, folder = item.partition("=")
+        if not sep or not name.strip() or not folder.strip():
+            raise click.BadParameter(f"{item!r}: expected NAME=LABEL_DIR")
+        named[name.strip()] = Path(folder.strip())
+    try:
+        result = merge_chips(out_dir, named)
+    except (FileExistsError, FileNotFoundError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    for name, n in result.chips.items():
+        click.echo(f"{name}: {n} chips ({result.dropped[name]} left out as duplicates)")
+    click.echo(
+        f"{result.files} files linked ({result.hard_links} hard links) in "
+        f"{result.chips_dir}"
+    )

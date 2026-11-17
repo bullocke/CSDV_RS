@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -143,7 +143,9 @@ def load_index(chips_dir: Path, *, min_valid: float = 0.05) -> pd.DataFrame:
         (metres, NaN when unknown), ``chip_px`` (side of the chip),
         ``loss_share`` and ``valid_share`` (of all pixels of the chip),
         ``epsg`` and ``ix``, ``iy`` (the chip's column and row on the
-        lattice of its UTM zone, counted in chips).
+        lattice of its UTM zone, counted in chips), and ``run`` (the label
+        run of a merged chip folder, see :mod:`csdv_core.pairmodel.merge`,
+        empty otherwise).
 
     Raises:
         ValueError: If a chip is listed twice.
@@ -151,6 +153,7 @@ def load_index(chips_dir: Path, *, min_valid: float = 0.05) -> pd.DataFrame:
     table = pd.read_parquet(Path(chips_dir) / "chips.parquet")
     if table["chip_id"].duplicated().any():
         raise ValueError(f"{chips_dir}/chips.parquet lists a chip twice")
+    has_run = "run" in table.columns
     rows = []
     for chip in table.itertuples():
         dates = _json_list(chip.dates)
@@ -185,6 +188,7 @@ def load_index(chips_dir: Path, *, min_valid: float = 0.05) -> pd.DataFrame:
                     "epsg": int(chip.epsg),
                     "ix": round(bounds[0] / side),
                     "iy": round(bounds[1] / side),
+                    "run": str(chip.run) if has_run else "",
                 }
             )
     index = pd.DataFrame(rows)
@@ -377,6 +381,7 @@ def sample_weights(
     loss_draws: float = 0.5,
     unit_power: float = 0.5,
     min_loss: float = 0.01,
+    run_draws: Mapping[str, float] | None = None,
 ) -> np.ndarray:
     """Sampling weight of every row of ``index``.
 
@@ -391,14 +396,38 @@ def sample_weights(
         loss_draws: Share of draws that are samples with loss.
         unit_power: 1 draws units by their sample count, 0 draws them equally.
         min_loss: Smallest loss share of a chip that counts as "with loss".
+        run_draws: Share of draws for the samples without loss of named
+            label runs (the ``run`` column of a merged chip folder), for
+            example ``{"stable_forest": 0.15}``. Each named run is a group of
+            its own, and its share is taken from the draws without loss.
+            None or empty leaves the weights exactly as without it.
+
+    Raises:
+        ValueError: If a named run has no sample without loss, or the named
+            shares leave nothing for the other samples without loss.
     """
     has_loss = (index["loss_share"] >= min_loss).to_numpy()
     weights = np.zeros(len(index), dtype="float64")
-    shares = {True: loss_draws, False: 1.0 - loss_draws}
+    groups: dict[str, tuple[np.ndarray, float]] = {
+        "loss": (has_loss, loss_draws),
+        "no_loss": (~has_loss, 1.0 - loss_draws),
+    }
     if not has_loss.any() or has_loss.all():
-        shares = {True: 1.0, False: 1.0}
-    for group, share in shares.items():
-        rows = has_loss == group
+        groups = {"loss": (has_loss, 1.0), "no_loss": (~has_loss, 1.0)}
+    if run_draws:
+        runs = index["run"].to_numpy() if "run" in index else np.full(len(index), "")
+        rest_rows, rest_share = groups["no_loss"]
+        for name, share in run_draws.items():
+            rows = rest_rows & (runs == name)
+            if not rows.any():
+                raise ValueError(f"No sample without loss from the label run {name!r}")
+            groups[f"run:{name}"] = (rows, share)
+            rest_rows = rest_rows & ~rows
+            rest_share -= share
+        if rest_share <= 0:
+            raise ValueError("The run shares leave nothing for the other samples")
+        groups["no_loss"] = (rest_rows, rest_share)
+    for rows, share in groups.values():
         if not rows.any():
             continue
         counts = index.loc[rows, "unit"].map(index.loc[rows, "unit"].value_counts())

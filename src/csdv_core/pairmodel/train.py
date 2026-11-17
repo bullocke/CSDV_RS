@@ -83,6 +83,8 @@ class TrainConfig:
         workers: Loader processes.
         reverse_prob: Share of training pairs fed in reverse order.
         loss_draws: Share of training draws that hold loss.
+        run_draws: Share of draws for the samples without loss of named label
+            runs of a merged chip folder (see ``sample_weights``).
         agents: Train a second head that names the agent of a loss.
         agent_weight: Weight of the agent head's loss beside the loss head's.
         patience: Epochs without a better validation score before stopping.
@@ -114,6 +116,7 @@ class TrainConfig:
     workers: int = 7
     reverse_prob: float = 0.2
     loss_draws: float = 0.5
+    run_draws: dict[str, float] = field(default_factory=dict)
     agents: bool = True
     agent_weight: float = 0.5
     patience: int = 8
@@ -470,7 +473,9 @@ def train(cfg: TrainConfig, *, resume: bool = True) -> TrainResult:
         planned.train_index, cfg.chips_dir, aug=aug, seed=cfg.seed, **common
     )
     val_set = D.PairDataset(planned.val_index, cfg.chips_dir, units=val_units, **common)
-    weights = D.sample_weights(planned.train_index, loss_draws=cfg.loss_draws)
+    weights = D.sample_weights(
+        planned.train_index, loss_draws=cfg.loss_draws, run_draws=cfg.run_draws
+    )
     sampler = WeightedRandomSampler(
         torch.as_tensor(weights, dtype=torch.double),
         num_samples=cfg.samples_per_epoch,

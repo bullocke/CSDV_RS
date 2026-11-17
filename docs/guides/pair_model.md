@@ -64,6 +64,24 @@ Agents are tied to units: nearly all wind events of the scale test lie in one un
 
 A blocks split shows whether the model separates the agents once it has seen all of them. It is not a test of new ground: validation shares flights, and often the same storm or fire, with training, so its scores are higher than those of a held-out unit and are not comparable with a split by unit.
 
+## Training on more than one label run
+
+Training reads one chip folder. To add the chips of a second label run, for example stable-forest windows drawn with `csdv label sample --n-di 0 --n-other 0 --n-quiet N`, merge the runs into a new label folder and train on that:
+
+```bash
+csdv pair merge-chips --out "$CSDV_EXPORT_DIR/label/merged_sf" \
+    --run scale_test="$CSDV_EXPORT_DIR/label/scale_test" \
+    --run stable_forest="$CSDV_EXPORT_DIR/label/stable_forest"
+CSDV_PAIR_LABEL_DIR="$CSDV_EXPORT_DIR/label/merged_sf" CSDV_PAIR_HOLDOUT=q3708104 CSDV_PAIR_SPLIT=blocks \
+CSDV_PAIR_TRAIN_ARGS="--run-draws stable_forest=0.15" \
+    sbatch $CSDV_SBATCH_GPU --time=02:30:00 --output="$CSDV_LOG_DIR/%x-%j.out" \
+    scripts/slurm/run_pair_first_look.sbatch holdout_sf_q3708104
+```
+
+The merged `chips.parquet` has a column `run` and window ids prefixed with the run name (`stable_forest:W0001`), so the windows of two runs never share an id in the blocks split. Rasters are hard-linked where the file system allows it (the job copies real files to node scratch), symbolic links otherwise. A chip id an earlier run already holds is left out of a later run, and the count is printed. The source folders are not changed.
+
+Half the draws go to samples with loss and half to samples without (`loss_draws`). `--run-draws NAME=SHARE` gives the samples without loss of a named run their own share, taken from the second half: with `stable_forest=0.15`, 50% of draws hold loss, 15% are stable-forest samples and 35% are the other samples without loss. Without the option the weights are exactly those of earlier runs. The share is stored in `config.json` as `run_draws`.
+
 ## Loading
 
 The chip rasters are compressed with the bands of a pixel stored together, so a crop of two dates decodes every band of the whole chip. That takes about 50 ms per sample and was two thirds of an epoch. `--cache-dir` names a folder where every chip of the run is decoded once into an uncompressed array (about 12 MB per chip of seven dates, 30 GB for the full scale test) that the loader processes open as a memory map. A sample is then read in about 1 ms and is identical. The cache is built at the start of training, in parallel, and a manifest of the size and modification time of each chip's files decides which chips are decoded again. Put it on node scratch (the job script does).
