@@ -102,8 +102,14 @@ def merge_chips(out_dir: Path, runs: Mapping[str, Path]) -> MergeResult:
         )
     chips_out.mkdir(parents=True, exist_ok=True)
     files = hard = 0
+    listings: dict[Path, dict[str, list[Path]]] = {}
     for folder, chip_id in sources:
-        for path in folder.glob(f"{chip_id}_*.tif"):
+        if folder not in listings:
+            by_chip: dict[str, list[Path]] = {}
+            for path in folder.glob("*.tif"):
+                by_chip.setdefault(path.name.rsplit("_", 1)[0], []).append(path)
+            listings[folder] = by_chip
+        for path in listings[folder].get(chip_id, []):
             hard += _link(path, chips_out / path.name)
             files += 1
     merged = pd.concat(tables, ignore_index=True)
