@@ -10,7 +10,7 @@ AUDIT=results/vlm_labeling/2_scale_test/audit
 
 # 1. Draw the sample once. Windows already seen with the model answers are left out.
 csdv audit draw --label-dir $LABEL --audit-dir $AUDIT \
-    --exclude-windows results/vlm_labeling/2_scale_test/checkin/sheet_windows.txt
+    --exclude-windows results/vlm_labeling/archive/2_scale_test/checkin/sheet_windows.txt
 
 # 2. Build the page. Run it again after a pull of stacks.
 csdv audit build --label-dir $LABEL --audit-dir $AUDIT --name scale_test

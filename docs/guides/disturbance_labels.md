@@ -2,6 +2,8 @@
 
 `csdv label` turns the detections of the disturbance runs into labelled windows of multi-date NAIP for a segmentation model. Two vision models judge every candidate in a window, their agreed answers become label rasters, and everything they could not settle is left unlabelled. The thresholds are in `src/csdv_core/config/label.yaml`. The design and its test are described in `analysis/vlm_labeling/2_scale_test/PLAN.md`.
 
+For the labels of the scale test as built (counts by type, unit, forest type and season, a gallery of training samples, and a directory of every label file), see `results/vlm_labeling/2_scale_test/training_labels/README.md` and `WHERE.md` beside it. That folder is not in git; its scripts are in `analysis/vlm_labeling/2_scale_test/training_labels/`.
+
 ## Quick start
 
 The steps run on two machines. The laptop holds the API keys and the exported runs. CHPC holds the NAIP mosaics. A small run can skip CHPC, because `render` can also read NAIP from Planetary Computer and the USDA image service.
@@ -98,6 +100,8 @@ On CHPC, render the 40 example windows first and compare them with the laptop's 
 csdv label compare-renders results/vlm_labeling/2_scale_test/examples/requests \
     results/chpc_exports/label/examples/requests
 ```
+
+For the scale test this check was done on 2026-11-12. Both request folders were archived afterwards and their images deleted, so the command above is kept as the pattern for a new label run.
 
 The two renders start from the same quads, but the CHPC mosaics were resampled once when they were written, so small differences are expected. A median difference of a few grey levels is normal. A large one means the two sides read different dates or different bands. The command compares pixels only. The dates are in `requests.jsonl` on each side, and they should be compared too: the first CHPC render of the example windows had the right pixels and the unit's median date on every window. Images are compared where both renders have imagery, and the command lists the windows where one render lacks imagery over more than 5% of the view, which are the windows on the edge of a unit.
 
