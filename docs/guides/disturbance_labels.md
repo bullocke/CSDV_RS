@@ -2,7 +2,7 @@
 
 `csdv label` turns the detections of the disturbance runs into labelled windows of multi-date NAIP for a segmentation model. Two vision models judge every candidate in a window, their agreed answers become label rasters, and everything they could not settle is left unlabelled. The thresholds are in `src/csdv_core/config/label.yaml`. The design and its test are described in `analysis/vlm_labeling/2_scale_test/PLAN.md`.
 
-For the labels of the scale test as built (counts by type, unit, forest type and season, a gallery of training samples, and a directory of every label file), see `results/vlm_labeling/2_scale_test/training_labels/README.md` and `WHERE.md` beside it. That folder is not in git; its scripts are in `analysis/vlm_labeling/2_scale_test/training_labels/`.
+For the labels of the scale test as built (counts by type, unit, forest type and season, a gallery of training samples, and a directory of every label file), see `results/vlm_labeling/2_scale_test/training_labels/README.md` and `WHERE.md` beside it. That folder is not in git. Its scripts are in `analysis/vlm_labeling/2_scale_test/training_labels/`.
 
 ## Quick start
 
