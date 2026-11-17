@@ -17,7 +17,7 @@
 #
 # Usage:
 #   # Laptop: send the boxes
-#   rsync -av results/vlm_labeling/2_scale_test/fire_check/boxes.csv \
+#   rsync -av results/vlm_labeling/2_scale_test/investigations/fire_check/boxes.csv \
 #       "$CSDV_CHPC_HOST:$CSDV_CHPC_EXPORTS/pair_crops/fire_check/"
 #   # CHPC (after `source scripts/chpc/env.sh`)
 #   sbatch $CSDV_SBATCH_CPU --output="$CSDV_LOG_DIR/%x-%j.out" \
