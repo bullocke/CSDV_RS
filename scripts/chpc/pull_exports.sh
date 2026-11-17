@@ -30,8 +30,12 @@ for arg in "$@"; do
     esac
 done
 
-: "${CSDV_CHPC_HOST:?set CSDV_CHPC_HOST, e.g. u0123456@dtn07.chpc.utah.edu}"
-: "${CSDV_CHPC_EXPORTS:?set CSDV_CHPC_EXPORTS to \$CSDV_EXPORT_DIR on CHPC}"
+: "${CSDV_CHPC_HOST:?export CSDV_CHPC_HOST, e.g. u0123456@dtn07.chpc.utah.edu}"
+: "${CSDV_CHPC_EXPORTS:?export CSDV_CHPC_EXPORTS, the absolute \$CSDV_EXPORT_DIR on CHPC}"
+if [[ "$CSDV_CHPC_EXPORTS" != /* ]]; then
+    echo "CSDV_CHPC_EXPORTS must be an absolute path: $CSDV_CHPC_EXPORTS" >&2
+    exit 1
+fi
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LOCAL="${CSDV_LOCAL_EXPORTS:-$REPO/results/chpc_exports}"
 

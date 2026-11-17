@@ -34,6 +34,9 @@ csdv grid submit --batch config/grid/conus_pilot.csv
 
 # A point unit.
 csdv grid submit --lonlat -71.55 44.16 --buffer-km 6 --label LincolnNH
+
+# Guest nodes
+csdv grid submit --batch config/grid/conus_pilot.csv --gpu notchpeak-guest --dry-run   # check, then drop --dry-run
 ```
 
 For each unit the command submits up to five jobs, each waiting for the one before it.
