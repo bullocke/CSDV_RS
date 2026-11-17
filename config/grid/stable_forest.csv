@@ -1,0 +1,18 @@
+# Stable-forest units: quads with mostly forest and NAIP flown outside May to
+# September in two or more program years, for training windows of intact forest
+# on off-season images (PLAN issue 3.20, section 6.18). Chosen on 2026-11-17 from
+# results/vlm_labeling/2_scale_test/naip_dates/stats/candidate_quads.csv.
+# None lies in West Virginia or Tennessee, so the holdouts of q3708104 and
+# q3508321 test off-season forest from other states. Approved by the user 2026-11-17.
+#
+label,lon,lat,buffer_km,cell,notes
+SF_VA_CentralAppalachians,-82.690,36.810,,q3608211,Oak/hickory. Apr 2016 2021; Oct 2018; Nov 2023
+SF_PA_NCAppalachians,-77.560,41.310,,q4107744,Oak/hickory. Oct 2019; Apr 2022
+SF_NY_NCAppalachians,-78.440,42.190,,q4207853,Maple/beech/birch. Oct 2017 2019; Nov 2021 2022
+SF_NC_BlueRidge,-81.310,36.310,,q3608146,Oak/hickory. Nov 2018; Oct 2022
+SF_SC_SoutheasternPlains,-81.440,33.190,,q3308153,Loblolly/shortleaf pine. Apr 2011 2015 2021 2023
+SF_MS_SoutheasternPlains,-88.810,30.690,,q3008818,Longleaf/slash pine. Oct 2014; Dec 2018; Nov 2021
+SF_GA_SouthernCoastalPlain,-82.560,30.810,,q3008212,Longleaf/slash pine. Oct 2017 2023; Nov 2019; Jan 2021
+SF_AR_SouthCentralPlains,-92.310,34.060,,q3409262,Loblolly/shortleaf pine. Oct 2017 2023; Nov 2021
+SF_ID_IdahoBatholith,-114.600,45.690,,q4511420,Douglas-fir. Nov 2015; Oct 2017 2023
+SF_AZ_MogollonRim,-109.300,33.690,,q3310922,Ponderosa pine. Nov 2021; Oct 2023
