@@ -246,6 +246,136 @@ def test_blocked_map_equals_a_single_pass(unit, monkeypatch) -> None:
     assert (second <= 100).all()  # the mosaics cover the whole map
 
 
+class _LocalThirdModel(_LocalModel):
+    """With a third date the answer is the change from the first date to it."""
+
+    n_dates = 3
+
+    def decode(self, fa, fb, fc=None, has_c=None):
+        later = fb if fc is None else fc
+        return (later[0] - fa[0]).mean(dim=1, keepdim=True) * 3.0
+
+
+def _read(path: Path) -> tuple[np.ndarray, tuple]:
+    with rasterio.open(path) as src:
+        return src.read(), src.descriptions
+
+
+def test_a_model_with_three_dates_also_maps_from_two(unit, monkeypatch) -> None:
+    from csdv_core.pairmodel import train as T
+
+    ckpt = {"mean": [0.3] * 4, "std": [0.2] * 4}
+    where = (Path("unused.pt"), unit["run_dir"], unit["data_root"])
+    options = {"block_cells": 8, "halo_cells": 2, "workers": 0, "device": "cpu"}
+    monkeypatch.setattr(
+        T, "load_checkpoint", lambda path, device="cpu": (_LocalModel().eval(), ckpt)
+    )
+    plain = P.predict_unit(*where, unit["out"] / "pair", skip_pairs=True, **options)
+    assert plain.pair_path is None and plain.skip_path is not None
+    two, intervals = _read(plain.prob_path)
+    skip, skipping = _read(plain.skip_path)
+    assert skipping == ("2012-07-01_2016-07-01", "2014-07-01_none")
+    # The clearing of 2016 shows in the pair that skips 2014, not before it.
+    assert (two[0][8:14, 8:14] < 70).all() and (skip[0][8:14, 8:14] > 90).all()
+    assert (skip[1] == 255).all()  # no date after the last interval
+
+    monkeypatch.setattr(
+        T,
+        "load_checkpoint",
+        lambda path, device="cpu": (_LocalThirdModel().eval(), ckpt),
+    )
+    result = P.predict_unit(*where, unit["out"] / "three", skip_pairs=True, **options)
+    assert result.pair_path is not None
+    three, _ = _read(result.prob_path)
+    pair, described = _read(result.pair_path)
+    assert described == intervals
+    # From two dates the model with three gives the pair model's map.
+    assert np.array_equal(pair, two)
+    # The first interval is read with 2016 as its third date. The last one
+    # has no later date and keeps the answer from two.
+    assert np.array_equal(three[0], skip[0])
+    assert np.array_equal(three[1], pair[1])
+    assert np.array_equal(_read(result.skip_path)[0], skip)
+
+
+def test_three_dates_from_the_command_line(unit) -> None:
+    from csdv_core.pairmodel.cli import pair
+
+    runner = CliRunner()
+    run = unit["out"] / "run3"
+    train = [
+        "train",
+        "--chips-dir",
+        str(unit["chips"]),
+        "--holdout-units",
+        UNIT,
+        "--val-units",
+        "qb",
+        "--out-dir",
+        str(run),
+        "--encoder",
+        "resnet18",
+        "--encoder-weights",
+        "none",
+        "--crop-px",
+        "96",
+        "--batch-size",
+        "4",
+        "--epochs",
+        "1",
+        "--samples-per-epoch",
+        "8",
+        "--workers",
+        "0",
+        "--device",
+        "cpu",
+    ]
+    trained = runner.invoke(pair, [*train, "--dates", "3", "--third-drop", "0.5"])
+    assert trained.exit_code == 0, trained.output
+    record = json.loads((run / "config.json").read_text())
+    assert record["n_dates"] == 3 and record["config"]["third_drop"] == 0.5
+    best = torch.load(run / "best.pt", map_location="cpu", weights_only=False)
+    assert best["n_dates"] == 3
+    # The run folder holds a model with three dates: a pair model cannot resume it.
+    clash = runner.invoke(pair, [*train, "--epochs", "2"])
+    assert clash.exit_code != 0 and "3 dates" in clash.output
+
+    mapped = runner.invoke(
+        pair,
+        [
+            "predict",
+            "--checkpoint",
+            str(run / "best.pt"),
+            "--unit",
+            UNIT,
+            "--runs-dir",
+            str(unit["runs"]),
+            "--data-root",
+            str(unit["data_root"]),
+            "--out-dir",
+            str(run / "map"),
+            "--block-cells",
+            "16",
+            "--halo-cells",
+            "2",
+            "--workers",
+            "0",
+            "--device",
+            "cpu",
+            "--skip-pairs",
+        ],
+    )
+    assert mapped.exit_code == 0, mapped.output
+    assert "From two dates alone" in mapped.output
+    prob, intervals = _read(run / "map" / f"prob_{UNIT}.tif")
+    two, _ = _read(run / "map" / f"prob_pair_{UNIT}.tif")
+    skip, _ = _read(run / "map" / f"prob_skip_{UNIT}.tif")
+    assert prob.shape == two.shape == skip.shape and len(intervals) == 2
+    assert np.array_equal(prob[1], two[1])  # the last interval has two dates only
+    assert (skip[1] == 255).all() and (skip[0] != 255).any()
+    assert len(list((run / "map").glob("type_*.tif"))) == 2
+
+
 class _LocalAgentModel(_LocalModel):
     """The same with an agent head: fire where the later date is brighter."""
 

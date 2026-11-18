@@ -38,6 +38,8 @@ IGNORE = 255
 GSD = 0.6
 #: A cell is ignore when at least this share of it has no imagery on a date.
 NO_IMAGERY_SHARE = 0.5
+#: A third image is used when at least this share of the crop has imagery.
+THIRD_IMAGERY_SHARE = 0.9
 #: Agent groups in the order of the model's classes. Class ``i`` is code
 #: ``i + 1`` of the agent raster.
 AGENT_NAMES: tuple[str, ...] = tuple(sorted(AGENT_CODES, key=AGENT_CODES.__getitem__))
@@ -53,10 +55,12 @@ __all__ = [
     "assign_blocks",
     "band_stats",
     "build_sample",
+    "build_triple",
     "load_index",
     "make_split",
     "missing_files",
     "pair_target",
+    "read_date",
     "read_pair",
     "sample_weights",
     "unit_folds",
@@ -90,6 +94,9 @@ class Augment:
             each date (NAIP radiometry is not calibrated between years).
         reverse_prob: Probability of feeding the pair in reverse order with
             a target of background.
+        third_drop: For a model with three dates: probability of withholding
+            the third image of a sample that has one, so that the model also
+            learns to work from two (the newest interval has no third).
     """
 
     crop_px: int = 384
@@ -100,6 +107,7 @@ class Augment:
     blur_sigma: tuple[float, float] = (0.3, 0.9)
     jitter: bool = True
     reverse_prob: float = 0.2
+    third_drop: float = 0.3
 
 
 @dataclass
@@ -139,8 +147,9 @@ def load_index(chips_dir: Path, *, min_valid: float = 0.05) -> pd.DataFrame:
 
     Returns:
         Columns ``chip_id``, ``unit``, ``window_id``, ``k`` (interval index),
-        ``n_dates``, ``date_a``, ``date_b``, ``native_a``, ``native_b``
-        (metres, NaN when unknown), ``chip_px`` (side of the chip),
+        ``n_dates``, ``date_a``, ``date_b``, ``native_a``, ``native_b``,
+        ``native_c`` (metres, NaN when unknown, ``native_c`` of the date
+        after ``date_b``, NaN when there is none), ``chip_px`` (side of the chip),
         ``loss_share`` and ``valid_share`` (of all pixels of the chip),
         ``epsg`` and ``ix``, ``iy`` (the chip's column and row on the
         lattice of its UTM zone, counted in chips), and ``run`` (the label
@@ -182,6 +191,7 @@ def load_index(chips_dir: Path, *, min_valid: float = 0.05) -> pd.DataFrame:
                     "date_b": dates[k + 1],
                     "native_a": _native(native, k),
                     "native_b": _native(native, k + 1),
+                    "native_c": _native(native, k + 2),
                     "chip_px": chip_px,
                     "loss_share": loss[k] / chip.pixels,
                     "valid_share": valid / chip.pixels,
@@ -497,6 +507,48 @@ def read_pair(
     return PairArrays(a, b, change, forest[0] == 1, forest[1] == 1, agent)
 
 
+def read_date(
+    chips_dir: Path,
+    chip_id: str,
+    date: int,
+    n_dates: int,
+    *,
+    window: tuple[int, int, int] | None = None,
+    cache_dir: Path | None = None,
+) -> np.ndarray:
+    """The four bands of one date of a chip, ``(4, rows, cols)`` uint8.
+
+    Args:
+        date: Index of the date, from 0.
+        n_dates: Number of dates of the chip.
+        window: ``(row, col, size)`` of a square crop. Default: the whole chip.
+        cache_dir: Read from this decoded cache instead of the chip raster.
+
+    Raises:
+        ValueError: If the chip does not hold ``n_dates`` dates, or ``date``
+            is not one of them.
+    """
+    if cache_dir is not None:
+        from csdv_core.pairmodel.cache import read_cached_date
+
+        return read_cached_date(cache_dir, chip_id, date, n_dates, window)
+    if not 0 <= date < n_dates:
+        raise ValueError(f"Chip {chip_id} has no date {date} of {n_dates}")
+
+    import rasterio
+    from rasterio.windows import Window
+
+    with rasterio.open(Path(chips_dir) / f"{chip_id}_naip.tif") as src:
+        if src.count != 4 * n_dates:
+            raise ValueError(
+                f"{chip_id}_naip.tif has {src.count} bands, expected {4 * n_dates}"
+            )
+        spec = None
+        if window is not None:
+            spec = Window(window[1], window[0], window[2], window[2])
+        return src.read([4 * date + i for i in (1, 2, 3, 4)], window=spec)
+
+
 def pair_target(arrays: PairArrays, *, reverse: bool = False) -> np.ndarray:
     """The 0.6 m target of a pair: 0 background, 1 loss, 255 ignore.
 
@@ -634,8 +686,87 @@ def build_sample(
         the uint8 target on cells (0 background, 1 loss, 255 ignore) and the
         uint8 agent class of the loss cells (:func:`pool_agents`).
     """
-    window_a = window_b = None
+    a, b, target, agent, _, _ = _build(
+        chips_dir,
+        row,
+        cell_px=cell_px,
+        pooling=pooling,
+        mean=mean,
+        std=std,
+        aug=aug,
+        rng=rng,
+        cache_dir=cache_dir,
+        third=False,
+    )
+    return a, b, target, agent
+
+
+def build_triple(
+    chips_dir: Path,
+    row: Any,
+    *,
+    cell_px: int,
+    pooling: LabelPooling,
+    mean: np.ndarray,
+    std: np.ndarray,
+    aug: Augment | None = None,
+    rng: np.random.Generator | None = None,
+    cache_dir: Path | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, bool]:
+    """One sample with the image after the pair, for a model with three dates.
+
+    The pair and its target are those of :func:`build_sample`. The third
+    image is the chip's next date. It is absent for the last interval of a
+    chip, for a pair fed in reverse, where it covers less than
+    :data:`THIRD_IMAGERY_SHARE` of the crop, and in training for a share
+    ``aug.third_drop`` of the samples.
+
+    Args:
+        row: A row of :func:`load_index`, with ``native_c`` as well.
+
+    Returns:
+        ``(a, b, target, agent, c, has_c)``. ``c`` is a float32
+        ``(4, rows, cols)`` image, all zero when ``has_c`` is False.
+    """
+    a, b, target, agent, c, has_c = _build(
+        chips_dir,
+        row,
+        cell_px=cell_px,
+        pooling=pooling,
+        mean=mean,
+        std=std,
+        aug=aug,
+        rng=rng,
+        cache_dir=cache_dir,
+        third=True,
+    )
+    if c is None:
+        c = np.zeros_like(a)
+    return a, b, target, agent, c, has_c
+
+
+def _build(
+    chips_dir: Path,
+    row: Any,
+    *,
+    cell_px: int,
+    pooling: LabelPooling,
+    mean: np.ndarray,
+    std: np.ndarray,
+    aug: Augment | None,
+    rng: np.random.Generator | None,
+    cache_dir: Path | None,
+    third: bool,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray | None, bool]:
+    """A sample, with the third image when ``third`` is set and it exists.
+
+    Without ``third`` the random draws are those of the pair alone, so a
+    pair model sees the same samples from a seed as before.
+    """
+    window_a = window_b = window_c = None
     reverse = False
+    k, n_dates = int(row.k), int(row.n_dates)
+    wanted = third and k + 2 < n_dates
     if aug is not None:
         if rng is None:
             raise ValueError("Augmentation needs a random generator")
@@ -654,11 +785,21 @@ def build_sample(
                 size,
             )
         reverse = rng.random() < aug.reverse_prob
+        if third:
+            # Drawn for every sample of a model with three dates, so that
+            # the samples do not depend on which chips have a later date.
+            dropped = rng.random() < aug.third_drop
+            window_c = (
+                row0 + int(rng.integers(-shift, shift + 1)),
+                col0 + int(rng.integers(-shift, shift + 1)),
+                size,
+            )
+            wanted = wanted and not dropped and not reverse
     arrays = read_pair(
         chips_dir,
         row.chip_id,
-        int(row.k),
-        int(row.n_dates),
+        k,
+        n_dates,
         window_a=window_a,
         window_b=window_b,
         cache_dir=cache_dir,
@@ -674,11 +815,26 @@ def build_sample(
         native_first, native_second = native_second, native_first
     a = _prepare(first, native_first, aug, rng, mean, std)
     b = _prepare(second, native_second, aug, rng, mean, std)
+    c = None
+    if wanted:
+        later = read_date(
+            chips_dir,
+            row.chip_id,
+            k + 2,
+            n_dates,
+            window=window_c or window_a,
+            cache_dir=cache_dir,
+        )
+        if later.any(axis=0).mean() >= THIRD_IMAGERY_SHARE:
+            native_c = float(getattr(row, "native_c", float("nan")))
+            c = _prepare(later, native_c, aug, rng, mean, std)
     if aug is not None and aug.flip and rng is not None:
         turns = int(rng.integers(0, 4))
         mirror = bool(rng.integers(0, 2))
         a, b, target, agent = (_turn(x, turns, mirror) for x in (a, b, target, agent))
-    return a, b, target, agent
+        if c is not None:
+            c = _turn(c, turns, mirror)
+    return a, b, target, agent, c, c is not None
 
 
 def _turn(array: np.ndarray, turns: int, mirror: bool) -> np.ndarray:
@@ -728,6 +884,10 @@ class PairDataset:
     Each item is ``(a, b, target, agent, unit_index)``. Training items are drawn
     with augmentation from a generator seeded per worker. Validation items
     are whole chips without any random change.
+
+    With ``n_dates=3`` an item is ``(a, b, target, agent, unit_index, c,
+    has_c)``: the image after the pair and whether the sample has one
+    (:func:`build_triple`).
     """
 
     def __init__(
@@ -743,7 +903,11 @@ class PairDataset:
         units: Sequence[str] = (),
         seed: int = 0,
         cache_dir: Path | None = None,
+        n_dates: int = 2,
     ) -> None:
+        if n_dates not in (2, 3):
+            raise ValueError("n_dates must be 2 or 3")
+        self.n_dates = n_dates
         self.index = index.reset_index(drop=True)
         self.chips_dir = Path(chips_dir)
         self.cache_dir = None if cache_dir is None else Path(cache_dir)
@@ -769,25 +933,36 @@ class PairDataset:
             )
         return self._rng
 
-    def __getitem__(self, item: int) -> tuple[Any, Any, Any, Any, int]:
+    def __getitem__(self, item: int) -> tuple[Any, ...]:
         import torch
 
         row = self.index.iloc[item]
-        a, b, target, agent = build_sample(
-            self.chips_dir,
-            row,
-            cell_px=self.cell_px,
-            pooling=self.pooling,
-            mean=self.mean,
-            std=self.std,
-            aug=self.aug,
-            rng=self._generator() if self.aug is not None else None,
-            cache_dir=self.cache_dir,
-        )
+        common = {
+            "cell_px": self.cell_px,
+            "pooling": self.pooling,
+            "mean": self.mean,
+            "std": self.std,
+            "aug": self.aug,
+            "rng": self._generator() if self.aug is not None else None,
+            "cache_dir": self.cache_dir,
+        }
+        unit = self.units.index(row.unit)
+        if self.n_dates == 2:
+            a, b, target, agent = build_sample(self.chips_dir, row, **common)
+            return (
+                torch.from_numpy(a),
+                torch.from_numpy(b),
+                torch.from_numpy(target),
+                torch.from_numpy(agent),
+                unit,
+            )
+        a, b, target, agent, c, has_c = build_triple(self.chips_dir, row, **common)
         return (
             torch.from_numpy(a),
             torch.from_numpy(b),
             torch.from_numpy(target),
             torch.from_numpy(agent),
-            self.units.index(row.unit),
+            unit,
+            torch.from_numpy(c),
+            torch.tensor(has_c),
         )

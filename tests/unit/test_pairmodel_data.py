@@ -245,6 +245,82 @@ def test_augmented_sample_is_cropped_and_seeded(chips: Path) -> None:
     assert (agent == 255).all()
 
 
+def test_third_image_is_the_date_after_the_pair(chips: Path, tmp_path: Path) -> None:
+    from csdv_core.pairmodel.cache import build_cache
+
+    index = D.load_index(chips)
+    assert "native_c" in index.columns
+    first = index[(index["chip_id"] == "qa_c0") & (index["k"] == 0)].iloc[0]
+    last = index[(index["chip_id"] == "qa_c0") & (index["k"] == 1)].iloc[0]
+    assert np.isfinite(first["native_c"]) and np.isnan(last["native_c"])
+    args = _sample_args()
+    a, b, target, agent, c, has_c = D.build_triple(chips, first, **args)
+    pair = D.build_sample(chips, first, **args)
+    for x, y in zip((a, b, target, agent), pair, strict=True):
+        assert np.array_equal(x, y)
+    # Date 2 is the later image of the next interval.
+    assert has_c and np.array_equal(c, D.build_sample(chips, last, **args)[1])
+    assert np.array_equal(c, D.normalise(D.read_date(chips, "qa_c0", 2, 3), **_stats()))
+    # The last interval of a chip has no later date.
+    *_, c, has_c = D.build_triple(chips, last, **args)
+    assert not has_c and not c.any() and c.shape == a.shape
+    with pytest.raises(ValueError, match="no date"):
+        D.read_date(chips, "qa_c0", 3, 3)
+    # The cache gives the same third image.
+    cache = tmp_path / "cache"
+    build_cache(chips, cache, index[["chip_id", "n_dates"]])
+    aug = D.Augment(crop_px=96, reverse_prob=0.0, third_drop=0.0)
+    one = D.build_triple(chips, first, aug=aug, rng=np.random.default_rng(5), **args)
+    two = D.build_triple(
+        chips, first, aug=aug, rng=np.random.default_rng(5), cache_dir=cache, **args
+    )
+    assert one[5] and one[4].shape == (4, 96, 96)
+    for x, y in zip(one, two, strict=True):
+        assert np.array_equal(x, y)
+
+
+def test_third_image_is_withheld(chips: Path) -> None:
+    index = D.load_index(chips)
+    row = index[(index["chip_id"] == "qa_c0") & (index["k"] == 0)].iloc[0]
+    args = _sample_args()
+
+    def has_third(**changes) -> bool:
+        aug = D.Augment(crop_px=96, **changes)
+        return D.build_triple(
+            chips, row, aug=aug, rng=np.random.default_rng(1), **args
+        )[5]
+
+    assert has_third(reverse_prob=0.0, third_drop=0.0)
+    assert not has_third(reverse_prob=0.0, third_drop=1.0)  # dropped at random
+    assert not has_third(reverse_prob=1.0, third_drop=0.0)  # a reversed pair
+    # An image that covers too little of the crop is not used.
+    with rasterio.open(chips / "qa_c0_naip.tif", "r+") as dst:
+        data = dst.read()
+        data[8:12, :32, :] = 0  # a quarter of the third date
+        dst.write(data)
+    assert not D.build_triple(chips, row, **args)[5]
+
+
+def test_dataset_items_of_a_model_with_three_dates(chips: Path) -> None:
+    pytest.importorskip("torch")
+    index = D.load_index(chips)
+    args = _sample_args()
+    pairs = D.PairDataset(index, chips, **args)
+    assert len(pairs[0]) == 5
+    triples = D.PairDataset(index, chips, n_dates=3, **args)
+    item = triples[int(np.flatnonzero((index["k"] == 0).to_numpy())[0])]
+    assert len(item) == 7
+    assert item[5].shape == item[0].shape and bool(item[6])
+    for x, y in zip(item[:5], pairs[int(index.index[index["k"] == 0][0])], strict=True):
+        assert np.array_equal(np.asarray(x), np.asarray(y))
+    with pytest.raises(ValueError, match="n_dates"):
+        D.PairDataset(index, chips, n_dates=4, **args)
+
+
+def _stats() -> dict:
+    return {"mean": np.full(4, 0.3, np.float32), "std": np.full(4, 0.2, np.float32)}
+
+
 def _sample_args() -> dict:
     return {
         "cell_px": 16,

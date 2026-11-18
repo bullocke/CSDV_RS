@@ -48,6 +48,18 @@ The encoder starts from ImageNet weights read from a file. Its first convolution
 
 The loss is binary cross-entropy plus soft Dice over the labelled cells of a batch. The optimiser is AdamW with one warm-up epoch and a cosine schedule.
 
+## A third date
+
+A pair of dates cannot tell a canopy that was lost from one that was leafless for a season. Spongy moth strips an oak stand in June, the July image shows bare crowns, and the stand is green again two years later. `csdv pair train --dates 3` builds a model that also reads the date after the pair, where a chip has one. The target does not change: it is still the loss between the first two dates. The third image only helps to decide it.
+
+The same encoder reads the third image. The convolution that joins the dates at each level then takes five parts in place of three: the two feature maps of the pair, their difference, the feature map of the third date and its difference from the first. Both parts of the third date are zero for a sample that has none.
+
+The third image is optional for every sample, because the newest interval of any map has no later image. In training it is absent for the last interval of a chip (17% of the samples of the scale test), for a pair fed in reverse, where it covers less than 90% of the crop, and for a random share of the other samples (`--third-drop`, 0.3). One set of weights therefore maps an interval from two dates when it is new and from three once the next flight exists. The third image gets the same crop, with its own small offset, blur and colour shift.
+
+`csdv pair predict` uses the third date wherever it has imagery and writes a second map from two dates alone, `prob_pair_<unit>.tif`. The difference between `prob_<unit>.tif` and that file is what the third date changed. The last band of both is the same, since the last interval has no later date. A run with three dates takes about 1.4 times the GPU time of a pair run. A checkpoint records its number of dates, and checkpoints written before this option load as pair models.
+
+A simpler check needs no training. `csdv pair predict --skip-pairs` also scores every pair of dates that skips one, date k against date k + 2, with the same weights and from those two images alone, and writes `prob_skip_<unit>.tif`. Band k belongs to interval k, and the last band is empty. A loss of interval k that the skipping pair shows as well has lasted to the next image. A defoliated stand that recovered should show no loss there. The model was trained on consecutive dates only, so the skipping pair spans twice the usual time and its scores are a diagnostic, not a calibrated probability.
+
 ## Agent of a loss
 
 A second head on the same decoder features names the agent of a loss for every cell: harvest, wind, fire, biotic mortality, conversion or other, the six codes of `<chip>_agent.tif`. It is on by default (`--no-agents` turns it off). Its target is the most common agent among the loss pixels of each loss cell. Cells without loss have no agent, and neither have loss cells on which the two vision models named different agents (about one event in seven), so the head learns only from cells where the label is sure of the agent. Its cross-entropy is added to the loss of the first head with a weight of 0.5 (`--agent-weight`).
@@ -103,6 +115,8 @@ After every epoch the validation units are scored on whole chips without any ran
 
 For a model with an agent head it also writes `type_<unit>_<dateA>_<dateB>.tif`, one file per interval. Each holds the agent code of the cells whose loss probability is at or above a threshold and 0 on every other cell. The file has a single band, a colour table and 0 as its nodata value, so it opens in QGIS with one colour per agent and nothing drawn where the model sees no loss. The threshold is the one with the best F1 on the validation units, stored in the checkpoint, or `--threshold` (0.5 if the checkpoint holds none). The log and the last lines of the command name the threshold used. A different threshold needs no new run of the model: `flagged_agents` in `csdv_core.pairmodel.predict` cuts the same rasters from `agent_<unit>.tif` and `prob_<unit>.tif`.
 
+A model with three dates (section "A third date") also writes `prob_pair_<unit>.tif`, its map from two dates alone, and `--skip-pairs` adds `prob_skip_<unit>.tif` for any model. Both have the bands of `prob_<unit>.tif`. The agent and type rasters follow `prob_<unit>.tif`.
+
 The cells of the map lie on the global 0.6 m lattice of the UTM zone at multiples of the cell size, which is where the label chips pool to cells. The grid of a unit starts anywhere on the 0.6 m lattice, so the map covers the unit's extent snapped outward, and the 19.2 m layers of the disturbance run are sampled at the centre of each map cell.
 
 ## Mapping several units
@@ -127,6 +141,22 @@ scripts/chpc/pull_pair_sites.sh
 A unit that the model run held out and mapped itself is skipped in both modes, because that run is already its held-out map. A unit whose run has a comparison in the export folder is skipped too, so the command can be given again after a failed job. `--units q3912112,q4010549` takes other units than the list.
 
 The jobs run `scripts/slurm/run_pair_first_look.sbatch`. In the `look` mode it gets `CSDV_PAIR_STAGES="predict compare"` and `CSDV_PAIR_CHECKPOINT`, the checkpoint of the model run. Every run folder holds `site.json`, which names the unit and the model run behind the map.
+
+### The defoliation test
+
+`config/pair/defoliation.csv` lists the runs of one experiment: whether the model stops reading defoliation as loss when recovered defoliation is labelled background (`routing.stressed_recovered` of the label package, built into the label run `scale_test_stressbg`), when it reads a third date, or both. A `train` row trains a model without one unit and maps that unit. A `look` row maps a unit with the model of another row. `scripts/chpc/submit_pair_defoliation.sh` submits one job per row, and `scripts/chpc/pull_pair_defoliation.sh` copies the results.
+
+```bash
+# CHPC, after the label build of the variant (docs/guides/disturbance_labels.md)
+git pull && source scripts/chpc/env.sh
+scripts/chpc/submit_pair_defoliation.sh --dry-run
+scripts/chpc/submit_pair_defoliation.sh                 # or --after <job ID of the label build>
+
+# Laptop, when squeue is empty
+scripts/chpc/pull_pair_defoliation.sh
+```
+
+The first three-date run is first run as a smoke job of about ten minutes (`<run>_smoke`), and every other job waits for it to end well. A `look` job waits for the job that trains its model. A run whose comparison is already in the export folder is skipped, so the command can be given again. `--only RUN,RUN` takes named rows, `--optional` adds the rows marked `optional`, and `--after JOBID` holds everything until another job has ended well. Every job passes `--skip-pairs` to the map through `CSDV_PAIR_PREDICT_ARGS`, and the number of dates and the seed to training through `CSDV_PAIR_TRAIN_ARGS`. The comparison of a run scores its map against the labels it was trained on, so the two label variants are set side by side on the laptop against one set of labels.
 
 ## Comparison
 

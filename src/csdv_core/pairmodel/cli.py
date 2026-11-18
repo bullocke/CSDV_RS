@@ -122,6 +122,23 @@ def pair() -> None:
 )
 @click.option("--agent-weight", type=float, default=0.5, show_default=True)
 @click.option(
+    "--dates",
+    "n_dates",
+    type=click.Choice(["2", "3"]),
+    default="2",
+    show_default=True,
+    help="3 also feeds the image after each pair, where a chip has one. The "
+    "target stays the loss between the first two.",
+)
+@click.option(
+    "--third-drop",
+    type=click.FloatRange(0.0, 1.0),
+    default=0.3,
+    show_default=True,
+    help="With --dates 3: share of training samples whose third image is "
+    "withheld, so that the model also maps an interval with no later image.",
+)
+@click.option(
     "--run-draws",
     multiple=True,
     metavar="RUN=SHARE",
@@ -161,6 +178,8 @@ def train_cmd(
     reverse_prob,
     agents,
     agent_weight,
+    n_dates,
+    third_drop,
     run_draws,
     patience,
     seed,
@@ -211,6 +230,8 @@ def train_cmd(
         reverse_prob=reverse_prob,
         agents=agents,
         agent_weight=agent_weight,
+        n_dates=int(n_dates),
+        third_drop=third_drop,
         run_draws=_run_draws(run_draws),
         patience=patience,
         seed=seed,
@@ -304,6 +325,13 @@ def _with(options):
     help="Loss probability from which a cell gets its agent in the type rasters. "
     "Default: the checkpoint's best threshold on validation.",
 )
+@click.option(
+    "--skip-pairs",
+    is_flag=True,
+    help="Also score every pair of dates that skips one (date k against date "
+    "k + 2) and write prob_skip_<unit>.tif. A loss that the skipping pair "
+    "shows too has lasted to the next image.",
+)
 def predict_cmd(
     checkpoint,
     unit,
@@ -317,6 +345,7 @@ def predict_cmd(
     limit_blocks,
     device,
     threshold,
+    skip_pairs,
 ) -> None:
     """Map loss probability for every pair of consecutive dates of a unit."""
     from csdv_core.pairmodel.predict import predict_unit
@@ -338,6 +367,7 @@ def predict_cmd(
             limit_blocks=limit_blocks,
             device=device,
             threshold=threshold,
+            skip_pairs=skip_pairs,
         )
     except FileNotFoundError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -350,6 +380,10 @@ def predict_cmd(
             f"Agent of loss at or above {result.threshold:.2f}: "
             f"{len(result.type_paths)} type rasters beside it."
         )
+    if result.pair_path:
+        click.echo(f"From two dates alone: {result.pair_path}")
+    if result.skip_path:
+        click.echo(f"Pairs that skip a date: {result.skip_path}")
     for note in result.notes:
         click.echo(note)
 

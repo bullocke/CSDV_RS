@@ -82,6 +82,10 @@ class TrainConfig:
         weight_decay: Weight decay of AdamW.
         workers: Loader processes.
         reverse_prob: Share of training pairs fed in reverse order.
+        n_dates: 2 trains a pair model. 3 also feeds the image after the
+            pair where a chip has one (see ``SiamesePairNet``).
+        third_drop: With three dates: share of training samples whose third
+            image is withheld.
         loss_draws: Share of training draws that hold loss.
         run_draws: Share of draws for the samples without loss of named label
             runs of a merged chip folder (see ``sample_weights``).
@@ -115,6 +119,8 @@ class TrainConfig:
     weight_decay: float = 1e-4
     workers: int = 7
     reverse_prob: float = 0.2
+    n_dates: int = 2
+    third_drop: float = 0.3
     loss_draws: float = 0.5
     run_draws: dict[str, float] = field(default_factory=dict)
     agents: bool = True
@@ -338,6 +344,7 @@ def load_checkpoint(path: Path, device: Any = "cpu") -> tuple[Any, dict[str, Any
         cell_px=ckpt["cell_px"],
         weights=None,
         n_agents=int(ckpt.get("n_agents", 0)),
+        n_dates=int(ckpt.get("n_dates", 2)),
     )
     model.load_state_dict(ckpt["model"])
     return model.to(device).eval(), ckpt
@@ -353,11 +360,12 @@ def _validate(
     total, batches = 0.0, 0
     model.eval()
     with torch.no_grad():
-        for a, b, target, agent, unit_ids in loader:
+        for a, b, target, agent, unit_ids, *third in loader:
             a, b = a.to(device, non_blocking=True), b.to(device, non_blocking=True)
             target = target.to(device, non_blocking=True)
+            c, has_c = _third(third, device)
             with torch.autocast(device.type, enabled=amp):
-                logits, agent_logits = model.forward_agents(a, b)
+                logits, agent_logits = model.forward_agents(a, b, c, has_c)
             total += float(masked_bce_dice(logits, target))
             batches += 1
             percent = to_percent(torch.sigmoid(logits.float()).squeeze(1).cpu().numpy())
@@ -367,6 +375,14 @@ def _validate(
             if agent_logits is not None:
                 agents.update(agent_logits.argmax(dim=1).cpu().numpy(), agent.numpy())
     return total / max(batches, 1), counts, agents
+
+
+def _third(third: list[Any], device: Any) -> tuple[Any, Any]:
+    """The third image and its flag of a batch, or two Nones for a pair model."""
+    if not third:
+        return None, None
+    c, has_c = third
+    return c.to(device, non_blocking=True), has_c.to(device, non_blocking=True)
 
 
 def _macro_ap(counts: dict[str, CellCounts]) -> float:
@@ -452,6 +468,11 @@ def train(cfg: TrainConfig, *, resume: bool = True) -> TrainResult:
     if resume and last_path.is_file():
         state = torch.load(last_path, map_location="cpu", weights_only=False)
         logger.info("Resuming after epoch %d from %s", state["epoch"], last_path)
+    if state is not None and int(state.get("n_dates", 2)) != cfg.n_dates:
+        raise ValueError(
+            f"{last_path} holds a model with {state.get('n_dates', 2)} dates. "
+            "Train into a new run folder, or pass --no-resume."
+        )
     if state is not None:
         mean, std = np.asarray(state["mean"]), np.asarray(state["std"])
     else:
@@ -461,8 +482,11 @@ def train(cfg: TrainConfig, *, resume: bool = True) -> TrainResult:
     logger.info("Band mean %s, std %s", np.round(mean, 3), np.round(std, 3))
 
     val_units = list(planned.split.val)
-    aug = D.Augment(crop_px=cfg.crop_px, reverse_prob=cfg.reverse_prob)
+    aug = D.Augment(
+        crop_px=cfg.crop_px, reverse_prob=cfg.reverse_prob, third_drop=cfg.third_drop
+    )
     common = {
+        "n_dates": cfg.n_dates,
         "cell_px": cfg.cell_px,
         "pooling": pooling,
         "mean": mean,
@@ -502,8 +526,23 @@ def train(cfg: TrainConfig, *, resume: bool = True) -> TrainResult:
         cell_px=cfg.cell_px,
         weights=cfg.encoder_weights if state is None else None,
         n_agents=len(D.AGENT_NAMES) if cfg.agents else 0,
+        n_dates=cfg.n_dates,
     ).to(device)
-    logger.info("%s, %.1f M parameters", cfg.encoder, count_parameters(model) / 1e6)
+    logger.info(
+        "%s, %d dates, %.1f M parameters",
+        cfg.encoder,
+        cfg.n_dates,
+        count_parameters(model) / 1e6,
+    )
+    if cfg.n_dates == 3:
+        later = planned.train_index["k"] + 2 < planned.train_index["n_dates"]
+        logger.info(
+            "%d of %d training samples have a third date, withheld for %.0f%% of "
+            "the draws and for reversed pairs",
+            int(later.sum()),
+            len(later),
+            100 * cfg.third_drop,
+        )
     optimiser = torch.optim.AdamW(
         model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay
     )
@@ -537,6 +576,7 @@ def train(cfg: TrainConfig, *, resume: bool = True) -> TrainResult:
         "encoder": cfg.encoder,
         "cell_px": cfg.cell_px,
         "n_agents": len(D.AGENT_NAMES) if cfg.agents else 0,
+        "n_dates": cfg.n_dates,
         "agent_names": list(D.AGENT_NAMES),
         "mean": [float(v) for v in mean],
         "std": [float(v) for v in std],
@@ -561,13 +601,14 @@ def train(cfg: TrainConfig, *, resume: bool = True) -> TrainResult:
         clock = time.perf_counter()
         waited, running, steps = 0.0, 0.0, 0
         mark = time.perf_counter()
-        for a, b, target, agent, _ in train_loader:
+        for a, b, target, agent, _, *third in train_loader:
             waited += time.perf_counter() - mark
             a, b = a.to(device, non_blocking=True), b.to(device, non_blocking=True)
             target = target.to(device, non_blocking=True)
+            c, has_c = _third(third, device)
             optimiser.zero_grad(set_to_none=True)
             with torch.autocast(device.type, enabled=amp):
-                logits, agent_logits = model.forward_agents(a, b)
+                logits, agent_logits = model.forward_agents(a, b, c, has_c)
             loss = masked_bce_dice(logits, target)
             if agent_logits is not None:
                 agent = agent.to(device, non_blocking=True)

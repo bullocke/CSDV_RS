@@ -62,10 +62,12 @@ __all__ = [
     "Block",
     "PredGrid",
     "PredictResult",
+    "StackMaps",
     "blocks_of",
     "cells_at_centres",
     "flagged_agents",
     "predict_stack",
+    "predict_stack_maps",
     "predict_unit",
     "unit_pred_grid",
 ]
@@ -163,7 +165,9 @@ class PredictResult:
 
     ``type_paths`` holds one raster per interval and ``threshold`` the loss
     probability they were cut at. Both are empty for a model without an
-    agent head.
+    agent head. ``pair_path`` is the map of a model with three dates with
+    the third image withheld, and ``skip_path`` the map of the pairs that
+    skip a date. Both are None when they were not written.
     """
 
     unit: str
@@ -177,6 +181,32 @@ class PredictResult:
     notes: list[str] = field(default_factory=list)
     type_paths: list[Path] = field(default_factory=list)
     threshold: float | None = None
+    pair_path: Path | None = None
+    skip_path: Path | None = None
+
+
+@dataclass
+class StackMaps:
+    """Maps of one stack of dates, each ``(dates - 1, rows, cols)`` uint8.
+
+    Band ``k`` belongs to the interval between date ``k`` and date ``k + 1``.
+
+    Attributes:
+        prob: Loss percent of the interval. A model with three dates reads
+            date ``k + 2`` as well wherever that date has imagery.
+        agent: Code (1 to 6) of the most likely agent, or None.
+        pair: Loss percent from the two dates alone. None for a pair model,
+            whose ``prob`` is exactly that.
+        skip: Loss percent of the pair date ``k`` against date ``k + 2``,
+            from those two images alone: whether a loss of interval ``k``
+            still shows one date later. The last band has no such pair and
+            is 255. None when it was not asked for.
+    """
+
+    prob: np.ndarray
+    agent: np.ndarray | None = None
+    pair: np.ndarray | None = None
+    skip: np.ndarray | None = None
 
 
 def unit_pred_grid(bounds: Bounds, epsg: int, cell_px: int) -> PredGrid:
@@ -307,16 +337,69 @@ def predict_stack(
         where either date lacks imagery over half of the cell or more. With
         ``agents``, a pair: that array, and one of the same shape with the
         code (1 to 6) of the most likely agent of each cell, 255 likewise.
+        A model with three dates reads the date after each pair where there
+        is one (:func:`predict_stack_maps` returns its other maps too).
+    """
+    maps = predict_stack_maps(model, stack, mean, std, device, amp=amp, agents=agents)
+    return (maps.prob, maps.agent) if agents else maps.prob
+
+
+def predict_stack_maps(
+    model: Any,
+    stack: np.ndarray,
+    mean: np.ndarray,
+    std: np.ndarray,
+    device: Any,
+    *,
+    amp: bool = False,
+    agents: bool = False,
+    skip_pairs: bool = False,
+) -> StackMaps:
+    """Every map of a stack of dates, see :class:`StackMaps`.
+
+    Args:
+        model: A :class:`~csdv_core.pairmodel.model.SiamesePairNet` in
+            evaluation mode.
+        stack: ``(dates, 4, rows, cols)`` uint8, rows and columns multiples
+            of the model's cell size.
+        mean: Per-band mean of the checkpoint.
+        std: Per-band standard deviation of the checkpoint.
+        agents: Also name the agent (needs a model with an agent head).
+        skip_pairs: Also score date ``k`` against date ``k + 2``.
+
+    Raises:
+        ValueError: If ``agents`` is set and the model has no agent head.
     """
     import torch
     import torch.nn.functional as F
 
     cell_px = model.cell_px
+    three = getattr(model, "n_dates", 2) == 3
     dates, _, height, width = stack.shape
     rows, cols = height // cell_px, width // cell_px
     # The encoder halves the image five times, so it needs multiples of 32.
     pad_h, pad_w = (-height) % 32, (-width) % 32
     features, has_imagery = [], []
+    shape = (dates - 1, rows, cols)
+
+    def decoded(first: Any, second: Any, third: Any) -> tuple[np.ndarray, Any]:
+        """Loss percent and agent codes (or None) of one decoding."""
+        agent_logits = None
+        encodings = (first, second) if third is None else (first, second, third)
+        with torch.autocast(device.type, enabled=amp):
+            if agents:
+                logits, agent_logits = model.decode_agents(*encodings)
+                if agent_logits is None:
+                    raise ValueError("The model has no agent head")
+            else:
+                logits = model.decode(*encodings)
+        prob = torch.sigmoid(logits.float())[0, 0, :rows, :cols].cpu().numpy()
+        best = None
+        if agent_logits is not None:
+            best = agent_logits[0, :, :rows, :cols].argmax(dim=0).cpu().numpy()
+            best = (best + 1).astype("uint8")
+        return to_percent(prob), best
+
     with torch.no_grad():
         for image in stack:
             valid = image.any(axis=0)
@@ -329,26 +412,32 @@ def predict_stack(
                 x = F.pad(x, (0, pad_w, 0, pad_h))
             with torch.autocast(device.type, enabled=amp):
                 features.append(model.encode(x))
-        out = np.full((dates - 1, rows, cols), NODATA, dtype="uint8")
-        codes = np.full((dates - 1, rows, cols), NODATA, dtype="uint8")
+        out = np.full(shape, NODATA, dtype="uint8")
+        codes = np.full(shape, NODATA, dtype="uint8") if agents else None
+        pair = np.full(shape, NODATA, dtype="uint8") if three else None
+        skip = np.full(shape, NODATA, dtype="uint8") if skip_pairs else None
         for k in range(dates - 1):
-            agent_logits = None
-            with torch.autocast(device.type, enabled=amp):
-                if agents:
-                    logits, agent_logits = model.decode_agents(
-                        features[k], features[k + 1]
-                    )
-                else:
-                    logits = model.decode(features[k], features[k + 1])
-            prob = torch.sigmoid(logits.float())[0, 0, :rows, :cols].cpu().numpy()
             usable = has_imagery[k] & has_imagery[k + 1]
-            out[k][usable] = to_percent(prob)[usable]
-            if agents:
-                if agent_logits is None:
-                    raise ValueError("The model has no agent head")
-                best = agent_logits[0, :, :rows, :cols].argmax(dim=0).cpu().numpy()
-                codes[k][usable] = (best + 1).astype("uint8")[usable]
-    return (out, codes) if agents else out
+            percent, best = decoded(features[k], features[k + 1], None)
+            out[k][usable] = percent[usable]
+            if codes is not None and best is not None:
+                codes[k][usable] = best[usable]
+            if pair is not None:
+                pair[k][usable] = percent[usable]
+            later = k + 2 < dates
+            if three and later:
+                # Where the next date has imagery the model reads it too.
+                # Elsewhere the two dates stand, as for the last interval.
+                confirmed = usable & has_imagery[k + 2]
+                percent, best = decoded(features[k], features[k + 1], features[k + 2])
+                out[k][confirmed] = percent[confirmed]
+                if codes is not None and best is not None:
+                    codes[k][confirmed] = best[confirmed]
+            if skip is not None and later:
+                both = has_imagery[k] & has_imagery[k + 2]
+                percent, _ = decoded(features[k], features[k + 2], None)
+                skip[k][both] = percent[both]
+    return StackMaps(out, codes, pair, skip)
 
 
 class _BlockReader:
@@ -383,8 +472,13 @@ def predict_unit(
     limit_blocks: int | None = None,
     device: str = "auto",
     threshold: float | None = None,
+    skip_pairs: bool = False,
 ) -> PredictResult:
     """Map every consecutive pair of dates of a unit.
+
+    A model with three dates reads the date after each pair where there is
+    one. Its map from two dates alone is written beside it as
+    ``prob_pair_<unit>.tif``, so that the two can be compared.
 
     Args:
         checkpoint: ``best.pt`` of a training run.
@@ -400,6 +494,9 @@ def predict_unit(
         threshold: Loss probability (0 to 1) from which a cell gets its
             agent in the type rasters. Default: the checkpoint's best
             threshold on the validation units, or 0.5 if it holds none.
+        skip_pairs: Also write ``prob_skip_<unit>.tif``: band ``k`` is the
+            loss percent of date ``k`` against date ``k + 2``, from those
+            two images alone (the last band is empty).
 
     Raises:
         FileNotFoundError: If a year has no mosaic.
@@ -444,6 +541,9 @@ def predict_unit(
     prob = np.full((len(intervals), grid.rows, grid.cols), NODATA, dtype="uint8")
     with_agents = bool(getattr(model, "n_agents", 0))
     agent = np.full(prob.shape, NODATA, dtype="uint8") if with_agents else None
+    three = getattr(model, "n_dates", 2) == 3
+    pair = np.full(prob.shape, NODATA, dtype="uint8") if three else None
+    skip = np.full(prob.shape, NODATA, dtype="uint8") if skip_pairs else None
     loader = DataLoader(
         _BlockReader(blocks, mosaics, unit.epsg),
         batch_size=None,
@@ -453,8 +553,15 @@ def predict_unit(
     amp = target.type == "cuda"
     for done, (item, stack) in enumerate(loader, start=1):
         block = blocks[int(item)]
-        result = predict_stack(
-            model, stack.numpy(), mean, std, target, amp=amp, agents=with_agents
+        result = predict_stack_maps(
+            model,
+            stack.numpy(),
+            mean,
+            std,
+            target,
+            amp=amp,
+            agents=with_agents,
+            skip_pairs=skip_pairs,
         )
         inside_block = (
             slice(None),
@@ -466,11 +573,13 @@ def predict_unit(
             slice(block.row, block.row + block.rows),
             slice(block.col, block.col + block.cols),
         )
-        if agent is not None:
-            prob[on_map] = result[0][inside_block]
-            agent[on_map] = result[1][inside_block]
-        else:
-            prob[on_map] = result[inside_block]
+        prob[on_map] = result.prob[inside_block]
+        if agent is not None and result.agent is not None:
+            agent[on_map] = result.agent[inside_block]
+        if pair is not None and result.pair is not None:
+            pair[on_map] = result.pair[inside_block]
+        if skip is not None and result.skip is not None:
+            skip[on_map] = result.skip[inside_block]
         if done % 10 == 0 or done == len(blocks):
             logger.info(
                 "%d of %d blocks, %.0f s",
@@ -489,6 +598,28 @@ def predict_unit(
         resampling="AVERAGE",
         descriptions=intervals,
     )
+    pair_path = skip_path = None
+    if pair is not None:
+        pair_path = write_cog(
+            out_dir / f"prob_pair_{unit.unit}.tif",
+            pair,
+            crs=crs,
+            transform=grid.transform,
+            nodata=NODATA,
+            resampling="AVERAGE",
+            descriptions=intervals,
+        )
+    if skip is not None:
+        skipping = [f"{a}_{c}" for a, c in zip(dates[:-2], dates[2:], strict=True)]
+        skip_path = write_cog(
+            out_dir / f"prob_skip_{unit.unit}.tif",
+            skip,
+            crs=crs,
+            transform=grid.transform,
+            nodata=NODATA,
+            resampling="AVERAGE",
+            descriptions=[*skipping, f"{dates[-2]}_none"],
+        )
     agent_path = None
     type_paths: list[Path] = []
     used_threshold = None
@@ -565,4 +696,6 @@ def predict_unit(
         notes,
         type_paths,
         used_threshold,
+        pair_path,
+        skip_path,
     )

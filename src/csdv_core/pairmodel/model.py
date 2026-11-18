@@ -56,7 +56,13 @@ def _block(channels_in: int, channels_out: int, kernel: int) -> nn.Sequential:
 
 
 class SiamesePairNet(nn.Module):
-    """Loss logits on cells from two four-band images.
+    """Loss logits on cells from two four-band images, or from three.
+
+    The loss is always the one between the first two images. A model built
+    with ``n_dates=3`` also reads the image after them, when there is one:
+    a canopy that is leafless on the second date and closed again on the
+    third was not lost. The third image is optional per sample, so that the
+    newest interval, which has none, is mapped by the same weights.
 
     Args:
         encoder: ``resnet34`` or ``resnet18``.
@@ -68,6 +74,7 @@ class SiamesePairNet(nn.Module):
         n_agents: Number of agent classes of a second head that names the
             agent of a loss (harvest, wind, fire and so on) for every cell.
             0: no such head.
+        n_dates: 2 for a pair model. 3 adds the optional later image.
     """
 
     def __init__(
@@ -78,6 +85,7 @@ class SiamesePairNet(nn.Module):
         width: int = 128,
         weights: Path | None = None,
         n_agents: int = 0,
+        n_dates: int = 2,
     ) -> None:
         super().__init__()
         import torchvision
@@ -86,6 +94,9 @@ class SiamesePairNet(nn.Module):
             raise ValueError(f"Unknown encoder {encoder!r}")
         if cell_px not in (4, 8, 16):
             raise ValueError("cell_px must be 4, 8 or 16")
+        if n_dates not in (2, 3):
+            raise ValueError("n_dates must be 2 or 3")
+        self.n_dates = n_dates
         self.encoder_name = encoder
         self.cell_px = cell_px
         self.n_agents = n_agents
@@ -108,8 +119,11 @@ class SiamesePairNet(nn.Module):
         # Levels the decoder uses: from the stride of the cells to stride 32.
         self.first = _STRIDES.index(cell_px)
         channels = _CHANNELS[encoder]
+        # Per level: both encodings and their difference, and with a third
+        # date its encoding and its difference from the first.
+        parts = 3 if n_dates == 2 else 5
         self.fuse = nn.ModuleList(
-            [_block(3 * channels[i], width, 1) for i in range(self.first, 4)]
+            [_block(parts * channels[i], width, 1) for i in range(self.first, 4)]
         )
         self.smooth = nn.ModuleList(
             [_block(width, width, 3) for _ in range(self.first, 3)]
@@ -130,12 +144,20 @@ class SiamesePairNet(nn.Module):
             out.append(x)
         return out
 
-    def _joined(self, fa: list[torch.Tensor], fb: list[torch.Tensor]) -> torch.Tensor:
-        """Decoder features at the stride of the cells, from two encodings."""
-        joined = [
-            fuse(torch.cat([fa[i], fb[i], fb[i] - fa[i]], dim=1))
-            for fuse, i in zip(self.fuse, range(self.first, 4), strict=True)
-        ]
+    def _joined(
+        self,
+        fa: list[torch.Tensor],
+        fb: list[torch.Tensor],
+        fc: list[torch.Tensor] | None = None,
+        has_c: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Decoder features at the stride of the cells, from the encodings."""
+        joined = []
+        for fuse, i in zip(self.fuse, range(self.first, 4), strict=True):
+            parts = [fa[i], fb[i], fb[i] - fa[i]]
+            if self.n_dates == 3:
+                parts += self._third(fa[i], None if fc is None else fc[i], has_c)
+            joined.append(fuse(torch.cat(parts, dim=1)))
         x = joined[-1]
         for lateral, smooth in zip(
             reversed(joined[:-1]), reversed(self.smooth), strict=True
@@ -146,26 +168,96 @@ class SiamesePairNet(nn.Module):
             x = smooth(x + lateral)
         return x
 
-    def decode(self, fa: list[torch.Tensor], fb: list[torch.Tensor]) -> torch.Tensor:
-        """Loss logits ``(batch, 1, rows / cell_px, cols / cell_px)``."""
-        return self.head(self._joined(fa, fb))
+    @staticmethod
+    def _third(
+        fa: torch.Tensor, fc: torch.Tensor | None, has_c: torch.Tensor | None
+    ) -> list[torch.Tensor]:
+        """The third date's part of the fusion input, zero where it is absent."""
+        if fc is None:
+            zero = torch.zeros_like(fa)
+            return [zero, zero]
+        if has_c is None:
+            return [fc, fc - fa]
+        present = has_c.to(fa.dtype).view(-1, 1, 1, 1)
+        return [present * fc, present * (fc - fa)]
+
+    def decode(
+        self,
+        fa: list[torch.Tensor],
+        fb: list[torch.Tensor],
+        fc: list[torch.Tensor] | None = None,
+        has_c: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Loss logits ``(batch, 1, rows / cell_px, cols / cell_px)``.
+
+        Args:
+            fa: Encoding of the earlier image.
+            fb: Encoding of the later image.
+            fc: Encoding of the image after that (models with three dates).
+                None: no sample has one.
+            has_c: ``(batch,)``, 1 where the sample has a third image. None:
+                every sample has one.
+        """
+        return self.head(self._joined(fa, fb, fc, has_c))
 
     def decode_agents(
-        self, fa: list[torch.Tensor], fb: list[torch.Tensor]
+        self,
+        fa: list[torch.Tensor],
+        fb: list[torch.Tensor],
+        fc: list[torch.Tensor] | None = None,
+        has_c: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """Loss logits, and agent logits ``(batch, n_agents, rows, cols)`` or None."""
-        x = self._joined(fa, fb)
+        x = self._joined(fa, fb, fc, has_c)
         agents = self.agent_head(x) if self.agent_head is not None else None
         return self.head(x), agents
 
-    def forward(self, a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-        return self.decode(self.encode(a), self.encode(b))
+    def encode_third(
+        self, c: torch.Tensor | None, has_c: torch.Tensor | None
+    ) -> list[torch.Tensor] | None:
+        """Encoding of the third images of a batch, zero where there is none.
+
+        Only the images that exist pass through the encoder, so that empty
+        ones do not enter its batch statistics.
+        """
+        if self.n_dates != 3 or c is None:
+            return None
+        if has_c is None:
+            return self.encode(c)
+        present = has_c.bool()
+        if not bool(present.any()):
+            return None
+        if bool(present.all()):
+            return self.encode(c)
+        out = []
+        for feature in self.encode(c[present]):
+            full = feature.new_zeros((c.shape[0], *feature.shape[1:]))
+            full[present] = feature
+            out.append(full)
+        return out
+
+    def forward(
+        self,
+        a: torch.Tensor,
+        b: torch.Tensor,
+        c: torch.Tensor | None = None,
+        has_c: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        return self.decode(
+            self.encode(a), self.encode(b), self.encode_third(c, has_c), has_c
+        )
 
     def forward_agents(
-        self, a: torch.Tensor, b: torch.Tensor
+        self,
+        a: torch.Tensor,
+        b: torch.Tensor,
+        c: torch.Tensor | None = None,
+        has_c: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        """Loss logits and agent logits of a batch of pairs."""
-        return self.decode_agents(self.encode(a), self.encode(b))
+        """Loss logits and agent logits of a batch of pairs or triples."""
+        return self.decode_agents(
+            self.encode(a), self.encode(b), self.encode_third(c, has_c), has_c
+        )
 
 
 def count_parameters(model: nn.Module) -> int:

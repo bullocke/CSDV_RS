@@ -40,6 +40,38 @@ def test_the_order_of_the_dates_matters() -> None:
         assert torch.allclose(joined, model(a, b))
 
 
+def test_third_date_is_optional_for_each_sample() -> None:
+    torch.manual_seed(0)
+    model = SiamesePairNet(encoder="resnet18", n_agents=6, n_dates=3).eval()
+    a, b, c = (torch.randn(3, 4, 64, 64) for _ in range(3))
+    with torch.no_grad():
+        pair = model(a, b)
+        triple = model(a, b, c)
+        mixed = model(a, b, c, torch.tensor([True, False, True]))
+        none = model(a, b, c, torch.tensor([False, False, False]))
+        loss, agents = model.forward_agents(a, b, c)
+    assert pair.shape == triple.shape == (3, 1, 4, 4)
+    assert agents.shape == (3, 6, 4, 4) and torch.allclose(loss, triple)
+    # The third image changes the answer, and only where a sample has one.
+    assert not torch.allclose(pair, triple, atol=1e-4)
+    assert torch.allclose(none, pair, atol=1e-5)
+    assert torch.allclose(mixed[1], pair[1], atol=1e-5)
+    assert torch.allclose(mixed[[0, 2]], triple[[0, 2]], atol=1e-5)
+    with pytest.raises(ValueError, match="n_dates"):
+        SiamesePairNet(encoder="resnet18", n_dates=4)
+
+
+def test_a_pair_model_takes_no_third_date() -> None:
+    torch.manual_seed(0)
+    model = SiamesePairNet(encoder="resnet18").eval()
+    a, b, c = (torch.randn(1, 4, 64, 64) for _ in range(3))
+    with torch.no_grad():
+        assert torch.equal(model(a, b, c), model(a, b))
+    wide = SiamesePairNet(encoder="resnet18", n_dates=3)
+    assert wide.fuse[0][0].in_channels == 5 * 256
+    assert model.fuse[0][0].in_channels == 3 * 256
+
+
 def test_agent_head_gives_one_score_per_agent_and_cell() -> None:
     model = SiamesePairNet(encoder="resnet18", n_agents=6).eval()
     a, b = torch.randn(2, 4, 64, 96), torch.randn(2, 4, 64, 96)

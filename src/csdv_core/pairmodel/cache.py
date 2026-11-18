@@ -246,3 +246,35 @@ def read_cached(
     agent = crop(at["agent"] + k, window_a)
     forest = crop(slice(at["forest"] + k, at["forest"] + k + 2), window_a)
     return a, b, change, forest, agent
+
+
+def read_cached_date(
+    cache_dir: Path,
+    chip_id: str,
+    date: int,
+    n_dates: int,
+    window: tuple[int, int, int] | None = None,
+) -> np.ndarray:
+    """The four bands of one date of a cached chip, ``(4, rows, cols)``.
+
+    Args:
+        date: Index of the date, from 0.
+        window: ``(row, col, size)`` of a square crop. Default: the whole chip.
+
+    Raises:
+        ValueError: If the cached chip does not hold ``n_dates`` dates, or
+            ``date`` is not one of them.
+    """
+    if not 0 <= date < n_dates:
+        raise ValueError(f"Chip {chip_id} has no date {date} of {n_dates}")
+    data = np.load(cache_path(cache_dir, chip_id), mmap_mode="r")
+    if data.shape[0] != layout(n_dates)["bands"]:
+        raise ValueError(
+            f"Cached chip {chip_id} has {data.shape[0]} bands, expected "
+            f"{layout(n_dates)['bands']} for {n_dates} dates"
+        )
+    bands = slice(4 * date, 4 * date + 4)
+    if window is None:
+        return np.array(data[bands])
+    row, col, size = window
+    return np.array(data[bands, row : row + size, col : col + size])
