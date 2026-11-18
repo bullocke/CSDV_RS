@@ -169,6 +169,40 @@ def test_defoliation_is_not_loss() -> None:
     assert parse_verdict("m", {"states": ["forest", "stressed"]}, 2).valid
 
 
+def test_recovered_defoliation_can_be_background() -> None:
+    """With the option on, stress both models see end is background."""
+    cfg = LabelRouting(stressed_recovered="background")
+    assert CFG.stressed_recovered == "ignore"
+    # Leafless on date 1, forest on date 2, according to both models.
+    out = R.route(verdict("fsff"), verdict("fsff"), 2, cfg)
+    assert out.status == "rejected" and not out.has_loss
+    assert out.outcomes == [R.STRESSED_RECOVERED, R.INTACT, R.REJECTED_FLAGGED]
+    assert R.STRESSED_RECOVERED in R.BACKGROUND_OUTCOMES
+    # One model alone, or one model's forest at the next date, is not enough.
+    one = R.route(verdict("fsff"), verdict("ffff"), None, cfg)
+    assert one.outcomes == [R.STRESSED, R.INTACT, R.INTACT]
+    half = R.route(verdict("fsff"), verdict("fsof"), None, cfg)
+    assert half.outcomes == [R.STRESSED, R.OPEN, R.INTACT]
+    # Stress that lasts counts from its last date only.
+    lasting = R.route(verdict("fssf"), verdict("fssf"), None, cfg)
+    assert lasting.outcomes == [R.STRESSED, R.STRESSED_RECOVERED, R.INTACT]
+    # No later image: nobody saw the canopy return.
+    last = R.route(verdict("ffs"), verdict("ffs"), None, cfg)
+    assert last.outcomes == [R.INTACT, R.STRESSED]
+    # A loss follows: the stressed date stays unlabelled and the loss stays.
+    dying = R.route(verdict("fspoo"), verdict("fspoo"), 2, cfg)
+    assert (
+        dying.outcomes == R.route(verdict("fspoo"), verdict("fspoo"), 2, CFG).outcomes
+    )
+    # Recovery, then a loss later: background first, loss where it happens.
+    later = R.route(verdict("fsfxo"), verdict("fsfxo"), 2, cfg)
+    assert later.status == "accepted" and later.first_loss == 2
+    assert later.outcomes == [R.STRESSED_RECOVERED, R.INTACT, R.LOSS_FULL, R.OPEN]
+    # The interval that flagged the candidate is never background (decision 9).
+    flagged = R.route(verdict("fsfxo"), verdict("fsfxo"), 0, cfg)
+    assert flagged.outcomes[0] == R.FLAGGED_UNCONFIRMED
+
+
 def test_rejection_is_unlabelled_only_where_flagged() -> None:
     out = R.route(verdict("ffff"), verdict("ffff"), 2, CFG)
     assert out.status == "rejected"

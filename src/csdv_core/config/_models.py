@@ -536,6 +536,7 @@ class LabelRouting(_Base):
     guard_flagged_interval: bool = True
     consecutive_loss: Literal["label", "ignore"] = "ignore"
     disputed_date: Literal["ignore", "later"] = "later"
+    stressed_recovered: Literal["ignore", "background"] = "ignore"
     fire_perimeters: str | None = None
     fire_perimeter_share: float = Field(default=0.5, gt=0, le=1)
 

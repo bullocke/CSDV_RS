@@ -670,6 +670,15 @@ def build_cmd(windows, with_imagery, stage, **where) -> None:
             "push answers.jsonl again and build again.",
             err=True,
         )
+    if run.cfg.routing.stressed_recovered == "background":
+        recovered = sum(
+            str(c.get("outcomes") or "").split("|").count("stressed_recovered")
+            for c in cands
+        )
+        click.echo(
+            f"{recovered} candidate intervals of recovered stress are background "
+            "(routing.stressed_recovered)."
+        )
     if shared:
         click.echo(
             f"{shared} chips lie in two windows and keep the labels of the first."

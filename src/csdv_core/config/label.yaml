@@ -74,6 +74,17 @@ routing:
   # of a gradual mortality. The price is some losses dated one interval
   # late.
   disputed_date: later
+  # What to do with an interval that ends on a date both models call
+  # stressed (leafless or thin canopy, no loss) when both call the next
+  # date forest: a defoliation that recovered. "ignore" leaves it
+  # unlabelled like every other stressed date. "background" labels it
+  # background (reason `stressed_recovered`), so that a classifier is shown
+  # defoliation as a negative. A stressed date that only one model sees,
+  # that a loss follows or that has no later image stays unlabelled either
+  # way. Off by default. Added 2026-11-17 to test whether the pair model
+  # stops reading defoliation as loss (98 candidate dates in the scale
+  # test, in Rhode Island 2016, New Jersey 2017 and the Adirondacks 2021).
+  stressed_recovered: ignore
 
 outlines:
   # Types whose edges are sharp enough to trust a model polygon as a label.
@@ -170,5 +181,6 @@ policy:
   extension_partial: 1
   judged_intact: 0
   post_event_open: 0
+  stressed_recovered: 0
   nonforest: 0
   stable_forest: 0

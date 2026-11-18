@@ -271,6 +271,19 @@ def test_stressed_canopy_is_unlabelled() -> None:
     assert reason[100, 50] == Reason.MARGIN  # and it keeps a ring
 
 
+def test_recovered_stress_is_background_without_a_ring() -> None:
+    recovered = CandidateLayer(R.STRESSED_RECOVERED, square(60, 140, 60, 140))
+    reason, _ = interval_reason(base(), [recovered], RULES)
+    assert reason[100, 100] == Reason.STRESSED_RECOVERED
+    assert to_change(reason, CFG.policy)[100, 100] == 0
+    assert reason[100, 50] == Reason.STABLE_FOREST  # no ring around background
+    # A neighbour's unlabelled verdict on shared ground still wins.
+    stressed = CandidateLayer(R.STRESSED, square(60, 140, 120, 180))
+    reason, _ = interval_reason(base(), [recovered, stressed], RULES)
+    assert reason[100, 130] == Reason.CANOPY_STRESSED
+    assert reason[100, 100] == Reason.STRESSED_RECOVERED  # inside the other's ring
+
+
 def test_scattered_trees_below_the_forest_rule_are_unlabelled() -> None:
     before = np.zeros((N, N), bool)
     cover = np.zeros((N, N), "float32")

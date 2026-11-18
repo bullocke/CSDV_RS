@@ -119,6 +119,8 @@ Canopy loss means that live trees were removed or died between two dates. Two th
 
 Defoliation is not loss. A canopy that is leafless, brown or thin in one growing-season image and green again later was defoliated. The models record such a date as `stressed`, a fifth state beside forest, partial loss, full loss and open. They use the same state when they cannot tell from the images whether standing trees are dead. An interval that ends on a stressed date is left unlabelled.
 
+Left unlabelled, defoliation is never shown to a classifier as a negative, and a pair model that reads two dates can take a leafless canopy for a lost one. `routing.stressed_recovered: background` labels such an interval background where both models call its later date stressed and both call the next date forest: a defoliation that both saw end. Every other stressed date stays unlabelled, namely one that only one model sees, one that a loss or further stress follows, and one with no later image, so that early mortality is not taught as background. The option is off by default. In the scale test it applies to 98 candidate dates, nearly all in three outbreaks (Rhode Island 2016, New Jersey 2017, the Adirondacks 2021). A candidate whose stress recovered has no ring of unlabelled ground around it in that interval, like any candidate the models call intact, and the interval that flagged a candidate stays unlabelled as before.
+
 The removal or fall of trees that were already dead is not a second loss. Once the trees have died the ground is no longer forest, so the loss belongs to the interval in which they died, and later intervals are `open`.
 
 The first version of the prompt had neither rule. In the example run it dated an oak stand's loss to the July image in which spongy moth had stripped it, called every later date open, and so labelled the interval in which the trees were removed as background.
@@ -150,6 +152,7 @@ Each pixel of each interval gets a reason, and the change label is a lookup of t
 | `under_min`, `raised_prob`, `forest_lost_unjudged` | Candidate under 0.3 ha, probability of 0.2 or more, or a cell that left the forest mask, none of them judged | ignore |
 | `sparse_woody`, `unstable_forest`, `no_data` | Trees below the forest rule (canopy cover from 0.05, about one crown in a cell, or mean height from 2 m), forest in an interval where the unit's forest mask moves by more than 15%, missing imagery or canopy height | ignore |
 | `judged_intact`, `post_event_open` | Inside a candidate, both models report no loss in this interval | 0 |
+| `stressed_recovered` | Inside a candidate, both models call the later date stressed and the next date forest. Written only with `routing.stressed_recovered: background` | 0 |
 | `nonforest` | Not forest at the earlier date, and no trees to speak of | 0 |
 | `stable_forest` | Forest on both dates, outside every candidate | 0 |
 
@@ -162,6 +165,28 @@ The forest rule of the grid runs is canopy height alone, so a roof or a rock fac
 There is one loss class. The models judge severity for the whole outline, so cleared ground inside an envelope is often called partial, and the example run found bare ground labelled partial in a mine bench, a clearcut and a log landing. The reason raster keeps what the models said (`accepted_full` against `accepted_partial`), and the policy table can map stand-replacing loss to 2 again once severity is reliable at cell scale. The `events` layer keeps the severity of each event.
 
 Labels are stored at 0.6 m and pooled to the model's output cells by `csdv_core.label.pooling.pool_change`. A cell is ignore when half of it is ignore. Otherwise it is loss when at least half of its labelled pixels are loss, background when at most 10% are, and ignore in between.
+
+### A variant of the labels in a second run folder
+
+A rule can be tried without touching the labels a model was trained on. A second run folder gets the same sample and the same answers and its own `config.yaml`. Nothing is drawn or asked again, because `build` only routes the answers that are there. The label run `scale_test_stressbg` was made this way from `scale_test`, with `routing.stressed_recovered: background` added to the configuration.
+
+```bash
+# Laptop: the small inputs, the stacks through a link, the new rule
+BASE=results/chpc_exports/label/scale_test
+NEW=results/chpc_exports/label/scale_test_stressbg
+mkdir -p $NEW && cp -p $BASE/{windows.csv,units.csv,answers.jsonl,fire_perimeters.gpkg} $NEW/
+cp -rp $BASE/candidates $NEW/ && ln -s ../scale_test/stacks $NEW/stacks
+cp $BASE/config.yaml $NEW/config.yaml                 # then add the rule to it
+csdv label build --label-dir $NEW --no-imagery --config $NEW/config.yaml   # to look at the labels
+scripts/chpc/push_label_run.sh $NEW scale_test_stressbg
+
+# CHPC: link the stacks of the base run, then build beside the four-band chips
+ln -s ../scale_test/stacks "$CSDV_EXPORT_DIR/label/scale_test_stressbg/stacks"
+sbatch $CSDV_SBATCH_CPU --output="$CSDV_LOG_DIR/%x-%j.out" \
+    scripts/slurm/run_label_build.sbatch "$CSDV_EXPORT_DIR/label/scale_test_stressbg"
+```
+
+The build on CHPC writes the four-band chips of the variant again from the linked stacks (about 11 GB for the scale test), so that both folders are complete and a training job reads either one through `CSDV_PAIR_LABEL_DIR`. With `routing.stressed_recovered: background` the last lines of the build say how many candidate intervals of recovered stress became background.
 
 ## Chips
 

@@ -72,6 +72,7 @@ class Reason(IntEnum):
     SPARSE_WOODY = 34
     UNSTABLE_FOREST = 35
     # Background.
+    STRESSED_RECOVERED = 39
     JUDGED_INTACT = 40
     POST_EVENT_OPEN = 41
     NONFOREST = 42
@@ -112,7 +113,11 @@ REASON_GROUPS: dict[str, tuple[Reason, ...]] = {
         Reason.UNSTABLE_FOREST,
         Reason.NO_DATA,
     ),
-    "background_verified": (Reason.JUDGED_INTACT, Reason.POST_EVENT_OPEN),
+    "background_verified": (
+        Reason.JUDGED_INTACT,
+        Reason.POST_EVENT_OPEN,
+        Reason.STRESSED_RECOVERED,
+    ),
     "background_nonforest": (Reason.NONFOREST,),
     "background_forest": (Reason.STABLE_FOREST,),
 }
@@ -283,6 +288,8 @@ def interval_reason(
             reason[cand.mask] = Reason.JUDGED_INTACT
         elif cand.outcome == R.OPEN:
             reason[cand.mask] = Reason.POST_EVENT_OPEN
+        elif cand.outcome == R.STRESSED_RECOVERED:
+            reason[cand.mask] = Reason.STRESSED_RECOVERED
     for cand in live:
         if cand.outcome in _OUTCOME_REASON:
             reason[cand.mask] = _OUTCOME_REASON[cand.outcome]

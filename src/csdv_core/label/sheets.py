@@ -342,6 +342,7 @@ _SHORT = {
     "flagged_unconfirmed": "flag?",
     "loss_repeated": "again?",
     "stressed": "stress",
+    "stressed_recovered": "regrn",
     "failed": "fail",
     "unjudged": "-",
     "under_min": "small",

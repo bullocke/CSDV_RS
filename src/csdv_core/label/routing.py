@@ -11,6 +11,10 @@ report loss but name different first dates the candidate is kept
 unlabelled. The interval of the later date is labelled as loss, or left
 unlabelled too (``disputed_date``). Apart from that interval, an interval
 is labelled only where the two models agree about it.
+
+An interval that ends on a date a model calls ``stressed`` is left
+unlabelled. With ``stressed_recovered: background`` it is background where
+both models call that date stressed and the next date forest.
 """
 
 from __future__ import annotations
@@ -33,12 +37,13 @@ REJECTED_WEAK = "rejected_weak"  # joint rejection below the confidence bar
 FLAGGED_UNCONFIRMED = "flagged_unconfirmed"  # flagged here, loss placed elsewhere
 LOSS_REPEATED = "loss_repeated"  # loss again right after an agreed loss
 STRESSED = "stressed"  # a model sees a leafless or thin canopy, not a loss
+STRESSED_RECOVERED = "stressed_recovered"  # both see it, and forest at the next date
 FAILED = "failed"  # a verdict is missing or unusable
 UNJUDGED = "unjudged"  # large enough, never sent to the models
 UNDER_MIN = "under_min"  # too small to judge
 
 LOSS_OUTCOMES = frozenset({LOSS_FULL, LOSS_PARTIAL, LOSS_DISPUTED})
-BACKGROUND_OUTCOMES = frozenset({INTACT, OPEN})
+BACKGROUND_OUTCOMES = frozenset({INTACT, OPEN, STRESSED_RECOVERED})
 
 __all__ = [
     "BACKGROUND_OUTCOMES",
@@ -101,10 +106,20 @@ def unjudged(n_intervals: int, flagged: int | None, small: bool) -> Routed:
     return Routed(status="unjudged", outcomes=outcomes)
 
 
-def _quiet(a: Verdict, b: Verdict, date: int) -> str:
+def _quiet(a: Verdict, b: Verdict, date: int, cfg: LabelRouting) -> str:
     """Outcome of an interval in which neither model reports loss."""
     states = (a.states[date], b.states[date])
     if "stressed" in states:
+        if (
+            cfg.stressed_recovered == "background"
+            and states == ("stressed", "stressed")
+            and date + 1 < len(a.states)
+            and (a.states[date + 1], b.states[date + 1]) == ("forest", "forest")
+        ):
+            # Leafless on this date and a closed canopy on the next: a
+            # defoliation that both models saw end. It is not a loss, and
+            # the classifier is shown it as background.
+            return STRESSED_RECOVERED
         # Defoliated, or dead and standing: the pair of images differs, and
         # the models cannot say that the canopy is intact.
         return STRESSED
@@ -133,7 +148,7 @@ def route(a: Verdict, b: Verdict, flagged: int | None, cfg: LabelRouting) -> Rou
         "affected_share": (a.affected_share, b.affected_share),
         "change_types": (a.change_type, b.change_type),
     }
-    quiet = [_quiet(a, b, k + 1) for k in range(n)]
+    quiet = [_quiet(a, b, k + 1, cfg) for k in range(n)]
     if not loss_a and not loss_b:
         strong = len(confidences) == 2 and min(confidences) >= cfg.reject_confidence
         outcomes = list(quiet)
