@@ -51,7 +51,10 @@
 #                        nothing (scripts/chpc/submit_pair_sites.sh). The
 #                        comparison is then a test only where that model did
 #                        not train on the unit.
-#   CSDV_PAIR_TRAIN_ARGS Further options for `csdv pair train`.
+#   CSDV_PAIR_TRAIN_ARGS Further options for `csdv pair train`, for example
+#                        "--dates 3 --seed 1".
+#   CSDV_PAIR_PREDICT_ARGS  Further options for `csdv pair predict`, for
+#                        example "--skip-pairs".
 #   CSDV_LABEL_RUN_TAG   Run tag of the disturbance runs. Default "default".
 #
 # Before training, the label rasters must lie beside the four-band chips
@@ -82,6 +85,7 @@ RUN_DIR="$CSDV_RESULTS_ROOT/pairmodel/$RUN_NAME"
 CHECKPOINT="${CSDV_PAIR_CHECKPOINT:-$RUN_DIR/best.pt}"
 EXPORT="$CSDV_EXPORT_DIR/pairmodel/$RUN_NAME"
 read -r -a TRAIN_ARGS <<<"${CSDV_PAIR_TRAIN_ARGS:-}"
+read -r -a PREDICT_ARGS <<<"${CSDV_PAIR_PREDICT_ARGS:-}"
 
 echo "host=$(hostname) job=${SLURM_JOB_ID:-none} started=$(date -Is)"
 echo "run=$RUN_DIR holdout=$HOLDOUT split=$SPLIT_MODE val=$VAL stages=$STAGES smoke=$SMOKE"
@@ -183,7 +187,8 @@ if [[ " $STAGES " == *" predict "* ]]; then
     # The mosaics are read where they are, as the render job does.
     csdv pair predict --checkpoint "$CHECKPOINT" "${WHERE[@]}" \
         --data-root "$CSDV_DATA_ROOT" --out-dir "$RUN_DIR/map" \
-        --workers "$WORKERS" ${LIMIT[@]+"${LIMIT[@]}"}
+        --workers "$WORKERS" ${LIMIT[@]+"${LIMIT[@]}"} \
+        ${PREDICT_ARGS[@]+"${PREDICT_ARGS[@]}"}
     export_results
 fi
 

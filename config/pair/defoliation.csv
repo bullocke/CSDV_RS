@@ -1,0 +1,50 @@
+# Runs of the defoliation test of the pair model: recovered defoliation as
+# background in the labels, and the next date as a third model input, alone
+# and together (scripts/chpc/submit_pair_defoliation.sh,
+# pull_pair_defoliation.sh, docs/guides/pair_model.md).
+#
+# Columns:
+#   run      Run name, the folder under pairmodel/.
+#   kind     "train" trains a model without `unit` (split by blocks) and maps
+#            that unit. "look" maps `unit` with the model of `model` and
+#            trains nothing.
+#   labels   Label run under $CSDV_EXPORT_DIR/label/ that is trained on and
+#            scored against. scale_test_stressbg is scale_test built with
+#            routing.stressed_recovered: background.
+#   dates    2 for a pair model, 3 for a model that also reads the next date.
+#   unit     Unit held out and mapped (train), or mapped (look).
+#   seed     Seed of the split, the statistics and the loaders.
+#   model    For "look": the run whose best.pt maps the unit.
+#   batch    "yes" for the rows the scripts take by default, "optional" for
+#            rows taken with --optional.
+#   notes    No commas.
+#
+# Runs that exist from earlier batches and are the baselines:
+# first_look_blocks2 (base labels, 2 dates, Oregon held out) and
+# holdout_q4107127 (base labels, 2 dates, Rhode Island held out).
+run,kind,labels,dates,unit,seed,model,batch,notes
+blocks_stressbg,train,scale_test_stressbg,2,q4412328,0,,yes,Oregon held out as in first_look_blocks2
+blocks_3date,train,scale_test,3,q4412328,0,,yes,Oregon held out as in first_look_blocks2
+blocks_stressbg_3date,train,scale_test_stressbg,3,q4412328,0,,yes,Oregon held out as in first_look_blocks2
+holdout_seed1_q4107127,train,scale_test,2,q4107127,1,,yes,Repeat of holdout_q4107127 with another seed: the run-to-run noise
+holdout_stressbg_q4107127,train,scale_test_stressbg,2,q4107127,0,,yes,Rhode Island held out
+holdout_3date_q4107127,train,scale_test,3,q4107127,0,,yes,Rhode Island held out
+holdout_stressbg_3date_q4107127,train,scale_test_stressbg,3,q4107127,0,,yes,Rhode Island held out
+holdout_q4407462,train,scale_test,2,q4407462,0,,yes,Adirondacks held out: the baseline
+holdout_stressbg_q4407462,train,scale_test_stressbg,2,q4407462,0,,yes,Adirondacks held out
+holdout_3date_q4407462,train,scale_test,3,q4407462,0,,yes,Adirondacks held out
+holdout_stressbg_3date_q4407462,train,scale_test_stressbg,3,q4407462,0,,yes,Adirondacks held out
+holdout_3date_q3708104,train,scale_test,3,q3708104,0,,optional,West Virginia held out: the third date on its December 2018 false alarms
+holdout_skip_q4107127,look,scale_test,2,q4107127,0,holdout_q4107127,yes,The existing Rhode Island holdout model mapped again for the pairs that skip a date
+look_first_look_blocks2_q4107127,look,scale_test,2,q4107127,0,first_look_blocks2,yes,Rhode Island by the baseline model
+look_first_look_blocks2_q4407462,look,scale_test,2,q4407462,0,first_look_blocks2,yes,Adirondacks by the baseline model
+look_first_look_blocks2_q3907420,look,scale_test,2,q3907420,0,first_look_blocks2,yes,New Jersey by the baseline model
+look_blocks_stressbg_q4107127,look,scale_test_stressbg,2,q4107127,0,blocks_stressbg,yes,Rhode Island
+look_blocks_stressbg_q4407462,look,scale_test_stressbg,2,q4407462,0,blocks_stressbg,yes,Adirondacks
+look_blocks_stressbg_q3907420,look,scale_test_stressbg,2,q3907420,0,blocks_stressbg,yes,New Jersey
+look_blocks_3date_q4107127,look,scale_test,3,q4107127,0,blocks_3date,yes,Rhode Island
+look_blocks_3date_q4407462,look,scale_test,3,q4407462,0,blocks_3date,yes,Adirondacks
+look_blocks_3date_q3907420,look,scale_test,3,q3907420,0,blocks_3date,yes,New Jersey
+look_blocks_stressbg_3date_q4107127,look,scale_test_stressbg,3,q4107127,0,blocks_stressbg_3date,yes,Rhode Island
+look_blocks_stressbg_3date_q4407462,look,scale_test_stressbg,3,q4407462,0,blocks_stressbg_3date,yes,Adirondacks
+look_blocks_stressbg_3date_q3907420,look,scale_test_stressbg,3,q3907420,0,blocks_stressbg_3date,yes,New Jersey
