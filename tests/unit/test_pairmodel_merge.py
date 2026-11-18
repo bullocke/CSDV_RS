@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -77,6 +78,25 @@ def test_no_run_draws_leave_the_weights_unchanged() -> None:
     plain = D.sample_weights(index.drop(columns="run"), loss_draws=0.5)
     assert np.array_equal(D.sample_weights(index, loss_draws=0.5), plain)
     assert np.array_equal(D.sample_weights(index, loss_draws=0.5, run_draws={}), plain)
+
+
+def test_a_share_of_zero_draws_as_if_the_run_were_absent() -> None:
+    """The control of a run with a share: same chips, none of the run drawn."""
+    index = _index()
+    weights = D.sample_weights(index, loss_draws=0.5, run_draws={"stable": 0.0})
+    assert (weights[8:] == 0).all()
+    alone = D.sample_weights(index.iloc[:8].drop(columns="run"), loss_draws=0.5)
+    assert weights[:8] == pytest.approx(alone)
+
+
+def test_run_draws_option_accepts_zero_and_rejects_one() -> None:
+    from csdv_core.pairmodel.cli import _run_draws
+
+    assert _run_draws(("stable=0",)) == {"stable": 0.0}
+    assert _run_draws(("stable=0.15",)) == {"stable": 0.15}
+    for bad in ("stable=1", "stable=-0.1", "stable", "=0.1"):
+        with pytest.raises(click.BadParameter):
+            _run_draws((bad,))
 
 
 def test_run_draws_reject_unknown_runs_and_too_large_shares() -> None:

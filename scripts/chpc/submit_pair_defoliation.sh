@@ -23,6 +23,10 @@
 #   --table FILE   Run table. Default config/pair/defoliation.csv.
 #   --dry-run      Print the sbatch commands and submit nothing.
 #
+# The run table may end with a column train_args: further options for
+# `csdv pair train` (no commas), for example "--run-draws stable_forest=0.15"
+# in config/pair/stable_forest.csv. Tables without it work as before.
+#
 # A run that already has a comparison in the export folder is skipped. A
 # "look" row waits for the job that trains its model when that job is
 # submitted by the same call.
@@ -48,7 +52,7 @@ while (($#)); do
         --no-smoke) SMOKE=0; shift ;;
         --table) TABLE="$2"; shift 2 ;;
         --dry-run) DRY=1; shift ;;
-        -h | --help) sed -n '2,34p' "$0"; exit 0 ;;
+        -h | --help) sed -n '2,37p' "$0"; exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
@@ -122,7 +126,7 @@ done <"$TABLE"
 # The labels of every row that is taken have to be there, unless a job that
 # builds them is named with --after.
 for line in "${ROWS[@]}"; do
-    IFS=, read -r run kind labels dates unit seed model batch notes <<<"$line"
+    IFS=, read -r run kind labels dates unit seed model batch notes train_args <<<"$line"
     wanted "$run" "$batch" || continue
     label_dir="$CSDV_EXPORT_DIR/label/$labels"
     if [[ -z "$AFTER" && ! -f "$label_dir/chips/chips.parquet" ]]; then
@@ -135,13 +139,13 @@ done
 SMOKE_JOB=""
 if ((SMOKE)); then
     for line in "${ROWS[@]}"; do
-        IFS=, read -r run kind labels dates unit seed model batch notes <<<"$line"
+        IFS=, read -r run kind labels dates unit seed model batch notes train_args <<<"$line"
         wanted "$run" "$batch" || continue
         [[ "$kind" == "train" && "$dates" == "3" ]] || continue
         SMOKE_JOB="$(submit "$AFTER" \
             CSDV_PAIR_LABEL_DIR="$CSDV_EXPORT_DIR/label/$labels" \
             CSDV_PAIR_HOLDOUT="$unit" CSDV_PAIR_SPLIT=blocks \
-            CSDV_PAIR_TRAIN_ARGS="--dates 3 --seed $seed" \
+            CSDV_PAIR_TRAIN_ARGS="--dates 3 --seed $seed${train_args:+ $train_args}" \
             CSDV_PAIR_PREDICT_ARGS="--skip-pairs" -- \
             --time=00:45:00 --job-name="pair_${run}_smoke" \
             --output="$CSDV_LOG_DIR/%x-%j.out" "$SCRIPT" "$run" --smoke)"
@@ -154,7 +158,7 @@ FIRST="$(join_ids "$AFTER" "$SMOKE_JOB")"
 submitted=0
 for wave in train look; do
     for line in "${ROWS[@]}"; do
-        IFS=, read -r run kind labels dates unit seed model batch notes <<<"$line"
+        IFS=, read -r run kind labels dates unit seed model batch notes train_args <<<"$line"
         [[ "$kind" == "$wave" ]] || continue
         wanted "$run" "$batch" || continue
         if [[ -f "$CSDV_EXPORT_DIR/pairmodel/$run/compare/compare.json" ]]; then
@@ -165,13 +169,13 @@ for wave in train look; do
             CSDV_PAIR_HOLDOUT="$unit" CSDV_PAIR_SPLIT=blocks
             CSDV_PAIR_PREDICT_ARGS="--skip-pairs")
         if [[ "$kind" == "train" ]]; then
-            train_args="--seed $seed"
+            options="--seed $seed"
             limit=02:30:00
             if [[ "$dates" == "3" ]]; then
-                train_args="--dates 3 --seed $seed"
+                options="--dates 3 --seed $seed"
                 limit=03:30:00
             fi
-            settings+=(CSDV_PAIR_TRAIN_ARGS="$train_args")
+            settings+=(CSDV_PAIR_TRAIN_ARGS="$options${train_args:+ $train_args}")
             job="$(submit "$FIRST" "${settings[@]}" -- --time="$limit" \
                 --job-name="pair_$run" --output="$CSDV_LOG_DIR/%x-%j.out" \
                 "$SCRIPT" "$run")"

@@ -94,6 +94,20 @@ The merged `chips.parquet` has a column `run` and window ids prefixed with the r
 
 Half the draws go to samples with loss and half to samples without (`loss_draws`). `--run-draws NAME=SHARE` gives the samples without loss of a named run their own share, taken from the second half: with `stable_forest=0.15`, 50% of draws hold loss, 15% are stable-forest samples and 35% are the other samples without loss. Without the option the weights are exactly those of earlier runs. The share is stored in `config.json` as `run_draws`.
 
+A share of 0 never draws the run's samples without loss and draws every other sample with the weight it has without that run. It is the control for a run with a share. A model trained on the first run's folder alone is not a fair control, because the blocks split and the band statistics depend on every chip in the folder. With the merged folder and `stable_forest=0`, both runs have the same split, statistics and validation chips, and they differ only in the draws.
+
+The holdout reruns of West Virginia and the Smokies are such a pair per unit. Their run table, `config/pair/stable_forest.csv`, goes to the batch scripts of the defoliation test, which take any table. A last column `train_args` adds options to `csdv pair train`:
+
+```bash
+csdv pair merge-chips --out "$CSDV_EXPORT_DIR/label/merged_sf" \
+    --run scale_test="$CSDV_EXPORT_DIR/label/scale_test" \
+    --run stable_forest="$CSDV_EXPORT_DIR/label/stable_forest"
+scripts/chpc/submit_pair_defoliation.sh --table config/pair/stable_forest.csv --dry-run
+scripts/chpc/submit_pair_defoliation.sh --table config/pair/stable_forest.csv
+# Laptop
+scripts/chpc/pull_pair_defoliation.sh --table config/pair/stable_forest.csv
+```
+
 ## Loading
 
 The chip rasters are compressed with the bands of a pixel stored together, so a crop of two dates decodes every band of the whole chip. That takes about 50 ms per sample and was two thirds of an epoch. `--cache-dir` names a folder where every chip of the run is decoded once into an uncompressed array (about 12 MB per chip of seven dates, 30 GB for the full scale test) that the loader processes open as a memory map. A sample is then read in about 1 ms and is identical. The cache is built at the start of training, in parallel, and a manifest of the size and modification time of each chip's files decides which chips are decoded again. Put it on node scratch (the job script does).

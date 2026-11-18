@@ -410,7 +410,9 @@ def sample_weights(
             label runs (the ``run`` column of a merged chip folder), for
             example ``{"stable_forest": 0.15}``. Each named run is a group of
             its own, and its share is taken from the draws without loss.
-            None or empty leaves the weights exactly as without it.
+            None or empty leaves the weights exactly as without it. A share
+            of 0 gives the run's samples without loss no weight, and the
+            others the weights they have without that run.
 
     Raises:
         ValueError: If a named run has no sample without loss, or the named

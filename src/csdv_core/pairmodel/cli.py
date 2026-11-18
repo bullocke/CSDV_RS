@@ -23,7 +23,12 @@ def _units(text: str | None) -> tuple[str, ...]:
 
 
 def _run_draws(items: tuple[str, ...]) -> dict[str, float]:
-    """``("stable_forest=0.15",)`` as ``{"stable_forest": 0.15}``."""
+    """``("stable_forest=0.15",)`` as ``{"stable_forest": 0.15}``.
+
+    A share of 0 never draws the run's samples without loss, and draws every
+    other sample as if the run were not in the chip folder: the control of a
+    run with a share, on the same chips, split and band statistics.
+    """
     out: dict[str, float] = {}
     for item in items:
         name, sep, share = item.partition("=")
@@ -31,8 +36,10 @@ def _run_draws(items: tuple[str, ...]) -> dict[str, float]:
             value = float(share)
         except ValueError:
             value = -1.0
-        if not sep or not name.strip() or not 0 < value < 1:
-            raise click.BadParameter(f"{item!r}: expected RUN=SHARE with 0 < SHARE < 1")
+        if not sep or not name.strip() or not 0 <= value < 1:
+            raise click.BadParameter(
+                f"{item!r}: expected RUN=SHARE with 0 <= SHARE < 1"
+            )
         out[name.strip()] = value
     return out
 

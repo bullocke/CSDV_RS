@@ -1,0 +1,20 @@
+# Holdout reruns with stable-forest chips on off-season NAIP (PLAN section 2.1,
+# point 10, issue 3.20): West Virginia and the Smokies, whose holdout maps
+# flag intact forest on November, December and April images. Each unit is
+# trained twice on the merged chips of scale_test and stable_forest
+# (csdv pair merge-chips, label run merged_sf): once with 15% of the draws
+# for the stable-forest samples, once with none (the control: the same chips,
+# blocks split and band statistics, the stable-forest samples never drawn).
+# Submit with scripts/chpc/submit_pair_defoliation.sh --table this file, and
+# pull with scripts/chpc/pull_pair_defoliation.sh --table this file.
+#
+# Columns as in config/pair/defoliation.csv, and:
+#   train_args  Further options for `csdv pair train` (no commas).
+#
+# Baselines from earlier batches (older labels and checkout, for reference
+# only): holdout_q3708104 and holdout_q3508321.
+run,kind,labels,dates,unit,seed,model,batch,notes,train_args
+holdout_sf_q3708104,train,merged_sf,2,q3708104,0,,yes,West Virginia held out with stable-forest draws,--run-draws stable_forest=0.15
+holdout_sf0_q3708104,train,merged_sf,2,q3708104,0,,yes,West Virginia held out: the control,--run-draws stable_forest=0
+holdout_sf_q3508321,train,merged_sf,2,q3508321,0,,yes,Smokies held out with stable-forest draws,--run-draws stable_forest=0.15
+holdout_sf0_q3508321,train,merged_sf,2,q3508321,0,,yes,Smokies held out: the control,--run-draws stable_forest=0

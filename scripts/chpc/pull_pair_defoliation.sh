@@ -45,7 +45,7 @@ TABLE="${TABLE:-$REPO/config/pair/defoliation.csv}"
 
 INCLUDE=()
 count=0
-while IFS=, read -r run kind labels dates unit seed model batch notes; do
+while IFS=, read -r run kind labels dates unit seed model batch notes train_args; do
     [[ -z "$run" || "$run" == \#* || "$run" == "run" ]] && continue
     [[ "$batch" == "yes" ]] || { ((OPTIONAL)) && [[ "$batch" == "optional" ]]; } || continue
     INCLUDE+=(--include="$run/" --include="$run/**"
