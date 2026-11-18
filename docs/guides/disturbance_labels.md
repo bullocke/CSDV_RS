@@ -78,6 +78,26 @@ A sample is drawn once per label folder. Window IDs follow the order of the samp
 
 The inclusion probability belongs to the seed. Other candidates in a window were not drawn with a known probability, and windows can overlap, so rates for a paper should be estimated from seeds only.
 
+### A run of stable forest only
+
+A run of quiet windows alone needs no model call: `--n-di 0 --n-other 0 --n-quiet N`, with `--quiet-max-per-unit` raised to the number wanted per unit and `--units` naming the units (without it every unit of the export is drawn). The quiet rule asks for no raised probability and no candidate in any interval, which few chips pass where forest is harvested on short rotations. In the ten stable-forest units, chosen for NAIP flown outside the growing season, it found none in the pine units of South Carolina, Georgia and Arkansas or in the Arizona unit.
+
+`--quiet-intervals FILE` judges a chip only in the intervals the file names for its unit (columns `unit` and `interval`, for example `2016-2018`). A chip qualifies when, in at least one of them, it is at least 80% forest on both dates, holds at most 2% raised cells and touches no candidate of that interval. The intervals in which it is quiet are written to `sub_stratum`. Its other intervals may hold candidates, and the build leaves those unlabelled (`unjudged` in their interval) like any unjudged candidate. Units missing from the file keep the rule over all intervals, and a chip's random key is the same under both rules.
+
+The label run `stable_forest` was drawn this way, with the intervals that have an off-season date at either end (`analysis/vlm_labeling/2_scale_test/stable_forest/offseason_intervals.py` writes the file from the grid runs):
+
+```bash
+LABEL=results/chpc_exports/label/stable_forest
+U=q3608211,q4107744,q4207853,q3608146,q3308153,q3008818,q3008212,q3409262,q4511420,q3310922
+csdv label candidates --label-dir $LABEL --units $U
+csdv label sample --label-dir $LABEL --units $U --n-di 0 --n-other 0 --n-quiet 400 \
+    --quiet-max-per-unit 40 --quiet-intervals $LABEL/quiet_intervals.csv --dry-run
+csdv label sample ...                     # the same without --dry-run
+: > $LABEL/answers.jsonl                  # the CHPC build job asks for the file
+```
+
+The chips still hold candidates of other intervals, so `render` writes request images for them, and each unit needs its line in `LOCATIONS`. They are never sent unless `verdict` is run.
+
 ## Rendering
 
 `csdv label render` fetches every year of a window on the 0.6 m lattice of its UTM zone and writes the images the models will see. Imagery finer than 0.6 m is averaged and coarser imagery is interpolated, on both machines with the same code. With `--naip-source local` the mosaics under `$CSDV_DATA_ROOT/naip/<unit>/<year>/` are read, and a missing mosaic is an error, because a compute node has no internet. `--check` lists the mosaics without rendering.

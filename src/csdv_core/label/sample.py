@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import geopandas as gpd
@@ -62,6 +63,15 @@ class SampleDesign:
         stage1_di: Windows per unit, seeded by a detected object, that form
             the first stage of a run with the reviewed windows.
         stage1_other: The same for windows seeded by another object.
+        quiet_intervals: Per unit, the intervals (``"2016-2018"``) in which a
+            quiet chip is judged, instead of all of them. A chip then
+            qualifies when it is quiet in at least one of them: at least
+            ``quiet_forest_share`` forest on both dates, at most
+            ``quiet_raised_share`` raised cells and no candidate of that
+            interval. Its other intervals may hold candidates, which the
+            build leaves unlabelled. Units not named use the rule over all
+            intervals. Used for stable forest on off-season images, where
+            the intervals named are those with an off-season date.
     """
 
     n_di: int = 650
@@ -73,6 +83,7 @@ class SampleDesign:
     quiet_max_per_unit: int | None = 25
     stage1_di: int = 4
     stage1_other: int = 2
+    quiet_intervals: Mapping[str, Sequence[str]] | None = None
 
 
 def _key(seed: int, name: str) -> float:
@@ -154,22 +165,10 @@ def _seeded(
     return rows
 
 
-def _quiet_chips(run: LabelRun, unit_id: str, design: SampleDesign) -> pd.DataFrame:
-    """Every lattice chip of a unit that is quiet forest, with a random key."""
-    unit = run.unit(unit_id)
-    cfg = run.cfg
-    side = cfg.chips.chip_px * GSD
+def _chip_rows(unit, side: float, shape: tuple[int, int]):
+    """Every lattice chip fully inside the unit's cell grid, with its cells."""
     x0, y0, x1, y1 = unit.grid.bounds
-    forest = fill_forest_dips(unit.layer("forest"))[0]
-    with np.errstate(invalid="ignore"):
-        raised = (
-            np.nanmax(np.nan_to_num(unit.layer("probability")[1:], nan=0.0), axis=0)
-            >= cfg.candidates.weak_prob
-        )
-    cands = run.candidates(unit_id)
-    index = cands.sindex
     t = unit.grid.cell_transform
-    rows = []
     for ix in range(int(np.ceil(x0 / side)), int(np.floor(x1 / side))):
         for iy in range(int(np.ceil(y0 / side)), int(np.floor(y1 / side))):
             wx0, wy0 = ix * side, iy * side
@@ -177,24 +176,80 @@ def _quiet_chips(run: LabelRun, unit_id: str, design: SampleDesign) -> pd.DataFr
             c1 = int(np.ceil((wx0 + side - t.c) / t.a))
             r0 = int((t.f - (wy0 + side)) // -t.e)
             r1 = int(np.ceil((t.f - wy0) / -t.e))
-            if r0 < 0 or c0 < 0 or r1 > forest.shape[0] or c1 > forest.shape[1]:
+            if r0 < 0 or c0 < 0 or r1 > shape[0] or c1 > shape[1]:
                 continue
-            if forest[r0:r1, c0:c1].mean() < design.quiet_forest_share:
-                continue
-            if raised[r0:r1, c0:c1].mean() > design.quiet_raised_share:
-                continue
-            pad = cfg.rules.margin_wide_m
-            box_ = (wx0 - pad, wy0 - pad, wx0 + side + pad, wy0 + side + pad)
-            if len(index.query(box(*box_), predicate="intersects")):
-                continue
-            rows.append(
-                {
-                    "ix0": ix,
-                    "iy0": iy,
-                    "key": _key(design.seed, f"{unit_id}:quiet:{ix}:{iy}"),
-                }
+            yield ix, iy, (slice(r0, r1), slice(c0, c1))
+
+
+def _quiet_chips(run: LabelRun, unit_id: str, design: SampleDesign) -> pd.DataFrame:
+    """Every lattice chip of a unit that is quiet forest, with a random key.
+
+    The column ``intervals`` lists the intervals in which the chip is quiet
+    when the unit is named in ``design.quiet_intervals``, and is empty
+    otherwise.
+    """
+    unit = run.unit(unit_id)
+    cfg = run.cfg
+    side = cfg.chips.chip_px * GSD
+    pad = cfg.rules.margin_wide_m
+    forest_all = fill_forest_dips(unit.layer("forest"))
+    with np.errstate(invalid="ignore"):
+        raised_all = (
+            np.nan_to_num(unit.layer("probability"), nan=0.0)
+            >= cfg.candidates.weak_prob
+        )
+    cands = run.candidates(unit_id)
+    named = (design.quiet_intervals or {}).get(unit_id)
+    if named:
+        unknown = sorted(set(named) - set(unit.intervals))
+        if unknown:
+            raise ValueError(
+                f"{unit_id}: intervals {', '.join(unknown)} are not among "
+                f"{', '.join(unit.intervals)}"
             )
-    return pd.DataFrame(rows, columns=["ix0", "iy0", "key"])
+        checks = [
+            (name, unit.intervals.index(name) + 1)
+            for name in unit.intervals
+            if name in set(named)
+        ]
+        index = {name: cands[cands["interval"] == name].sindex for name, _ in checks}
+    else:
+        forest = forest_all[0]
+        raised = raised_all[1:].any(axis=0)
+        index_all = cands.sindex
+    rows = []
+    for ix, iy, cells in _chip_rows(unit, side, forest_all.shape[1:]):
+        wx0, wy0 = ix * side, iy * side
+        padded = box(wx0 - pad, wy0 - pad, wx0 + side + pad, wy0 + side + pad)
+        if named:
+            quiet = [
+                name
+                for name, k in checks
+                if forest_all[k - 1][cells].mean() >= design.quiet_forest_share
+                and forest_all[k][cells].mean() >= design.quiet_forest_share
+                and raised_all[k][cells].mean() <= design.quiet_raised_share
+                and not len(index[name].query(padded, predicate="intersects"))
+            ]
+            if not quiet:
+                continue
+            intervals = ";".join(quiet)
+        else:
+            if forest[cells].mean() < design.quiet_forest_share:
+                continue
+            if raised[cells].mean() > design.quiet_raised_share:
+                continue
+            if len(index_all.query(padded, predicate="intersects")):
+                continue
+            intervals = ""
+        rows.append(
+            {
+                "ix0": ix,
+                "iy0": iy,
+                "intervals": intervals,
+                "key": _key(design.seed, f"{unit_id}:quiet:{ix}:{iy}"),
+            }
+        )
+    return pd.DataFrame(rows, columns=["ix0", "iy0", "intervals", "key"])
 
 
 def _equal_allocation(counts: dict[str, int], n_total: int) -> dict[str, int]:
@@ -340,7 +395,7 @@ def draw_windows(
                 {
                     "unit": unit_id,
                     "seed_cand": "",
-                    "sub_stratum": "",
+                    "sub_stratum": getattr(chip, "intervals", "") or "",
                     "incl_prob": len(take) / len(chips),
                     "key": chip.key,
                     "stratum": "quiet",

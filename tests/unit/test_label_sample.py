@@ -138,3 +138,36 @@ def test_the_draw_is_fixed_by_the_seed_and_numbers_its_windows(run: LabelRun) ->
     assert table.equals(draw_windows(run, [UNIT], design))
     assert list(table["window_id"]) == [f"W{i + 1:04d}" for i in range(len(table))]
     assert "stage" in table and set(table["stage"]) <= {1, 2}
+
+
+def test_quiet_chips_can_be_judged_in_named_intervals_only(run: LabelRun) -> None:
+    """Stable forest in some intervals: a candidate of another interval is no bar.
+
+    Every chip of the test unit touches a candidate of some interval, so none
+    is quiet over all intervals. Judged one interval at a time, the chips away
+    from that interval's candidates qualify.
+    """
+    assert S._quiet_chips(run, UNIT, SampleDesign()).empty
+
+    def chips(*names: str) -> pd.DataFrame:
+        design = SampleDesign(quiet_intervals={UNIT: names})
+        return S._quiet_chips(run, UNIT, design).set_index(["ix0", "iy0"])
+
+    first, second = chips("2015-2018"), chips("2018-2021")
+    assert len(first) == 2 and len(second) == 1
+    assert set(first.index).isdisjoint(second.index)
+    both = chips("2015-2018", "2018-2021")
+    assert set(both.index) == set(first.index) | set(second.index)
+    assert set(both["intervals"]) == {"2015-2018", "2018-2021"}
+    # The key of a chip does not depend on the rule, so draws stay nested.
+    assert both.loc[first.index, "key"].tolist() == first["key"].tolist()
+
+    design = SampleDesign(
+        n_di=0, n_other=0, n_quiet=5, quiet_intervals={UNIT: ("2015-2018",)}
+    )
+    table = draw_windows(run, [UNIT], design)
+    assert list(table["sub_stratum"]) == ["2015-2018"] * 2
+    assert list(table["incl_prob"]) == pytest.approx([1.0, 1.0])
+
+    with pytest.raises(ValueError, match="2016-2018"):
+        S._quiet_chips(run, UNIT, SampleDesign(quiet_intervals={UNIT: ("2016-2018",)}))

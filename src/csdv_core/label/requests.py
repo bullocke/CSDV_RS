@@ -32,10 +32,17 @@ POLYGON_PROMPT = "polygon_v1"
 #: Location text given to the models: state and physiographic region. Site
 #: labels such as "CA_CampFire" name the answer and are never shown.
 LOCATIONS: dict[str, str] = {
+    "q3008212": "southern Georgia, Southern Coastal Plain pine flatwoods",
+    "q3008818": "southeastern Mississippi, Southeastern Plains pine",
     "q3208840": "western Alabama, Gulf Coastal Plain",
+    "q3308153": "southwestern South Carolina, Southeastern Plains pine",
+    "q3310922": "eastern Arizona, Mogollon Rim ponderosa pine forest",
+    "q3409262": "central Arkansas, South Central Plains pine",
     "q3508207": "western North Carolina, southern Blue Ridge Mountains",
     "q3508321": "eastern Tennessee, southern Appalachian Mountains",
     "q3511151": "northern Arizona, Colorado Plateau ponderosa pine forest",
+    "q3608146": "northwestern North Carolina, Blue Ridge Mountains",
+    "q3608211": "southwestern Virginia, Central Appalachians",
     "q3708104": "southern West Virginia, Appalachian Plateau",
     "q3709154": "southern Missouri, Ozark Highlands",
     "q3907420": "southern New Jersey, Atlantic Coastal Plain pine barrens",
@@ -43,10 +50,13 @@ LOCATIONS: dict[str, str] = {
     "q3912112": "northern California, Sierra Nevada foothills",
     "q4010549": "north-central Colorado, Southern Rocky Mountains",
     "q4107127": "Rhode Island, southern New England",
+    "q4107744": "north-central Pennsylvania, Appalachian Plateau",
+    "q4207853": "western New York, Allegheny Plateau",
     "q4407152": "northern New Hampshire, White Mountains",
     "q4407462": "northern New York, Adirondack Mountains",
     "q4412328": "western Oregon, Coast Range",
     "q4506921": "northern Maine, Acadian forest",
+    "q4511420": "central Idaho, Idaho Batholith mixed conifer forest",
     "q4612245": "western Washington, Cascade foothills",
     "q4709438": "northern Minnesota, Laurentian mixed forest",
 }

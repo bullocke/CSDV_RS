@@ -222,6 +222,15 @@ def candidates_cmd(units: str | None, **where) -> None:
     help="Review GeoPackage of `csdv review`. Every interpreted polygon gets "
     "a window of its own, as a fixed reference inside the run.",
 )
+@click.option(
+    "--quiet-intervals",
+    "quiet_intervals_csv",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="CSV with columns unit and interval (e.g. 2016-2018). A quiet chip "
+    "of a unit listed there needs to be quiet in one of its intervals only, "
+    "not in all. For stable forest on off-season images.",
+)
 @click.option("--dry-run", is_flag=True, help="Report the sample, write nothing.")
 @click.option("--overwrite", is_flag=True, help="Replace an existing windows.csv.")
 def sample_cmd(
@@ -234,6 +243,7 @@ def sample_cmd(
     stage1_di,
     stage1_other,
     review_store,
+    quiet_intervals_csv,
     dry_run,
     overwrite,
     **where,
@@ -258,6 +268,20 @@ def sample_cmd(
             f"{run.root} already holds {', '.join(used)}. A new sample would "
             "give other windows the same IDs. Draw it into a new label folder."
         )
+    quiet_intervals = None
+    if quiet_intervals_csv is not None:
+        import pandas as pd
+
+        listed = pd.read_csv(quiet_intervals_csv, dtype=str, comment="#")
+        missing = {"unit", "interval"} - set(listed.columns)
+        if missing:
+            raise click.ClickException(
+                f"{quiet_intervals_csv} needs the columns {', '.join(sorted(missing))}"
+            )
+        quiet_intervals = {
+            unit: tuple(group["interval"].str.strip())
+            for unit, group in listed.groupby(listed["unit"].str.strip())
+        }
     design = SampleDesign(
         n_di=n_di,
         n_other=n_other,
@@ -266,6 +290,7 @@ def sample_cmd(
         quiet_max_per_unit=quiet_max_per_unit,
         stage1_di=stage1_di,
         stage1_other=stage1_other,
+        quiet_intervals=quiet_intervals,
     )
     reviewed = None
     if review_store is not None:
