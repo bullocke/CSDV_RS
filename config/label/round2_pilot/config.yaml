@@ -1,0 +1,7 @@
+# Thresholds that round 2 changes (see docs/guides/disturbance_labels.md).
+chips:
+  # Windows of at most four chips: the calls are spread over many places.
+  max_window_chips: 2
+rules:
+  # As in the scale test (decision 18 there).
+  never_green_ndvi: 0.05

@@ -1,0 +1,11 @@
+# Pilot of round 2: three boxes cut inside quads that round 1 processed (the
+# column `against` of config/label/round2_pilot/sites.csv names the quad) and
+# three boxes of round 2 that test the prompt on snow, high water and
+# defoliation. Written by the siting step. Columns as in conus_pilot.csv.
+label,lon,lat,buffer_km,cell,notes
+r2pilot_wv_quiet,-81.55000,37.95300,2.4,,pilot_quiet_offseason
+r2pilot_co_fire,-105.95000,40.21300,2.4,,pilot_event_filled
+r2pilot_me_harvest,-69.41000,45.69300,2.4,,pilot_harvest_mosaic
+r2_defoliation_recovered_ct1,-72.38419,42.01867,2.4,,defoliation_recovered
+r2_snow_hardwood_vt1,-72.71880,43.21880,2.4,,snow_hardwood
+r2_high_water_ms1,-90.09380,33.71880,2.4,,high_water

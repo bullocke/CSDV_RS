@@ -1,0 +1,2 @@
+# Options of `csdv label sample --design classes` for the pilot, one line.
+--draw-per-stratum 6 --stage1-per-unit 12 --judged-per-window 2 --n-quiet 24 --quiet-max-per-unit 4 --quiet-offseason

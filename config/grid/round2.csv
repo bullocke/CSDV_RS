@@ -1,0 +1,113 @@
+# Round 2 of the training labels: 109 boxes of 4.8 km, one per row.
+# Written by analysis/vlm_labeling/3_round2/siting/finalize.py from the
+# reviewed shortlist. Columns as in conus_pilot.csv.
+label,lon,lat,buffer_km,cell,notes
+r2_autumn_colour_wv1,-81.40620,37.34380,2.4,,autumn_colour; southwestern West Virginia; Central Appalachians; oak and hickory forest
+r2_autumn_colour_wv2,-80.40620,38.21880,2.4,,autumn_colour; southern West Virginia; Central Appalachians; maple and beech and birch forest
+r2_autumn_colour_va1,-80.65620,36.96880,2.4,,autumn_colour; southwestern Virginia; Blue Ridge; oak and hickory forest
+r2_autumn_colour_ny1,-75.21880,41.84380,2.4,,autumn_colour; northeastern Pennsylvania; Northern Allegheny Plateau; maple and beech and birch forest
+r2_autumn_colour_mn1,-93.46880,47.34380,2.4,,autumn_colour; northern Minnesota; Northern Lakes and Forests; aspen and birch forest
+r2_autumn_colour_me1,-70.71880,45.34380,2.4,,autumn_colour; western Maine; Northeastern Highlands; maple and beech and birch forest
+r2_beetle_rockies_id1,-115.01109,46.29277,2.4,,beetle_rockies; western Idaho; Idaho Batholith; fir and spruce and mountain hemlock forest
+r2_beetle_rockies_sd1,-103.49014,43.84855,2.4,,beetle_rockies; western South Dakota; Middle Rockies; ponderosa pine forest
+r2_beetle_rockies_ut1,-110.37910,40.59135,2.4,,beetle_rockies; northeastern Utah; Wasatch and Uinta Mountains; lodgepole pine forest
+r2_conversion_east_other_fl1,-83.35666,30.41671,2.4,,conversion_east_other; northern Florida; Southeastern Plains; longleaf and slash pine forest
+r2_conversion_east_other_fl2,-87.16239,30.83015,2.4,,conversion_east_other; northwestern Florida; Southeastern Plains; longleaf and slash pine forest
+r2_conversion_east_other_ga1,-82.80022,31.71865,2.4,,conversion_east_other; southern Georgia; Southern Coastal Plain; longleaf and slash pine forest
+r2_conversion_east_other_sc1,-80.53105,34.59913,2.4,,conversion_east_other; northern South Carolina; Southeastern Plains; loblolly and shortleaf pine forest
+r2_conversion_east_other_sc2,-80.10665,33.14277,2.4,,conversion_east_other; southeastern South Carolina; Middle Atlantic Coastal Plain; loblolly and shortleaf pine forest
+r2_conversion_piedmont_nc1,-78.91310,35.76786,2.4,,conversion_piedmont; northern North Carolina; Piedmont; loblolly and shortleaf pine forest
+r2_conversion_piedmont_va1,-77.78173,38.23501,2.4,,conversion_piedmont; eastern Virginia; Piedmont; oak and hickory forest
+r2_conversion_piedmont_va2,-77.94978,37.06154,2.4,,conversion_piedmont; southeastern Virginia; Piedmont; oak and hickory forest
+r2_conversion_west_nv1,-114.96435,39.24834,2.4,,conversion_west; eastern Nevada; Central Basin and Range; pinyon and juniper forest
+r2_conversion_west_nv2,-115.53161,39.94721,2.4,,conversion_west; northeastern Nevada; Central Basin and Range; pinyon and juniper forest
+r2_conversion_west_id1,-111.39886,42.88724,2.4,,conversion_west; southeastern Idaho; Middle Rockies; aspen and birch forest
+r2_defoliation_recovered_ct1,-72.38419,42.01867,2.4,,defoliation_recovered; northeastern Connecticut; Northeastern Coastal Zone; oak and hickory forest
+r2_drought_sierra_ca1,-121.09730,40.09657,2.4,,drought_sierra; northwestern California; Sierra Nevada; california mixed conifer forest
+r2_drought_sierra_ca2,-119.14528,37.06423,2.4,,drought_sierra; central California; Sierra Nevada; california mixed conifer forest
+r2_fire_beetle_kill_id1,-114.99907,45.73282,2.4,,fire_beetle_kill; western Idaho; Idaho Batholith; fir and spruce and mountain hemlock forest
+r2_fire_beetle_kill_mt1,-113.50776,47.78986,2.4,,fire_beetle_kill; northwestern Montana; Canadian Rockies; fir and spruce and mountain hemlock forest
+r2_fire_beetle_kill_co1,-105.09024,38.11546,2.4,,fire_beetle_kill; southern Colorado; Southern Rockies; douglas-fir forest
+r2_fire_california_ca1,-119.60655,37.63433,2.4,,fire_california; central California; Sierra Nevada; california mixed conifer forest
+r2_fire_cascades_ca1,-123.62625,41.67228,2.4,,fire_cascades; northwestern California; Klamath Mountains; california mixed conifer forest
+r2_fire_cascades_or1,-122.61913,43.32467,2.4,,fire_cascades; southwestern Oregon; Cascades; douglas-fir forest
+r2_fire_cascades_wa1,-121.40158,46.92500,2.4,,fire_cascades; central Washington; Cascades; fir and spruce and mountain hemlock forest
+r2_fire_cascades_ca2,-121.31198,40.09611,2.4,,fire_cascades; northwestern California; Cascades; fir and spruce and mountain hemlock forest
+r2_fire_east_la1,-93.10667,32.04745,2.4,,fire_east; northwestern Louisiana; South Central Plains; loblolly and shortleaf pine forest
+r2_fire_east_ga1,-82.52755,31.44184,2.4,,fire_east; southeastern Georgia; Southern Coastal Plain; longleaf and slash pine forest
+r2_fire_east_ga2,-84.58793,34.94698,2.4,,fire_east; northwestern Georgia; Blue Ridge; oak and hickory forest
+r2_fire_east_wi1,-91.59706,46.36276,2.4,,fire_east; northwestern Wisconsin; Northern Lakes and Forests; aspen and birch forest
+r2_fire_n_rockies_wa1,-118.88753,48.50085,2.4,,fire_n_rockies; northeastern Washington; Northern Rockies; douglas-fir forest
+r2_fire_n_rockies_id1,-115.15918,46.18590,2.4,,fire_n_rockies; western Idaho; Idaho Batholith; fir and spruce and mountain hemlock forest
+r2_fire_n_rockies_mt1,-114.65271,46.64805,2.4,,fire_n_rockies; northern Idaho; Idaho Batholith; fir and spruce and mountain hemlock forest
+r2_fire_southwest_az1,-109.25499,33.91399,2.4,,fire_southwest; eastern Arizona; Arizona; ponderosa pine forest
+r2_fire_southwest_az2,-110.98174,33.82488,2.4,,fire_southwest; eastern Arizona; Arizona; ponderosa pine forest
+r2_harvest_appalachian_ar1,-92.66595,34.65612,2.4,,harvest_appalachian; central Arkansas; Ouachita Mountains; oak and hickory forest
+r2_harvest_appalachian_mo1,-91.08677,36.78915,2.4,,harvest_appalachian; southeastern Missouri; Ozark Highlands; oak and hickory forest
+r2_harvest_appalachian_al1,-87.42243,34.10988,2.4,,harvest_appalachian; northwestern Alabama; Southwestern Appalachians; oak and hickory forest
+r2_harvest_bottomland_ga1,-82.21916,31.92797,2.4,,harvest_bottomland; southeastern Georgia; Southeastern Plains; oak and gum and cypress forest
+r2_harvest_bottomland_al1,-88.05005,31.59361,2.4,,harvest_bottomland; southwestern Alabama; Southeastern Plains; oak and gum and cypress forest
+r2_harvest_lake_states_mn1,-93.80122,47.96319,2.4,,harvest_lake_states; northern Minnesota; Northern Minnesota Wetlands; spruce and fir forest
+r2_harvest_lake_states_mi1,-84.91365,44.15360,2.4,,harvest_lake_states; southeastern Michigan; Northern Lakes and Forests; white and red and jack pine forest
+r2_harvest_north_hardwood_ma1,-71.78472,42.02577,2.4,,harvest_north_hardwood; central Massachusetts; Northeastern Coastal Zone; oak and hickory forest
+r2_harvest_north_hardwood_pa1,-77.38827,40.02082,2.4,,harvest_north_hardwood; southern Pennsylvania; Blue Ridge; oak and hickory forest
+r2_harvest_north_hardwood_nh1,-71.15251,43.46874,2.4,,harvest_north_hardwood; southeastern New Hampshire; Northeastern Highlands; maple and beech and birch forest
+r2_harvest_north_hardwood_wi1,-89.84881,44.12335,2.4,,harvest_north_hardwood; southern Wisconsin; North Central Hardwood Forests; oak and hickory forest
+r2_harvest_south_pine_off_al1,-88.21229,31.96078,2.4,,harvest_south_pine_off; southwestern Alabama; Southeastern Plains; loblolly and shortleaf pine forest
+r2_harvest_south_pine_off_fl1,-84.86579,30.45843,2.4,,harvest_south_pine_off; northwestern Florida; Southeastern Plains; longleaf and slash pine forest
+r2_harvest_south_pine_off_ga1,-82.81489,32.33621,2.4,,harvest_south_pine_off; central Georgia; Southeastern Plains; loblolly and shortleaf pine forest
+r2_harvest_south_pine_off_tx1,-93.67813,31.10187,2.4,,harvest_south_pine_off; eastern Texas; South Central Plains; loblolly and shortleaf pine forest
+r2_harvest_south_pine_off_fl2,-83.85978,30.22917,2.4,,harvest_south_pine_off; northern Florida; Southern Coastal Plain; longleaf and slash pine forest
+r2_harvest_south_pine_off_al2,-87.36591,31.22414,2.4,,harvest_south_pine_off; southwestern Alabama; Southeastern Plains; longleaf and slash pine forest
+r2_harvest_west_other_or1,-120.20447,42.39779,2.4,,harvest_west_other; southern Oregon; Eastern Cascades Slopes and Foothills; fir and spruce and mountain hemlock forest
+r2_harvest_west_other_wa1,-120.76915,46.04449,2.4,,harvest_west_other; southern Washington; Eastern Cascades Slopes and Foothills; fir and spruce and mountain hemlock forest
+r2_harvest_west_other_co1,-107.34392,38.21890,2.4,,harvest_west_other; southwestern Colorado; Southern Rockies; fir and spruce and mountain hemlock forest
+r2_harvest_west_other_wa2,-124.47347,47.85990,2.4,,harvest_west_other; northwestern Washington; Coast Range; hemlock and sitka spruce forest
+r2_harvest_west_other_id1,-116.36343,46.66172,2.4,,harvest_west_other; northwestern Idaho; Northern Rockies; fir and spruce and mountain hemlock forest
+r2_harvest_west_other_id2,-116.28911,47.21336,2.4,,harvest_west_other; northwestern Idaho; Northern Rockies; fir and spruce and mountain hemlock forest
+r2_high_water_tx1,-93.53120,31.03120,2.4,,high_water; western Louisiana; South Central Plains; oak and gum and cypress forest
+r2_high_water_ms1,-90.09380,33.71880,2.4,,high_water; northern Mississippi; Mississippi Alluvial Plain; oak and gum and cypress forest
+r2_leafoff_north_ny1,-78.65620,42.09380,2.4,,leafoff_north; southwestern New York; North Central Appalachians; maple and beech and birch forest
+r2_leafoff_north_ma1,-72.78120,42.65620,2.4,,leafoff_north; northwestern Massachusetts; Northeastern Highlands; maple and beech and birch forest
+r2_leafoff_north_nh1,-71.84380,42.71880,2.4,,leafoff_north; southern New Hampshire; Northeastern Highlands; maple and beech and birch forest
+r2_leafoff_north_md1,-77.96880,39.71880,2.4,,leafoff_north; northwestern Maryland; Ridge and Valley; oak and hickory forest
+r2_leafoff_north_me1,-68.21880,47.09380,2.4,,leafoff_north; northeastern Maine; Acadian Plains and Hills; maple and beech and birch forest
+r2_leafoff_north_md2,-79.15620,39.46880,2.4,,leafoff_north; northwestern Maryland; Central Appalachians; oak and hickory forest
+r2_leafoff_south_va1,-79.71880,37.71880,2.4,,leafoff_south; central Virginia; Ridge and Valley; oak and hickory forest
+r2_leafoff_south_ga1,-83.40620,32.65620,2.4,,leafoff_south; central Georgia; Southeastern Plains; oak and pine forest
+r2_leafoff_south_ms1,-90.65620,32.53120,2.4,,leafoff_south; western Mississippi; Mississippi Valley Loess Plains; oak and hickory forest
+r2_low_sun_mountains_va1,-82.15620,37.34380,2.4,,low_sun_mountains; southwestern Virginia; Central Appalachians; oak and hickory forest
+r2_low_sun_mountains_wv1,-82.15620,37.96880,2.4,,low_sun_mountains; southwestern West Virginia; Central Appalachians; oak and hickory forest
+r2_low_sun_mountains_wv2,-80.21880,37.84380,2.4,,low_sun_mountains; southern West Virginia; Ridge and Valley; oak and hickory forest
+r2_low_sun_mountains_ky1,-83.40620,37.46880,2.4,,low_sun_mountains; southeastern Kentucky; Central Appalachians; oak and hickory forest
+r2_low_sun_mountains_wv3,-81.28120,38.03120,2.4,,low_sun_mountains; southwestern West Virginia; Central Appalachians; oak and hickory forest
+r2_mortality_east_mn1,-93.71880,48.21880,2.4,,mortality_east; northern Minnesota; Northern Minnesota Wetlands; spruce and fir forest
+r2_mortality_pnw_or1,-122.27765,42.47149,2.4,,mortality_pnw; southwestern Oregon; Cascades; fir and spruce and mountain hemlock forest
+r2_other_loss_co1,-105.65624,40.34926,2.4,,other_loss; northern Colorado; Southern Rockies; fir and spruce and mountain hemlock forest
+r2_other_loss_mt1,-112.96422,47.45006,2.4,,other_loss; northwestern Montana; Canadian Rockies; fir and spruce and mountain hemlock forest
+r2_other_loss_ut1,-113.96823,38.27044,2.4,,other_loss; southwestern Utah; Central Basin and Range; pinyon and juniper forest
+r2_other_loss_wa1,-120.97606,48.36006,2.4,,other_loss; northern Washington; North Cascades; fir and spruce and mountain hemlock forest
+r2_snow_conifer_mt1,-113.53120,45.28120,2.4,,snow_conifer; southwestern Montana; Middle Rockies; lodgepole pine forest
+r2_snow_conifer_vt1,-72.53120,43.59380,2.4,,snow_conifer; southern Vermont; Northeastern Highlands; white and red and jack pine forest
+r2_snow_conifer_mt2,-113.84380,46.40620,2.4,,snow_conifer; western Montana; Middle Rockies; lodgepole pine forest
+r2_snow_hardwood_vt1,-72.71880,43.21880,2.4,,snow_hardwood; southwestern Vermont; Northeastern Highlands; maple and beech and birch forest
+r2_snow_hardwood_ma1,-72.84380,42.21880,2.4,,snow_hardwood; western Massachusetts; Northeastern Highlands; maple and beech and birch forest
+r2_snow_hardwood_nh1,-71.84380,42.84380,2.4,,snow_hardwood; southern New Hampshire; Northeastern Highlands; maple and beech and birch forest
+r2_snow_hardwood_vt2,-72.84380,44.46880,2.4,,snow_hardwood; northwestern Vermont; Northeastern Highlands; maple and beech and birch forest
+r2_southern_pine_beetle_al1,-85.81366,33.45013,2.4,,southern_pine_beetle; northeastern Alabama; Piedmont; oak and hickory forest
+r2_summer_stable_az1,-110.71880,34.09380,2.4,,summer_stable; eastern Arizona; Arizona; pinyon and juniper forest
+r2_summer_stable_nv1,-114.59380,37.96880,2.4,,summer_stable; eastern Nevada; Central Basin and Range; pinyon and juniper forest
+r2_wind_east_other_oh1,-82.66649,39.52288,2.4,,wind_east_other; southern Ohio; Western Allegheny Plateau; oak and hickory forest
+r2_wind_hurricane_fl1,-84.83478,30.64519,2.4,,wind_hurricane; northwestern Florida; Southeastern Plains; longleaf and slash pine forest
+r2_wind_hurricane_ga1,-84.79060,31.91731,2.4,,wind_hurricane; southwestern Georgia; Southeastern Plains; loblolly and shortleaf pine forest
+r2_wind_hurricane_al1,-87.32790,32.85734,2.4,,wind_hurricane; western Alabama; Southeastern Plains; loblolly and shortleaf pine forest
+r2_wind_hurricane_ga2,-83.80297,31.70757,2.4,,wind_hurricane; southwestern Georgia; Southeastern Plains; loblolly and shortleaf pine forest
+r2_wind_hurricane_ms1,-89.27418,32.94450,2.4,,wind_hurricane; eastern Mississippi; Southeastern Plains; oak and hickory forest
+r2_wind_north_wi1,-88.34706,45.13455,2.4,,wind_north; eastern Wisconsin; Northern Lakes and Forests; white and red and jack pine forest
+r2_wind_north_wi2,-92.24542,45.49322,2.4,,wind_north; northwestern Wisconsin; North Central Hardwood Forests; oak and hickory forest
+r2_wind_north_wi3,-92.39850,46.04200,2.4,,wind_north; eastern Minnesota; Northern Lakes and Forests; aspen and birch forest
+r2_wind_north_wi4,-89.03031,45.37910,2.4,,wind_north; northeastern Wisconsin; Northern Lakes and Forests; spruce and fir forest
+r2_wind_north_wi5,-91.14157,45.81921,2.4,,wind_north; northwestern Wisconsin; Northern Lakes and Forests; maple and beech and birch forest
+r2_wind_tornado_south_ga1,-84.03822,33.14294,2.4,,wind_tornado_south; western Georgia; Piedmont; loblolly and shortleaf pine forest
+r2_wind_tornado_south_ar1,-93.28138,34.53668,2.4,,wind_tornado_south; western Arkansas; Ouachita Mountains; loblolly and shortleaf pine forest
+r2_wind_tornado_south_ar2,-92.62341,34.79451,2.4,,wind_tornado_south; central Arkansas; Ouachita Mountains; oak and hickory forest

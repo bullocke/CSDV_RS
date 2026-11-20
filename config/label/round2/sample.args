@@ -1,0 +1,2 @@
+# Options of `csdv label sample --design classes` for round 2, one line.
+--draw-per-stratum 8 --stage1-per-unit 4 --judged-per-window 2 --n-quiet 1300 --quiet-max-per-unit 12 --quiet-offseason
