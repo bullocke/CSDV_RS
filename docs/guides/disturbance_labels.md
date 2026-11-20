@@ -104,6 +104,30 @@ csdv label sample ...                     # the same without --dry-run
 
 The chips still hold candidates of other intervals, so `render` writes request images for them, and each unit needs its line in `LOCATIONS`. They are never sent unless `verdict` is run.
 
+### A sample by class, judged in stages
+
+`csdv label sample --design classes` spreads the windows over how the pair model and the detection relate, for runs whose units have a model map. It is the sampler of round 2, where a fixed budget is spread over more than a hundred places.
+
+```bash
+LABEL=results/chpc_exports/label/round2
+csdv label candidates --label-dir $LABEL --config $LABEL/config.yaml
+csdv label sample --label-dir $LABEL --config $LABEL/config.yaml --design classes \
+    --sites config/label/round2/sites.csv --n-quiet 1500 --quiet-max-per-unit 12 \
+    --quiet-offseason --dry-run
+csdv label sample ...                     # the same without --dry-run
+# After stage 1 is judged and looked at: say what stage 2 takes
+csdv label allocate --label-dir $LABEL --plan stage2_plan.csv --stage 2 --dry-run
+csdv label allocate --label-dir $LABEL --plan stage2_plan.csv --stage 2
+```
+
+Every candidate of 0.3 ha or more gets a class. `model_only` is a `model` object. `cand_only` is a detected, weak or CHM-loss object of which the model flags under a tenth. `agree` is one it flags by half or more, and `partly` lies between. Units without a map, and units with the role `test` in `--sites`, use the source as the class and never seed a window from a `model` object: a test set chosen by one model's errors would make every other model look better than it is. Within a unit each class is split by whether the candidate lies in the unit's priority interval (the column `interval` of `--sites`, the pair of dates around the event the place was chosen for). A seed must lie mostly 110 m inside its unit (`--edge-m`), because canopy heights at the edge of a mosaic depend on the mosaic.
+
+The draw takes the first `--draw-per-stratum` (8) candidates of each stratum in the order of their random keys, which is more than any stage will judge. `windows.csv` records the stratum size (`stratum_n`) and the order (`rank`). Stage 1 holds the first window of each stratum, priority intervals and disagreement classes first, up to `--stage1-per-unit` (4), and every quiet window. All other windows have stage 0 and wait. `csdv label allocate` gives the next windows of each stratum to a stage, as a plan says (a CSV with the columns `unit`, `sub_stratum` and `n`), and sets each seed's inclusion probability to the windows staged so far over the size of its stratum. Nothing is drawn again, no window ID changes, and windows that hold answers keep their stage. Given again for the same stage it replaces the windows of that stage that are not yet judged. The plan is written by whoever reads stage 1: the strata whose verdicts contradicted the model most often deserve the most windows.
+
+`sample` also writes `judged.csv`. A window is judged in part: its seed and at most `--judged-per-window` minus one further candidates of the seed's interval, the largest in view, each candidate in one window only. The scale test judged every candidate of every window and paid twice for 522 of 4,344. Windows of this sampler overlap and can coincide, and a chip in two windows takes its labels from the first. In a run with `judged.csv` the build therefore lets a window use the verdict and polygon of every candidate it holds, whichever window asked for it. A candidate that its own window cannot show by at least 0.3 ha is passed over at the draw.
+
+`--quiet-offseason` judges quiet chips in each unit's intervals with a date outside May to September, and in all of a unit's intervals where it has none, so that a chip needs one quiet interval and not all of them. Set `chips.max_window_chips: 2` in the run's `config.yaml` before the first command, so that a window holds at most four chips.
+
 ## Rendering
 
 `csdv label render` fetches every year of a window on the 0.6 m lattice of its UTM zone and writes the images the models will see. Imagery finer than 0.6 m is averaged and coarser imagery is interpolated, on both machines with the same code. With `--naip-source local` the mosaics under `$CSDV_DATA_ROOT/naip/<unit>/<year>/` are read, and a missing mosaic is an error, because a compute node has no internet. `--check` lists the mosaics without rendering.

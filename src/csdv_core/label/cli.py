@@ -256,6 +256,60 @@ def candidates_cmd(units: str | None, **where) -> None:
 )
 @click.option("--dry-run", is_flag=True, help="Report the sample, write nothing.")
 @click.option("--overwrite", is_flag=True, help="Replace an existing windows.csv.")
+@click.option(
+    "--design",
+    type=click.Choice(["strata", "classes"]),
+    default="strata",
+    show_default=True,
+    help="strata: windows spread over what the detection found (the scale "
+    "test). classes: windows spread over how the pair model and the "
+    "detection relate, drawn larger than the budget and judged in part.",
+)
+@click.option(
+    "--sites",
+    "sites_csv",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="For --design classes: CSV with the column unit and, optionally, "
+    "role (units with the role `test` are sampled without the model's map) "
+    "and interval (the unit's priority interval, e.g. 2018-2021). Names the "
+    "units of the sample unless --units does.",
+)
+@click.option(
+    "--draw-per-stratum",
+    type=int,
+    default=8,
+    show_default=True,
+    help="For --design classes: seeds drawn per unit, class and priority.",
+)
+@click.option(
+    "--stage1-per-unit",
+    type=int,
+    default=4,
+    show_default=True,
+    help="For --design classes: windows per unit in stage 1.",
+)
+@click.option(
+    "--judged-per-window",
+    type=int,
+    default=2,
+    show_default=True,
+    help="For --design classes: candidates judged in a window, seed included.",
+)
+@click.option(
+    "--edge-m",
+    type=float,
+    default=110.0,
+    show_default=True,
+    help="For --design classes: a seed lies mostly this far inside its unit.",
+)
+@click.option(
+    "--quiet-offseason",
+    is_flag=True,
+    help="Judge quiet chips in each unit's intervals with a date outside "
+    "May to September (all intervals where it has none), in place of "
+    "--quiet-intervals.",
+)
 def sample_cmd(
     units,
     n_di,
@@ -269,6 +323,13 @@ def sample_cmd(
     quiet_intervals_csv,
     dry_run,
     overwrite,
+    design,
+    sites_csv,
+    draw_per_stratum,
+    stage1_per_unit,
+    judged_per_window,
+    edge_m,
+    quiet_offseason,
     **where,
 ) -> None:
     """Draw the sample of windows and forecast the cost of judging it.
@@ -291,20 +352,24 @@ def sample_cmd(
             f"{run.root} already holds {', '.join(used)}. A new sample would "
             "give other windows the same IDs. Draw it into a new label folder."
         )
-    quiet_intervals = None
-    if quiet_intervals_csv is not None:
-        import pandas as pd
-
-        listed = pd.read_csv(quiet_intervals_csv, dtype=str, comment="#")
-        missing = {"unit", "interval"} - set(listed.columns)
-        if missing:
-            raise click.ClickException(
-                f"{quiet_intervals_csv} needs the columns {', '.join(sorted(missing))}"
-            )
-        quiet_intervals = {
-            unit: tuple(group["interval"].str.strip())
-            for unit, group in listed.groupby(listed["unit"].str.strip())
-        }
+    if design == "classes":
+        _sample_classes(
+            run,
+            units,
+            sites_csv,
+            quiet_intervals_csv,
+            quiet_offseason,
+            dry_run,
+            draw_per_stratum=draw_per_stratum,
+            stage1_per_unit=stage1_per_unit,
+            judged_per_window=judged_per_window,
+            edge_m=edge_m,
+            seed=seed,
+            n_quiet=n_quiet,
+            quiet_max_per_unit=quiet_max_per_unit,
+        )
+        return
+    quiet_intervals = _quiet_listed(quiet_intervals_csv)
     design = SampleDesign(
         n_di=n_di,
         n_other=n_other,
@@ -366,6 +431,214 @@ def sample_cmd(
         table.to_csv(path, index=False)
         _write_units(run)
         click.echo(f"Wrote {path}")
+
+
+def _quiet_listed(path: Path | None) -> dict | None:
+    """``--quiet-intervals`` as ``{unit: intervals}``, or None."""
+    if path is None:
+        return None
+    import pandas as pd
+
+    listed = pd.read_csv(path, dtype=str, comment="#")
+    missing = {"unit", "interval"} - set(listed.columns)
+    if missing:
+        raise click.ClickException(
+            f"{path} needs the columns {', '.join(sorted(missing))}"
+        )
+    return {
+        unit: tuple(group["interval"].str.strip())
+        for unit, group in listed.groupby(listed["unit"].str.strip())
+    }
+
+
+def _sample_classes(
+    run,
+    units: str | None,
+    sites_csv: Path | None,
+    quiet_intervals_csv: Path | None,
+    quiet_offseason: bool,
+    dry_run: bool,
+    *,
+    draw_per_stratum: int,
+    stage1_per_unit: int,
+    judged_per_window: int,
+    edge_m: float,
+    seed: int,
+    n_quiet: int,
+    quiet_max_per_unit: int,
+) -> None:
+    """The sample by class of ``csdv label sample --design classes``."""
+    import pandas as pd
+
+    from csdv_core.label.sample import SampleDesign
+    from csdv_core.label.sample_classes import (
+        ClassDesign,
+        class_counts,
+        draw_class_windows,
+        offseason_intervals,
+    )
+
+    plain: set[str] = set()
+    priority: dict[str, str] = {}
+    listed: list[str] | None = None
+    if sites_csv is not None:
+        sites = pd.read_csv(sites_csv, dtype=str, comment="#", keep_default_na=False)
+        if "unit" not in sites:
+            raise click.ClickException(f"{sites_csv} needs the column unit")
+        listed = [u.strip() for u in sites["unit"] if u.strip()]
+        if "role" in sites:
+            plain = set(sites.loc[sites["role"].str.strip() == "test", "unit"])
+        if "interval" in sites:
+            priority = {
+                u.strip(): i.strip()
+                for u, i in zip(sites["unit"], sites["interval"], strict=True)
+                if i.strip()
+            }
+    unit_ids = _units(run, units) if units or listed is None else listed
+    have = set(_units(run, None))
+    absent = [u for u in unit_ids if u not in have]
+    if absent:
+        click.echo(
+            f"{len(absent)} units have no run here and are left out: "
+            f"{', '.join(absent[:8])}{' ...' if len(absent) > 8 else ''}"
+        )
+        unit_ids = [u for u in unit_ids if u in have]
+    if not unit_ids:
+        raise click.ClickException("No unit to sample.")
+    for unit_id, interval in priority.items():
+        if unit_id in unit_ids and interval not in run.unit(unit_id).intervals:
+            raise click.ClickException(
+                f"{unit_id}: its priority interval {interval} is not among "
+                f"{', '.join(run.unit(unit_id).intervals)}"
+            )
+    quiet_intervals = _quiet_listed(quiet_intervals_csv)
+    if quiet_offseason:
+        quiet_intervals = offseason_intervals(run, unit_ids)
+    design = ClassDesign(
+        draw_per_stratum=draw_per_stratum,
+        stage1_per_unit=stage1_per_unit,
+        judged_per_window=judged_per_window,
+        edge_m=edge_m,
+        plain_units=frozenset(plain),
+        priority=priority,
+        seed=seed,
+        quiet=SampleDesign(
+            n_di=0,
+            n_other=0,
+            n_quiet=n_quiet,
+            seed=seed,
+            quiet_max_per_unit=quiet_max_per_unit,
+            quiet_intervals=quiet_intervals,
+        ),
+    )
+    counts = class_counts(run, unit_ids, design)
+    table, judged = draw_class_windows(run, unit_ids, design)
+    if table.empty:
+        raise click.ClickException("The sample is empty: no candidate, no quiet chip.")
+    per_window = judged.groupby("window_id").size()
+    table["judged"] = table["window_id"].map(per_window).fillna(0).astype(int)
+    seeded = table[table["stratum"] != "quiet"]
+    kind = seeded["sub_stratum"].str.rsplit("-", n=1).str[0]
+    summary = (
+        seeded.assign(cls=kind, staged=seeded["stage"] > 0)
+        .groupby("cls")
+        .agg(
+            windows=("window_id", "size"),
+            stage1=("staged", "sum"),
+            judged=("judged", "sum"),
+            units=("unit", "nunique"),
+        )
+    )
+    pool = counts.assign(cls=counts["sub_stratum"].str.rsplit("-", n=1).str[0])
+    summary["candidates"] = pool.groupby("cls")["candidates"].sum()
+    click.echo(summary.to_string())
+    n_quiet_drawn = int((table["stratum"] == "quiet").sum())
+    stage1 = table[table["stage"] == 1]
+    n1 = int(stage1["judged"].sum())
+    n_all = int(table["judged"].sum())
+    click.echo(
+        f"{len(unit_ids)} units ({len(plain & set(unit_ids))} sampled without the "
+        f"model). {len(seeded)} seeded windows drawn, {n_quiet_drawn} quiet. "
+        f"Stage 1: {int((stage1['stratum'] != 'quiet').sum())} seeded windows, "
+        f"{n1} judged candidates, about ${2 * n1 * CALL_COST:.2f}. Judging "
+        f"every drawn window would be {n_all} candidates, about "
+        f"${2 * n_all * CALL_COST:.0f}: `csdv label allocate` chooses what a "
+        "later stage judges."
+    )
+    without = sorted(set(unit_ids) - set(seeded["unit"]))
+    if without:
+        click.echo(f"Units without a seeded window: {', '.join(without)}")
+    if dry_run:
+        return
+    table.to_csv(run.root / "windows.csv", index=False)
+    judged.to_csv(run.root / "judged.csv", index=False)
+    counts.to_csv(run.root / "sample_strata.csv", index=False)
+    _write_units(run)
+    click.echo(f"Wrote {run.root / 'windows.csv'} and judged.csv")
+
+
+@label.command("allocate")
+@_common
+@click.option(
+    "--plan",
+    "plan_csv",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="CSV with the columns unit, sub_stratum and n: the windows a stage "
+    "adds in each stratum.",
+)
+@click.option("--stage", type=int, default=2, show_default=True)
+@click.option("--dry-run", is_flag=True, help="Report the stage, write nothing.")
+def allocate_cmd(plan_csv: Path, stage: int, dry_run: bool, **where) -> None:
+    """Choose the windows of a later stage of a sample by class.
+
+    The sample was drawn larger than any budget, in a fixed order within
+    each stratum. This command gives the next windows of each stratum to a
+    stage, as the plan says, and updates the inclusion probabilities.
+    Nothing is drawn again and no window ID changes. Windows that hold
+    answers keep their stage. Given again for the same stage, it replaces
+    the windows of that stage that are not judged yet.
+    """
+    import shutil
+    import time
+
+    import pandas as pd
+
+    from csdv_core.label import judge as J
+    from csdv_core.label.sample_classes import allocate_stage
+
+    _setup_logging()
+    run = _run(**where)
+    # Read with missing values as such: the inclusion probability of a
+    # window that waits for a stage is empty, and stays a number column.
+    table = pd.read_csv(run.root / "windows.csv", dtype={"window_id": str, "unit": str})
+    if "rank" not in table or "stratum_n" not in table:
+        raise click.ClickException(
+            "windows.csv is not a sample by class (csdv label sample --design classes)."
+        )
+    plan = pd.read_csv(plan_csv, comment="#", dtype={"unit": str, "sub_stratum": str})
+    answered = {r["window_id"] for r in J.read_records(run.answers) if not r["error"]}
+    try:
+        out = allocate_stage(table, plan, stage, judged_windows=answered)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    judged = pd.read_csv(run.root / "judged.csv", dtype=str)
+    per_window = judged.groupby("window_id").size()
+    chosen = out[out["stage"] == stage]
+    n = int(chosen["window_id"].map(per_window).fillna(0).sum())
+    kind = chosen["sub_stratum"].str.rsplit("-", n=1).str[0]
+    click.echo(chosen.groupby(kind).size().rename("windows").to_string())
+    click.echo(
+        f"Stage {stage}: {len(chosen)} windows in {chosen['unit'].nunique()} units, "
+        f"{n} judged candidates, about ${2 * n * CALL_COST:.2f} for the verdicts "
+        f"and up to ${n * POLYGON_COST:.2f} for polygons."
+    )
+    if dry_run:
+        return
+    path = run.root / "windows.csv"
+    shutil.copy2(path, path.with_name(f"windows.{time.strftime('%Y%m%dT%H%M%S')}.csv"))
+    out.to_csv(path, index=False)
+    click.echo(f"Wrote {path}")
 
 
 def _write_units(run) -> int:

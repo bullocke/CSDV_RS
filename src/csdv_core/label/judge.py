@@ -178,19 +178,40 @@ def record_key(rec: dict[str, Any]) -> tuple:
 
 
 def verdicts_of(
-    records: list[dict[str, Any]], window_id: str, prompt: str = VERDICT_PROMPT
+    records: list[dict[str, Any]],
+    window_id: str,
+    prompt: str = VERDICT_PROMPT,
+    borrow: set[str] | None = None,
 ) -> dict[str, dict[str, Verdict]]:
-    """Verdicts of a window under one prompt version: candidate ID, then model."""
+    """Verdicts of a window under one prompt version: candidate ID, then model.
+
+    Args:
+        records: Answer records.
+        window_id: The window.
+        prompt: Prompt version whose answers count.
+        borrow: Candidate IDs whose verdicts may come from another window.
+            A run that judges each candidate in one window only
+            (``judged.csv``) passes the candidates of this window, so that
+            ground two windows share is labelled alike in both. A verdict
+            is about the candidate on every date, not about the window it
+            was shown in. Verdicts asked for in this window come first.
+    """
     out: dict[str, dict[str, Verdict]] = {}
+    lent: dict[str, dict[str, Verdict]] = {}
     for rec in records:
-        if rec["window_id"] != window_id or rec["kind"] != "verdict":
+        if rec["kind"] != "verdict":
+            continue
+        own = rec["window_id"] == window_id
+        if not own and (borrow is None or rec["cand_id"] not in borrow):
             continue
         if (rec.get("extra") or {}).get("prompt") != prompt or rec.get("error"):
             continue
         verdict = parse_verdict(
             rec["model"], rec["answer"], len(rec["dates"]), rec.get("cost", 0.0)
         )
-        out.setdefault(rec["cand_id"], {})[rec["model"]] = verdict
+        (out if own else lent).setdefault(rec["cand_id"], {})[rec["model"]] = verdict
+    for cand_id, pair in lent.items():
+        out.setdefault(cand_id, pair)
     return out
 
 
@@ -261,11 +282,21 @@ def judged_candidates(
     records: list[dict[str, Any]],
     window_id: str,
     cfg: LabelConfig,
+    *,
+    any_window: bool = False,
 ) -> list[JudgedCandidate]:
-    """Candidates with their outcome and, where there is loss, their outline."""
+    """Candidates with their outcome and, where there is loss, their outline.
+
+    With ``any_window`` a polygon drawn for a candidate in another window is
+    used too (see :func:`verdicts_of`). The polygon of this window wins.
+    """
     polygons = {}
-    for rec in records:
-        if rec["window_id"] != window_id or rec["kind"] != "polygon":
+    wanted = set(candidates["cand_id"]) if any_window else set()
+    # Other windows first, so that this window's own polygon replaces theirs.
+    for rec in sorted(records, key=lambda r: r["window_id"] == window_id):
+        if rec["kind"] != "polygon":
+            continue
+        if rec["window_id"] != window_id and rec["cand_id"] not in wanted:
             continue
         # A polygon belongs to the interval it was drawn for. One drawn for
         # another interval (under an older prompt) is not used.

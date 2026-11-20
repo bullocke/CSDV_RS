@@ -219,13 +219,25 @@ class WindowParts:
 
 
 def window_parts(
-    run: LabelRun, row: Any, *, with_stack: bool = True
+    run: LabelRun,
+    row: Any,
+    *,
+    with_stack: bool = True,
+    keep_model: set[str] | None = None,
 ) -> WindowParts | None:
     """Unit, window, candidates and (optionally) imagery of one window.
 
     Candidates are those that reach into the window or its collar. Only
     those with enough area inside the window are marked ``judged``. The
     others still keep their ring of unlabelled ground.
+
+    Args:
+        run: The label run.
+        row: A row of ``windows.csv``.
+        with_stack: Load the window's imagery.
+        keep_model: ``model`` candidates to keep although this window does
+            not judge them, because another window does (see
+            :func:`build_window`).
 
     Returns:
         None when the imagery is wanted and lacks a year of the unit, since
@@ -266,7 +278,10 @@ def window_parts(
     # map: no unlabelled patch, no ring. Otherwise the stable forest that
     # the model flags on an off-season image, which is the ground most
     # wanted as background, would all be left out.
-    near = near[(near["source"] != "model") | near["judged"]].reset_index(drop=True)
+    kept = (near["source"] != "model") | near["judged"]
+    if keep_model:
+        kept |= near["cand_id"].isin(keep_model)
+    near = near[kept].reset_index(drop=True)
     return WindowParts(unit, window, near, stack)
 
 
@@ -432,17 +447,39 @@ def window_cell_ndvi(run: LabelRun, parts: WindowParts) -> CellNdvi | None:
 def build_window(
     run: LabelRun, row: Any, records: list[dict[str, Any]], *, with_stack: bool = True
 ) -> BuiltWindow | None:
-    """Route the answers of a window and build its label rasters."""
-    parts = window_parts(run, row, with_stack=with_stack)
+    """Route the answers of a window and build its label rasters.
+
+    In a run that judges each candidate in one window only (``judged.csv``)
+    a window also uses the verdicts and polygons that another window asked
+    for, for every candidate it holds. Windows overlap, and a chip in two
+    windows takes its labels from the first, so without this a verdict
+    asked through the second window would be lost on the shared ground.
+    """
+    shared = run.judged_list() is not None
+    answered: set[str] = set()
+    if shared:
+        answered = {
+            rec["cand_id"]
+            for rec in records
+            if rec["kind"] == "verdict" and not rec.get("error")
+        }
+    parts = window_parts(run, row, with_stack=with_stack, keep_model=answered)
     if parts is None:
         return None
     wid = parts.window.window_id
-    verdicts = J.verdicts_of(records, wid)
+    borrow = set(parts.candidates["cand_id"]) & answered if shared else None
+    verdicts = J.verdicts_of(records, wid, borrow=borrow)
+    if shared:
+        cands = parts.candidates
+        lent = cands["cand_id"].isin(verdicts) & (
+            cands["area_ha"] >= run.cfg.candidates.min_ha
+        )
+        cands["judged"] = cands["judged"] | lent
     routed = J.route_candidates(
         parts.unit, parts.candidates, verdicts, run.models, run.cfg
     )
     judged = J.judged_candidates(
-        parts.unit, parts.candidates, routed, records, wid, run.cfg
+        parts.unit, parts.candidates, routed, records, wid, run.cfg, any_window=shared
     )
     dates = None
     if parts.stack is None:
