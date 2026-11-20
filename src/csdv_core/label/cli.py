@@ -12,6 +12,13 @@ __all__ = ["label"]
 #: What one verdict call cost in the example run, US dollars (two models, mixed
 #: image sizes). Used only to forecast a run before it starts.
 CALL_COST = 0.0081
+#: What one polygon call cost in the scale test, US dollars.
+POLYGON_COST = 0.0040
+#: Exit codes of ``csdv label verdict`` that a job chain can tell apart: the
+#: cap stopped the run, too many calls failed, too many windows lack requests.
+EXIT_BUDGET = 3
+EXIT_ERRORS = 4
+EXIT_UNRENDERED = 5
 
 
 def _setup_logging() -> None:
@@ -122,30 +129,46 @@ def _units(run, units: str | None) -> list[str]:
     return found
 
 
-def _selected(run, windows: str | None, unit: str | None, stage: int | None = None):
+def _stages(stage: str | int | None) -> set[int] | None:
+    """``--stage`` as a set: ``1``, or several as ``1,2``."""
+    if stage is None or stage == "":
+        return None
+    try:
+        return {int(part) for part in str(stage).split(",") if part.strip()}
+    except ValueError as exc:
+        raise click.BadParameter(
+            f"--stage takes whole numbers such as 1 or 1,2, not {stage!r}"
+        ) from exc
+
+
+def _selected(
+    run, windows: str | None, unit: str | None, stage: str | int | None = None
+):
     table = run.windows()
     if unit:
         table = table[table["unit"] == unit]
     if windows:
         table = table[table["window_id"].isin(windows.split(","))]
-    if stage is not None:
+    stages = _stages(stage)
+    if stages is not None:
         if "stage" not in table:
             raise click.ClickException(
                 "windows.csv has no stage column. It was drawn before stages "
                 "existed. Select windows with --windows instead."
             )
-        table = table[table["stage"].astype(int) == stage]
+        table = table[table["stage"].astype(int).isin(stages)]
     return table
 
 
 def _stage_option(func):
     return click.option(
         "--stage",
-        type=int,
+        type=str,
         default=None,
-        help="Only the windows of this stage (column `stage` of windows.csv). "
-        "Stage 1 is a small random part of the sample with the reviewed "
-        "windows, to be judged and looked at before the rest.",
+        help="Only the windows of this stage (column `stage` of windows.csv), "
+        "or of several stages as 1,2. Stage 1 is a small random part of the "
+        "sample with the reviewed windows, to be judged and looked at before "
+        "the rest.",
     )(func)
 
 
@@ -395,7 +418,10 @@ def units_cmd(**where) -> None:
     is_flag=True,
     help="List the mosaics each window would read, render nothing.",
 )
-def render_cmd(unit, windows, kind, naip_source, data_root, with_chips, check, **where):
+@_stage_option
+def render_cmd(
+    unit, windows, kind, naip_source, data_root, with_chips, check, stage, **where
+):
     """Fetch the imagery of each window and write the request images."""
     import json
 
@@ -407,7 +433,7 @@ def render_cmd(unit, windows, kind, naip_source, data_root, with_chips, check, *
 
     _setup_logging()
     run = _run(**where)
-    table = _selected(run, windows, unit)
+    table = _selected(run, windows, unit, stage)
     source = "local" if naip_source == "local" else None
     root = data_root or project_paths().data_root
     if check:
@@ -436,8 +462,11 @@ def render_cmd(unit, windows, kind, naip_source, data_root, with_chips, check, *
         from csdv_core.label import judge
 
         wanted = set(table["window_id"].astype(str))
+        # A record with an error is a call that failed, not a verdict.
         verdicts = sum(
-            rec["kind"] == "verdict" and rec["window_id"] in wanted
+            rec["kind"] == "verdict"
+            and rec["window_id"] in wanted
+            and not rec.get("error")
             for rec in judge.read_records(run.answers)
         )
         if not verdicts:
@@ -503,6 +532,18 @@ def render_cmd(unit, windows, kind, naip_source, data_root, with_chips, check, *
         )
 
 
+def _window_order(window_id: str) -> str:
+    """A fixed pseudo-random order of windows.
+
+    Calls are sent in this order, so that a run stopped by its cap or its
+    walltime has judged a random part of the windows of every unit, not the
+    first units of the table.
+    """
+    import hashlib
+
+    return hashlib.sha1(str(window_id).encode()).hexdigest()
+
+
 @label.command("verdict")
 @_common
 @click.option("--windows", default=None, help="Comma-separated window IDs.")
@@ -520,70 +561,189 @@ def render_cmd(unit, windows, kind, naip_source, data_root, with_chips, check, *
 )
 @click.option("--workers", type=int, default=6, show_default=True)
 @click.option("--dry-run", is_flag=True, help="Count the calls, send nothing.")
+@click.option(
+    "--batch-windows",
+    type=int,
+    default=16,
+    show_default=True,
+    help="Windows whose requests are sent together. The answers are written "
+    "after each batch.",
+)
+@click.option(
+    "--refuse-over-cap",
+    is_flag=True,
+    help="Send nothing when the expected cost of the new calls would take "
+    "the run past the cap. For unattended jobs.",
+)
+@click.option(
+    "--max-error-share",
+    type=float,
+    default=0.2,
+    show_default=True,
+    help=f"Exit with code {EXIT_ERRORS} when more than this share of the calls "
+    "failed. A run in which most of the first calls fail stops at once.",
+)
+@click.option(
+    "--max-unrendered-share",
+    type=float,
+    default=1.0,
+    show_default=True,
+    help=f"Exit with code {EXIT_UNRENDERED}, sending nothing, when more than "
+    "this share of the selected windows has no request file.",
+)
 @_stage_option
-def verdict_cmd(windows, kind, cap, workers, dry_run, stage, **where) -> None:
-    """Send the rendered requests to the models (needs the API keys)."""
+def verdict_cmd(
+    windows,
+    kind,
+    cap,
+    workers,
+    dry_run,
+    batch_windows,
+    refuse_over_cap,
+    max_error_share,
+    max_unrendered_share,
+    stage,
+    **where,
+) -> None:
+    """Send the rendered requests to the models (needs the API keys).
+
+    Both models are called at the same time, on the requests of a batch of
+    windows. Exit codes other than 0 and 1: 3 when the cap stopped the run,
+    4 when too many calls failed, 5 when too many windows have no requests.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
     from csdv_core.label import judge as J
     from csdv_core.label.clients import estimate_cost
     from csdv_core.label.ledger import Ledger
-    from csdv_core.label.pipeline import load_requests
+    from csdv_core.label.pipeline import load_requests, request_index
 
     _setup_logging()
+    log = logging.getLogger(__name__)
     run = _run(**where)
     ledger = Ledger(run.root, cap=cap)
     models = run.models if kind == "verdict" else (run.models[1],)
     name = "requests.jsonl" if kind == "verdict" else "polygons.jsonl"
     done = {J.record_key(r) for r in J.read_records(run.answers) if not r["error"]}
-    calls, upper = 0, 0.0
     table = _selected(run, windows, None, stage)
+    window_ids = sorted((str(w) for w in table["window_id"]), key=_window_order)
     unrendered = [
-        str(w)
-        for w in table["window_id"]
-        if not (run.root / "requests" / str(w) / name).exists()
+        w for w in window_ids if not (run.root / "requests" / w / name).exists()
     ]
-    for row in table.itertuples():
-        requests = load_requests(run.root / "requests" / row.window_id, name)
-        for model in models:
-            todo = [
-                q
-                for q in requests
-                if J.record_key(
+    # First the count, from the request files alone. Images are read only
+    # for the batch that is about to be sent.
+    todo: dict[str, dict[str, set[str]]] = {}
+    calls, upper = 0, 0.0
+    for wid in window_ids:
+        for rec in request_index(run.root / "requests" / wid, name):
+            for model in models:
+                key = J.record_key(
                     {
-                        "window_id": row.window_id,
-                        "cand_id": q.cand_id,
+                        "window_id": wid,
+                        "cand_id": rec["cand_id"],
                         "kind": kind,
                         "model": model,
-                        "extra": q.extra,
+                        "extra": rec.get("extra", {}),
                     }
                 )
-                not in done
-            ]
-            calls += len(todo)
-            upper += sum(estimate_cost(model, len(q.images)) for q in todo)
-            if dry_run or not todo:
-                continue
-            J.append_records(
-                run.answers,
-                J.send(
-                    ledger,
-                    todo,
-                    model,
-                    window_id=row.window_id,
-                    stage=kind,
-                    workers=workers,
-                ),
-            )
+                if key in done:
+                    continue
+                todo.setdefault(wid, {}).setdefault(model, set()).add(rec["cand_id"])
+                calls += 1
+                upper += estimate_cost(model, len(rec["images"]))
+    expected = calls * (CALL_COST if kind == "verdict" else POLYGON_COST)
     click.echo(
         f"{calls} new {kind} calls, at most ${upper:.2f}, about "
-        f"${calls * CALL_COST:.2f} expected. Spent so far: ${ledger.spent():.2f} "
+        f"${expected:.2f} expected. Spent so far: ${ledger.spent():.2f} "
         f"of ${cap:.2f}."
     )
     if unrendered:
         click.echo(
             f"{len(unrendered)} of {len(table)} selected windows have no {name} "
             f"(not rendered, or not copied here) and are not counted: "
-            f"{', '.join(unrendered[:10])}{' ...' if len(unrendered) > 10 else ''}"
+            f"{', '.join(sorted(unrendered)[:10])}"
+            f"{' ...' if len(unrendered) > 10 else ''}"
         )
+    if dry_run:
+        return
+    if len(table) and len(unrendered) / len(table) > max_unrendered_share:
+        click.echo(
+            f"More than {max_unrendered_share:.0%} of the windows lack {name}. "
+            "Nothing was sent.",
+            err=True,
+        )
+        raise click.exceptions.Exit(EXIT_UNRENDERED)
+    if refuse_over_cap and ledger.spent() + expected > cap:
+        click.echo(
+            f"The expected cost would take the run to "
+            f"${ledger.spent() + expected:.2f}, past the cap of ${cap:.2f}. "
+            "Nothing was sent.",
+            err=True,
+        )
+        raise click.exceptions.Exit(EXIT_BUDGET)
+    sent, failed, budget_stop, gave_up = 0, 0, False, False
+    pending = [w for w in window_ids if w in todo]
+    for start in range(0, len(pending), max(1, batch_windows)):
+        batch = pending[start : start + max(1, batch_windows)]
+        items: dict[str, list] = {model: [] for model in models}
+        for wid in batch:
+            wanted = set().union(*todo[wid].values())
+            for q in load_requests(run.root / "requests" / wid, name, only=wanted):
+                for model, cand_ids in todo[wid].items():
+                    if q.cand_id in cand_ids:
+                        items[model].append((wid, q))
+        with ThreadPoolExecutor(len(models)) as pool:
+            futures = [
+                pool.submit(
+                    J.send_many,
+                    ledger,
+                    items[model],
+                    model,
+                    stage=kind,
+                    workers=workers,
+                )
+                for model in models
+                if items[model]
+            ]
+            records = [rec for future in futures for rec in future.result()]
+        # A call the cap refused was never made. It leaves no record, and
+        # the next run asks for it.
+        budget_stop = budget_stop or any(r["error"] == "budget" for r in records)
+        made = [r for r in records if r["error"] != "budget"]
+        J.append_records(run.answers, made)
+        sent += len(made)
+        failed += sum(bool(r["error"]) for r in made)
+        log.info(
+            "%d of %d windows, %d calls, %d failed, $%.2f spent",
+            min(start + len(batch), len(pending)),
+            len(pending),
+            sent,
+            failed,
+            ledger.spent(),
+        )
+        if budget_stop:
+            break
+        # A wrong key or a closed account fails every call. Stop early.
+        if sent >= 20 and failed / sent > max(0.5, max_error_share):
+            gave_up = True
+            break
+    click.echo(
+        f"{sent} {kind} calls made, {failed} failed. Spent so far: "
+        f"${ledger.spent():.2f} of ${cap:.2f}."
+    )
+    if budget_stop:
+        click.echo("Stopped by the cap before every call was made.", err=True)
+        raise click.exceptions.Exit(EXIT_BUDGET)
+    # A handful of answers that cannot be read is normal (about one call in
+    # 300 in the scale test) and must not stop a chain, so the share is
+    # taken of at least 20 calls.
+    if gave_up or failed > max_error_share * max(sent, 20):
+        click.echo(
+            f"{failed} of {sent} calls failed"
+            f"{', stopped early' if gave_up else ''}. See the log for the errors.",
+            err=True,
+        )
+        raise click.exceptions.Exit(EXIT_ERRORS)
 
 
 @label.command("build")

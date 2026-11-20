@@ -35,6 +35,15 @@ export CSDV_SBATCH_CPU="--account=EDIT --partition=EDIT --qos=EDIT"
 # cards are not supported by the cu126 build of PyTorch.
 export CSDV_SBATCH_GPU="--account=EDIT --partition=EDIT --qos=EDIT --gres=gpu:1"
 
+# EDIT: a private file with the API keys of the vision models, read only by
+# scripts/slurm/run_label_verdict.sbatch. Two lines,
+#   export GEMINI_API_KEY=...
+#   export OpenRouter_API_KEY=...
+# in a file outside the repository that you alone can read (chmod 600). Do
+# not export the keys in this file or in your login shell: Slurm copies the
+# login environment into every job.
+export CSDV_KEYS_FILE="$HOME/.csdv_keys"
+
 export CSDV_ENV=csdv-gpu
 export CSDV_DATA_ROOT="$CSDV_STORE/data"
 export CSDV_RESULTS_ROOT="$CSDV_STORE/results"

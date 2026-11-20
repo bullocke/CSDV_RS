@@ -10,6 +10,8 @@ A label run is one folder:
     ledger.jsonl, responses/ cost ledger and response cache
     chips/                   training chips
     labels/                  vector labels and tables
+    locations.csv            location text of units (optional, see requests)
+    judged.csv               the candidates to judge per window (optional)
 
 Rendering needs the imagery and no API key. Asking the models needs the
 request files and the keys, but no imagery. Building the labels needs
@@ -34,7 +36,7 @@ from csdv_core.label import judge as J
 from csdv_core.label.inputs import UnitInputs, load_unit_inputs
 from csdv_core.label.labels import JudgedCandidate, WindowLabels, window_labels
 from csdv_core.label.lattice import GSD, Window
-from csdv_core.label.requests import Request
+from csdv_core.label.requests import Request, load_locations
 from csdv_core.label.stacks import (
     CELL_NDVI_FILE,
     CellNdvi,
@@ -50,6 +52,10 @@ from csdv_core.label.views import View
 logger = logging.getLogger(__name__)
 
 WINDOW_COLUMNS = ["window_id", "unit", "epsg", "ix0", "iy0", "nx", "ny"]
+#: Location text of the run's units, read when the run is opened.
+LOCATIONS_FILE = "locations.csv"
+#: The candidates to judge in each window (columns ``window_id``, ``cand_id``).
+JUDGED_FILE = "judged.csv"
 
 __all__ = [
     "WINDOW_COLUMNS",
@@ -58,6 +64,7 @@ __all__ = [
     "build_window",
     "load_requests",
     "render_window",
+    "request_index",
     "window_parts",
 ]
 
@@ -88,10 +95,43 @@ class LabelRun:
     _units: dict[str, UnitInputs] = field(default_factory=dict, repr=False)
     _fire: Any = field(default=None, repr=False)
     _cands: dict[str, gpd.GeoDataFrame] = field(default_factory=dict, repr=False)
+    _judged: Any = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        locations = Path(self.root) / LOCATIONS_FILE
+        if locations.is_file():
+            n = load_locations(locations)
+            logger.info("%d unit locations read from %s", n, locations)
 
     @property
     def answers(self) -> Path:
         return self.root / "answers.jsonl"
+
+    def judged_list(self) -> dict[str, set[str]] | None:
+        """The candidates to judge per window, or None when every one is.
+
+        ``judged.csv`` is written by the sampler when a window is to be
+        judged in part: the seed and a few more, each candidate in one
+        window only. A candidate of a window that the file does not name
+        is left unjudged there, which the label rules treat like any
+        candidate without a verdict (unlabelled in the interval that
+        flagged it). A window the file does not name at all has no judged
+        candidate.
+        """
+        if self._judged is None:
+            path = self.root / JUDGED_FILE
+            if not path.is_file():
+                self._judged = False
+            else:
+                table = pd.read_csv(path, dtype=str, keep_default_na=False)
+                missing = {"window_id", "cand_id"} - set(table.columns)
+                if missing:
+                    raise ValueError(f"{path} lacks the columns {sorted(missing)}")
+                self._judged = {
+                    str(wid): set(group["cand_id"])
+                    for wid, group in table.groupby("window_id")
+                }
+        return self._judged or None
 
     def fire_perimeters(self) -> Any:
         """The fire perimeters of ``routing.fire_perimeters``, or None.
@@ -217,6 +257,9 @@ def window_parts(
     near["judged"] = (near["area_ha"] >= cfg.candidates.min_ha) & (
         near["visible_ha"] >= cfg.candidates.min_ha
     )
+    listed = run.judged_list()
+    if listed is not None:
+        near["judged"] &= near["cand_id"].isin(listed.get(window.window_id, set()))
     near["clipped"] = near["visible_ha"] < 0.98 * near["area_ha"]
     return WindowParts(unit, window, near, stack)
 
@@ -246,16 +289,28 @@ def _save_requests(folder: Path, requests: list[Request], name: str) -> None:
     (folder / name).write_text("\n".join(lines) + ("\n" if lines else ""))
 
 
-def load_requests(folder: Path, name: str = "requests.jsonl") -> list[Request]:
-    """Requests written by :func:`render_window`, with their image bytes."""
+def request_index(folder: Path, name: str = "requests.jsonl") -> list[dict[str, Any]]:
+    """The requests of a window as written, without reading their images."""
     path = folder / name
     if not path.exists():
         return []
+    return [json.loads(line) for line in path.read_text().splitlines() if line]
+
+
+def load_requests(
+    folder: Path, name: str = "requests.jsonl", only: set[str] | None = None
+) -> list[Request]:
+    """Requests written by :func:`render_window`, with their image bytes.
+
+    Args:
+        folder: ``requests/<window_id>`` of a label run.
+        name: ``requests.jsonl`` or ``polygons.jsonl``.
+        only: Candidate IDs to read. Default: every request.
+    """
     out = []
-    for line in path.read_text().splitlines():
-        if not line:
+    for rec in request_index(folder, name):
+        if only is not None and rec["cand_id"] not in only:
             continue
-        rec = json.loads(line)
         *bounds, px = rec["view"]
         out.append(
             Request(

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import threading
 import time
 from pathlib import Path
@@ -24,7 +25,41 @@ PRICES: dict[str, tuple[float, float]] = {
     "openai/gpt-6.1-terra": (1.00, 5.00),
 }
 
-__all__ = ["PRICES", "BudgetExceeded", "Ledger", "request_key", "token_cost"]
+__all__ = [
+    "PRICES",
+    "BudgetExceeded",
+    "Ledger",
+    "read_jsonl",
+    "request_key",
+    "token_cost",
+]
+
+logger = logging.getLogger(__name__)
+
+
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    """Rows of a JSON-lines file, without a last line that was cut short.
+
+    A job killed while it appends leaves a partial last line. That line is
+    dropped with a warning, so the next start reads the file. The call it
+    recorded is then asked again (and answered from the response cache when
+    its answer was stored).
+
+    Raises:
+        json.JSONDecodeError: If a line other than the last cannot be read.
+    """
+    if not path.exists():
+        return []
+    lines = [line for line in path.read_text().splitlines() if line.strip()]
+    rows = []
+    for n, line in enumerate(lines, start=1):
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            if n < len(lines):
+                raise
+            logger.warning("%s: the last line is cut short and is left out", path)
+    return rows
 
 
 class BudgetExceeded(RuntimeError):
@@ -46,11 +81,7 @@ class Ledger:
         self.cap = float(cap)
         self._lock = threading.Lock()
         self._pending: dict[str, float] = {}
-        self.rows: list[dict[str, Any]] = []
-        if self.path.exists():
-            self.rows = [
-                json.loads(line) for line in self.path.read_text().splitlines() if line
-            ]
+        self.rows: list[dict[str, Any]] = read_jsonl(self.path)
 
     def spent(self, stage: str | None = None) -> float:
         return sum(r["cost"] for r in self.rows if stage is None or r["stage"] == stage)

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from importlib import resources
+from pathlib import Path
 from typing import Any
 
 from PIL import ImageDraw
@@ -66,6 +67,7 @@ __all__ = [
     "POLYGON_PROMPT",
     "VERDICT_PROMPT",
     "Request",
+    "load_locations",
     "location_of",
     "polygon_request",
     "polygon_view",
@@ -97,12 +99,38 @@ def prompt_text(name: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def load_locations(path: Path) -> int:
+    """Add the location text of a CSV (columns ``unit`` and ``location``).
+
+    A label run with many units keeps its location text in
+    ``locations.csv`` in the run folder, so that new places need no change
+    to this module. A unit named in both keeps the text of the file.
+
+    Returns:
+        The number of units read.
+
+    Raises:
+        ValueError: If a column is missing or a location is empty.
+    """
+    import csv
+
+    with Path(path).open(newline="", encoding="utf-8") as fh:
+        rows = [r for r in csv.DictReader(fh) if (r.get("unit") or "").strip()]
+    for row in rows:
+        text = (row.get("location") or "").strip()
+        if not text:
+            raise ValueError(f"{path}: no location text for {row['unit']}")
+        LOCATIONS[row["unit"].strip()] = text
+    return len(rows)
+
+
 def location_of(unit: str) -> str:
     """Location text of a unit.
 
     Raises:
-        KeyError: If the unit has none. Add it to :data:`LOCATIONS`: a prompt
-            without a location has not been tested.
+        KeyError: If the unit has none. Add it to :data:`LOCATIONS` or to
+            ``locations.csv`` of the label run: a prompt without a location
+            has not been tested.
     """
     return LOCATIONS[unit]
 

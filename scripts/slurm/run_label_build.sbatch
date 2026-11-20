@@ -78,7 +78,9 @@ scratch_init
 WORK="$NODE_SCRATCH/label"
 mkdir -p "$WORK"
 cp "$LABEL_DIR/windows.csv" "$LABEL_DIR/answers.jsonl" "$WORK/"
-[[ -f "$LABEL_DIR/units.csv" ]] && cp "$LABEL_DIR/units.csv" "$WORK/"
+for extra in units.csv judged.csv locations.csv; do
+    [[ -f "$LABEL_DIR/$extra" ]] && cp "$LABEL_DIR/$extra" "$WORK/"
+done
 [[ -d "$LABEL_DIR/candidates" ]] && rsync -a "$LABEL_DIR/candidates/" "$WORK/candidates/"
 # Fire perimeters named by routing.fire_perimeters in config.yaml, if any.
 [[ -f "$LABEL_DIR/fire_perimeters.gpkg" ]] && cp "$LABEL_DIR/fire_perimeters.gpkg" "$WORK/"

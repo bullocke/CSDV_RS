@@ -12,7 +12,7 @@
 # render`), CPU only. The first argument is the label run folder, which holds
 # windows.csv, units.csv and candidates/ as pushed from the laptop by
 # scripts/chpc/push_label_run.sh. Every further argument is passed to
-# `csdv label render` unchanged (for example --kind polygon).
+# `csdv label render` unchanged (for example --kind polygon or --stage 1).
 #
 # As an array, task i renders the windows of the unit on line i + 1 of
 # units.csv. Without --array the job renders every window of the run, which
@@ -41,24 +41,27 @@
 # Steps: check that every mosaic the windows need is on disk (a compute node
 # has no internet, so a missing mosaic fails the job and never becomes a
 # download), read each window straight from $CSDV_DATA_ROOT/naip/<unit>/<year>/,
-# write the stacks, the request images and the four-band chips to node
-# scratch, copy them into the label run folder on success.
+# write the stacks and the request images to node scratch, copy them into
+# the label run folder on success.
 #
 # Outputs under the label run folder: stacks/<window>/ (one GeoTIFF per year,
 # meta.json with the dates, cell_ndvi.tif), requests/<window>/ (JPEGs and
-# requests.jsonl or polygons.jsonl), chips/<chip>_naip.tif and
-# render_done/<unit>_<kind>.json. scripts/chpc/pull_label_run.sh copies the
-# requests, meta.json and cell_ndvi.tif to the laptop. The chips stay on CHPC
-# for training.
+# requests.jsonl or polygons.jsonl) and render_done/<unit>_<kind>[_stage<S>].json.
+# Only these three folders are copied back. The job reads answers.jsonl for
+# the polygon pass and never writes it, so it can run while a verdict job
+# (scripts/slurm/run_label_verdict.sbatch) appends to that file.
+#
+# The four-band chips are written by the label build
+# (scripts/slurm/run_label_build.sbatch). Set CSDV_RENDER_CHIPS=1 to write
+# them here as well, as the scale test did.
+#
+# The polygon pass reads the stacks of the verdict pass where they are and
+# does not read the mosaics again.
 #
 # The date of a window comes from the .provenance.json beside each mosaic.
 # The --check step counts mosaics without one, and the last lines of the
 # render count the window-years by date rule. "mosaic_name" there means the
 # unit's median date was used, which can be months off: stop and look.
-#
-# Every job renders into fresh node scratch, so a polygon pass reads the
-# mosaics again. Keep the checkout unchanged between the verdict pass and
-# the polygon pass, so that both give a window the same dates.
 #
 # A window on the edge of its unit is rendered with the ground beyond the
 # unit's mosaic left black. A window that lacks a year inside the unit is
@@ -78,13 +81,19 @@ source "$CSDV_REPO/scripts/chpc/scratch.sh"
 
 RUN_TAG="${CSDV_LABEL_RUN_TAG:-default}"
 KIND="verdict"
+STAGE=""
 ARGS=("$@")
 for ((i = 0; i < ${#ARGS[@]}; i++)); do
     case "${ARGS[$i]}" in
         --kind) KIND="${ARGS[$((i + 1))]:?--kind needs a value}" ;;
         --kind=*) KIND="${ARGS[$i]#--kind=}" ;;
+        --stage) STAGE="${ARGS[$((i + 1))]:?--stage needs a value}" ;;
+        --stage=*) STAGE="${ARGS[$i]#--stage=}" ;;
     esac
 done
+# A unit rendered for stage 1 still has windows to render in stage 2, so the
+# marker of a finished task names its stage.
+MARK="${KIND}${STAGE:+_stage${STAGE//,/-}}"
 
 if [[ ! -f "$LABEL_DIR/windows.csv" ]]; then
     echo "ERROR: $LABEL_DIR has no windows.csv. Push the label run first." >&2
@@ -99,10 +108,10 @@ if [[ -n "${SLURM_ARRAY_TASK_ID:-}" ]]; then
     UNIT_ARGS=(--unit "$UNIT")
 fi
 
-echo "host=$(hostname) job=${SLURM_JOB_ID:-none} unit=$UNIT kind=$KIND started=$(date -Is)"
+echo "host=$(hostname) job=${SLURM_JOB_ID:-none} unit=$UNIT kind=$KIND stage=${STAGE:-all} started=$(date -Is)"
 echo "label_dir=$LABEL_DIR run_tag=$RUN_TAG args: ${ARGS[*]-}"
 
-DONE="$LABEL_DIR/render_done/${UNIT}_${KIND}.json"
+DONE="$LABEL_DIR/render_done/${UNIT}_${MARK}.json"
 if [[ -e "$DONE" ]]; then
     echo "Already rendered ($DONE), skipping."
     exit 0
@@ -119,22 +128,38 @@ scratch_init
 WORK="$NODE_SCRATCH/label"
 mkdir -p "$WORK"
 cp "$LABEL_DIR/windows.csv" "$WORK/"
-[[ -f "$LABEL_DIR/units.csv" ]] && cp "$LABEL_DIR/units.csv" "$WORK/"
-[[ -f "$LABEL_DIR/answers.jsonl" ]] && cp "$LABEL_DIR/answers.jsonl" "$WORK/"
+# Small inputs that some runs have: the unit list, the candidates to judge
+# per window, the location text of the units, the thresholds the run changes.
+for extra in units.csv judged.csv locations.csv config.yaml; do
+    [[ -f "$LABEL_DIR/$extra" ]] && cp "$LABEL_DIR/$extra" "$WORK/"
+done
 [[ -d "$LABEL_DIR/candidates" ]] && rsync -a "$LABEL_DIR/candidates/" "$WORK/candidates/"
-register_stage_out "$WORK" "$LABEL_DIR"
+if [[ "$KIND" == "polygon" ]]; then
+    # Read-only here: the verdicts decide which candidates get a polygon.
+    [[ -f "$LABEL_DIR/answers.jsonl" ]] && cp "$LABEL_DIR/answers.jsonl" "$WORK/"
+    # The stacks of the verdict pass, read where they are.
+    [[ -d "$LABEL_DIR/stacks" ]] && ln -s "$LABEL_DIR/stacks" "$WORK/stacks"
+else
+    register_stage_out "$WORK/stacks" "$LABEL_DIR/stacks"
+fi
+register_stage_out "$WORK/requests" "$LABEL_DIR/requests"
+register_stage_out "$WORK/render_done" "$LABEL_DIR/render_done"
+[[ "${CSDV_RENDER_CHIPS:-0}" == "1" ]] && register_stage_out "$WORK/chips" "$LABEL_DIR/chips"
 
 WHERE=(--label-dir "$WORK"
-    --runs-dir "$CSDV_RESULTS_ROOT/disturbance" --run-subdir "$RUN_TAG" --run-tag "$RUN_TAG"
-    --naip-source local --data-root "$CSDV_DATA_ROOT")
+    --runs-dir "$CSDV_RESULTS_ROOT/disturbance" --run-subdir "$RUN_TAG" --run-tag "$RUN_TAG")
+[[ -f "$WORK/config.yaml" ]] && WHERE+=(--config "$WORK/config.yaml")
+DATA=(--naip-source local --data-root "$CSDV_DATA_ROOT")
+CHIPS=()
+[[ "${CSDV_RENDER_CHIPS:-0}" == "1" ]] && CHIPS=(--chips)
 
-csdv label render "${WHERE[@]}" ${UNIT_ARGS[@]+"${UNIT_ARGS[@]}"} --check
+csdv label render "${WHERE[@]}" "${DATA[@]}" ${UNIT_ARGS[@]+"${UNIT_ARGS[@]}"} --check
 
-/usr/bin/time -v csdv label render "${WHERE[@]}" ${UNIT_ARGS[@]+"${UNIT_ARGS[@]}"} \
-    --chips ${ARGS[@]+"${ARGS[@]}"}
+/usr/bin/time -v csdv label render "${WHERE[@]}" "${DATA[@]}" \
+    ${UNIT_ARGS[@]+"${UNIT_ARGS[@]}"} ${CHIPS[@]+"${CHIPS[@]}"} ${ARGS[@]+"${ARGS[@]}"}
 
 mkdir -p "$WORK/render_done"
-printf '{"unit": "%s", "kind": "%s", "job": "%s", "finished": "%s"}\n' \
-    "$UNIT" "$KIND" "${SLURM_JOB_ID:-none}" "$(date -Is)" \
-    >"$WORK/render_done/${UNIT}_${KIND}.json"
-du -sh "$WORK"/* | sort -h | tail -8
+printf '{"unit": "%s", "kind": "%s", "stage": "%s", "job": "%s", "finished": "%s"}\n' \
+    "$UNIT" "$KIND" "${STAGE:-all}" "${SLURM_JOB_ID:-none}" "$(date -Is)" \
+    >"$WORK/render_done/${UNIT}_${MARK}.json"
+du -shL "$WORK"/requests "$WORK"/stacks 2>/dev/null | sort -h

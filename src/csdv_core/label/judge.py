@@ -23,7 +23,7 @@ from csdv_core.config._models import LabelConfig
 from csdv_core.label.clients import Reply, ask_many
 from csdv_core.label.inputs import UnitInputs
 from csdv_core.label.labels import JudgedCandidate
-from csdv_core.label.ledger import Ledger
+from csdv_core.label.ledger import Ledger, read_jsonl
 from csdv_core.label.outlines import (
     choose_outline,
     needs_polygon,
@@ -50,6 +50,7 @@ __all__ = [
     "record_key",
     "route_candidates",
     "send",
+    "send_many",
     "verdict_requests",
     "verdicts_of",
 ]
@@ -84,27 +85,38 @@ def send(
     stage: str,
     workers: int = 6,
 ) -> list[dict[str, Any]]:
-    """Send requests to one model and return one record per request.
+    """Send the requests of one window to one model. See :func:`send_many`."""
+    items = [(window_id, q) for q in requests]
+    return send_many(ledger, items, model, stage=stage, workers=workers)
+
+
+def send_many(
+    ledger: Ledger,
+    items: list[tuple[str, Request]],
+    model: str,
+    *,
+    stage: str,
+    workers: int = 6,
+) -> list[dict[str, Any]]:
+    """Send ``(window ID, request)`` items to one model, one record per item.
+
+    The items may come from many windows, so that the pool of workers stays
+    full when windows hold one or two requests each.
 
     A verdict that comes back but cannot be read as one (a wrong number of
     states, or a word that is not a state) is asked for once more. About
     one answer in 150 was of this kind on the probe sites, and without
     the repeat its candidate stays unlabelled.
     """
-    jobs = [(q.prompt, q.images, {"window_id": window_id, **q.tag}) for q in requests]
+    jobs = [(q.prompt, q.images, {"window_id": wid, **q.tag}) for wid, q in items]
     replies: list[Reply] = ask_many(ledger, model, jobs, stage=stage, workers=workers)
     again = [
         i
-        for i, (q, r) in enumerate(zip(requests, replies, strict=True))
+        for i, ((_, q), r) in enumerate(zip(items, replies, strict=True))
         if _unusable(q, r)
     ]
     if again:
-        logger.info(
-            "%s %s: %d unusable answers, asking once more",
-            window_id,
-            model,
-            len(again),
-        )
+        logger.info("%s: %d unusable answers, asking once more", model, len(again))
         second = ask_many(
             ledger,
             model,
@@ -118,7 +130,7 @@ def send(
                 replies[i] = reply
     return [
         {
-            "window_id": window_id,
+            "window_id": wid,
             "cand_id": q.cand_id,
             "kind": q.kind,
             "model": model,
@@ -130,7 +142,7 @@ def send(
             "cached": r.cached,
             "error": r.error,
         }
-        for q, r in zip(requests, replies, strict=True)
+        for (wid, q), r in zip(items, replies, strict=True)
     ]
 
 
@@ -143,14 +155,14 @@ def append_records(path: Path, records: list[dict[str, Any]]) -> None:
 
 
 def read_records(path: Path) -> list[dict[str, Any]]:
-    """Answer records of a JSON-lines file. The last record of a call wins."""
-    if not path.exists():
-        return []
+    """Answer records of a JSON-lines file. The last record of a call wins.
+
+    A last line cut short by a killed job is left out
+    (:func:`csdv_core.label.ledger.read_jsonl`).
+    """
     latest: dict[tuple, dict[str, Any]] = {}
-    for line in path.read_text().splitlines():
-        if line:
-            rec = json.loads(line)
-            latest[record_key(rec)] = rec
+    for rec in read_jsonl(path):
+        latest[record_key(rec)] = rec
     return list(latest.values())
 
 

@@ -638,3 +638,199 @@ def test_a_window_whose_stack_lacks_a_year_is_left_out_without_imagery(
     del meta["years"]["2018"]
     path.write_text(json.dumps(meta))
     assert build_window(run, ROW, [], with_stack=False) is None
+
+
+# ---- Unattended verdict runs (round 2): pooled sending, exit codes, lists ----
+
+
+class _Reply:
+    def __init__(self, payload: dict, status: int = 200) -> None:
+        self._payload = payload
+        self.status_code = status
+        self.text = json.dumps(payload)
+        self.headers: dict = {}
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            import httpx
+
+            raise httpx.HTTPStatusError("refused", request=None, response=self)
+
+    def json(self) -> dict:
+        return self._payload
+
+
+def _fake_models(monkeypatch: pytest.MonkeyPatch, status: int = 200) -> list[str]:
+    """Both providers answer every call with three forest states."""
+    import httpx
+
+    calls: list[str] = []
+    text = json.dumps(_answer(["forest", "forest", "forest"]))
+
+    def post(url: str, **kwargs) -> _Reply:
+        calls.append(url)
+        if status != 200:
+            return _Reply({"error": "no"}, status)
+        if "openrouter" in url:
+            return _Reply(
+                {
+                    "choices": [{"message": {"content": text}}],
+                    "usage": {
+                        "prompt_tokens": 100,
+                        "completion_tokens": 10,
+                        "cost": 0.004,
+                    },
+                }
+            )
+        return _Reply(
+            {
+                "candidates": [{"content": {"parts": [{"text": text}]}}],
+                "usageMetadata": {"promptTokenCount": 1000, "candidatesTokenCount": 9},
+            }
+        )
+
+    monkeypatch.setattr(httpx, "post", post)
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    monkeypatch.setenv("OpenRouter_API_KEY", "y")
+    return calls
+
+
+def test_verdict_sends_both_models_and_a_second_run_sends_nothing(
+    run: LabelRun, label_export: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _fake_models(monkeypatch)
+    render_window(run, ROW, source="local", data_root=tmp_path / "data")
+    cli = CliRunner()
+    where = ["--label-dir", str(run.root), "--export-dir", str(label_export)]
+    result = cli.invoke(main, ["label", "verdict", *where, "--cap", "1"])
+    assert result.exit_code == 0, result.output
+    assert "6 verdict calls made, 0 failed" in result.output
+    records = J.read_records(run.answers)
+    assert len(records) == 6 and {r["model"] for r in records} == {"gem37", "terra"}
+    assert len(calls) == 6
+    result = cli.invoke(main, ["label", "verdict", *where, "--cap", "1"])
+    assert result.exit_code == 0 and "0 new verdict calls" in result.output
+    assert len(calls) == 6
+
+
+def test_verdict_stops_with_its_own_code_when_the_calls_fail(
+    run: LabelRun, label_export: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from csdv_core.label.cli import EXIT_ERRORS
+
+    _fake_models(monkeypatch, status=401)
+    render_window(run, ROW, source="local", data_root=tmp_path / "data")
+    where = ["--label-dir", str(run.root), "--export-dir", str(label_export)]
+    result = CliRunner().invoke(main, ["label", "verdict", *where, "--cap", "1"])
+    assert result.exit_code == EXIT_ERRORS, result.output
+    assert "6 of 6 calls failed" in result.output
+    # A failed call is on record and is asked again by the next run.
+    records = J.read_records(run.answers)
+    assert len(records) == 6 and all(r["error"] for r in records)
+    dry = CliRunner().invoke(
+        main, ["label", "verdict", *where, "--cap", "1", "--dry-run"]
+    )
+    assert "6 new verdict calls" in dry.output
+
+
+def test_verdict_cap_gives_a_budget_code_and_leaves_no_record_of_unmade_calls(
+    run: LabelRun, label_export: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from csdv_core.label.cli import EXIT_BUDGET
+
+    calls = _fake_models(monkeypatch)
+    render_window(run, ROW, source="local", data_root=tmp_path / "data")
+    where = ["--label-dir", str(run.root), "--export-dir", str(label_export)]
+    cli = CliRunner()
+    # The expected cost of six calls is above a cap of one cent: refused whole.
+    result = cli.invoke(
+        main, ["label", "verdict", *where, "--cap", "0.01", "--refuse-over-cap"]
+    )
+    assert result.exit_code == EXIT_BUDGET and "Nothing was sent" in result.output
+    assert calls == [] and not run.answers.exists()
+    # Without the guard the cap stops the run part of the way.
+    result = cli.invoke(
+        main, ["label", "verdict", *where, "--cap", "0.01", "--workers", "1"]
+    )
+    assert result.exit_code == EXIT_BUDGET and "Stopped by the cap" in result.output
+    records = J.read_records(run.answers)
+    assert 0 < len(records) < 6 and not any(r["error"] for r in records)
+
+
+def test_verdict_refuses_a_run_that_is_mostly_unrendered(
+    run: LabelRun, label_export: Path
+) -> None:
+    from csdv_core.label.cli import EXIT_UNRENDERED
+
+    where = ["--label-dir", str(run.root), "--export-dir", str(label_export)]
+    result = CliRunner().invoke(
+        main,
+        ["label", "verdict", *where, "--cap", "1", "--max-unrendered-share", "0.1"],
+    )
+    assert result.exit_code == EXIT_UNRENDERED and "Nothing was sent" in result.output
+
+
+def test_a_cut_last_line_of_the_answers_is_left_out(
+    run: LabelRun, tmp_path: Path
+) -> None:
+    render_window(run, ROW, source="local", data_root=tmp_path / "data")
+    _write_answers(run)
+    whole = J.read_records(run.answers)
+    with run.answers.open("a") as fh:
+        fh.write('{"window_id": "w1", "cand_id": "half')
+    assert len(J.read_records(run.answers)) == len(whole)
+    # A broken line in the middle is not passed over.
+    lines = run.answers.read_text().splitlines()
+    run.answers.write_text("\n".join([lines[0][:20], *lines[1:-1]]) + "\n")
+    with pytest.raises(json.JSONDecodeError):
+        J.read_records(run.answers)
+
+
+def test_the_judged_list_limits_what_is_judged(run: LabelRun, tmp_path: Path) -> None:
+    every = window_parts(run, ROW, with_stack=False).candidates
+    keep = sorted(every.loc[every["judged"], "cand_id"])[:1]
+    pd.DataFrame({"window_id": "w1", "cand_id": keep}).to_csv(
+        run.root / "judged.csv", index=False
+    )
+    listed = LabelRun(root=run.root, runs_dir=run.runs_dir)
+    parts = window_parts(listed, ROW, with_stack=False)
+    assert list(parts.candidates.loc[parts.candidates["judged"], "cand_id"]) == keep
+    assert len(parts.candidates) == len(every)
+    assert render_window(listed, ROW, source="local", data_root=tmp_path / "data") == 1
+    # The others are built as candidates without a verdict.
+    built = build_window(listed, ROW, [], with_stack=False)
+    assert {c.routed.status for c in built.judged} == {"unjudged"}
+
+
+def test_locations_of_a_run_are_read_from_its_folder(
+    run: LabelRun, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from csdv_core.label.requests import LOCATIONS, location_of
+
+    monkeypatch.delitem(LOCATIONS, UNIT)
+    (run.root / "locations.csv").write_text(
+        f'unit,location\n{UNIT},"somewhere, a region"\n'
+    )
+    LabelRun(root=run.root, runs_dir=run.runs_dir)
+    assert location_of(UNIT) == "somewhere, a region"
+    (run.root / "locations.csv").write_text(f"unit,location\n{UNIT},\n")
+    with pytest.raises(ValueError, match="no location text"):
+        LabelRun(root=run.root, runs_dir=run.runs_dir)
+
+
+def test_render_and_verdict_take_several_stages(
+    run: LabelRun, label_export: Path, tmp_path: Path
+) -> None:
+    table = pd.read_csv(run.root / "windows.csv")
+    table["stage"] = 2
+    table.to_csv(run.root / "windows.csv", index=False)
+    cli = CliRunner()
+    where = ["--label-dir", str(run.root), "--export-dir", str(label_export)]
+    data = ["--data-root", str(tmp_path / "data"), "--naip-source", "local"]
+    result = cli.invoke(main, ["label", "render", *where, *data, "--stage", "1"])
+    assert result.exit_code == 0 and "0 verdict requests in 0 of 0" in result.output
+    result = cli.invoke(main, ["label", "render", *where, *data, "--stage", "1,2"])
+    assert result.exit_code == 0 and "3 verdict requests in 1 of 1" in result.output
+    dry = ["label", "verdict", *where, "--dry-run", "--cap", "1"]
+    assert "6 new verdict calls" in cli.invoke(main, [*dry, "--stage", "1,2"]).output
+    assert cli.invoke(main, [*dry, "--stage", "one"]).exit_code != 0

@@ -4,8 +4,9 @@
 #
 # Sent: windows.csv, units.csv, candidates/ and, when they exist, answers.jsonl
 # (the polygon images are rendered from the verdicts), config.yaml (the
-# thresholds this run changes, for the label build) and fire_perimeters.gpkg
-# (routing.fire_perimeters of config.yaml). Nothing else leaves this
+# thresholds this run changes, for the label build), fire_perimeters.gpkg
+# (routing.fire_perimeters of config.yaml), judged.csv (the candidates to
+# judge per window) and locations.csv. Nothing else leaves this
 # machine: no API key, no ledger, no response cache.
 #
 # Usage:
@@ -48,5 +49,6 @@ echo "$LABEL_DIR -> $DEST"
 rsync -avh --partial --mkpath ${DRY[@]+"${DRY[@]}"} \
     --include='windows.csv' --include='units.csv' --include='answers.jsonl' \
     --include='config.yaml' --include='fire_perimeters.gpkg' \
+    --include='judged.csv' --include='locations.csv' \
     --include='candidates/' --include='candidates/*.gpkg' --exclude='*' \
     "${LABEL_DIR%/}/" "$DEST"

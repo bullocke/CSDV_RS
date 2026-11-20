@@ -21,7 +21,7 @@ csdv label sample --label-dir $LABEL --reviewed $REVIEWED --dry-run
 csdv label sample --label-dir $LABEL --reviewed $REVIEWED
 scripts/chpc/push_label_run.sh $LABEL scale_test
 
-# CHPC: render the request images and the four-band chips
+# CHPC: render the request images (the build writes the four-band chips)
 source scripts/chpc/env.sh
 LABEL="$CSDV_EXPORT_DIR/label/scale_test"
 N=$(($(wc -l < "$LABEL/units.csv") - 1))
@@ -40,7 +40,7 @@ csdv label verdict --label-dir $LABEL --cap 90
 csdv label build --label-dir $LABEL --no-imagery
 ```
 
-The cap is for the whole label run, not for one command. Set it to what the run may cost so far: a cap below the forecast of `--dry-run` stops the run part of the way.
+These steps keep the calls on the laptop, as in the scale test. "The whole chain on CHPC" below runs them on CHPC in one submission. The cap is for the whole label run, not for one command. Set it to what the run may cost so far: a cap below the forecast of `--dry-run` stops the run part of the way.
 
 A run without CHPC replaces the push, the batch job and the pulls with `csdv label render --label-dir $LABEL`, and drops `--no-imagery`.
 
@@ -59,6 +59,8 @@ Every step reads and writes one folder.
 | `chips/` | Training chips and `chips.parquet`. | `render --chips`, `build` |
 | `labels/` | `labels.gpkg` and the tables `intervals.csv`, `events_kept.csv` and `suspects.csv`. | `build` |
 | `sheets/` | Review sheets. | `sheets` |
+| `locations.csv` | Location text of the run's units (columns `unit`, `location`), read whenever the run is opened. Optional. | by hand or a siting script |
+| `judged.csv` | The candidates to judge in each window (columns `window_id`, `cand_id`). Optional: without it every candidate of a window is judged. | `sample`, or by hand |
 
 ## Candidates
 
@@ -112,7 +114,7 @@ The acquisition date of a window is the date of the quarter quad that fills most
 
 Each candidate gets one image per date with a thin yellow outline. The view follows the rule adopted after the pilot: zoom in on a small candidate (down to 150 m), use 384 m at 640 px when the candidate fits, and widen the view only when it does not, at up to 1,280 px so that resolution stays at 0.6 m up to 768 m. After the verdicts, `csdv label render --kind polygon` writes two images (before and after the agreed loss) for every accepted candidate whose outline the models doubt.
 
-A unit needs a line of location text (state and physiographic region) in `LOCATIONS` in `src/csdv_core/label/requests.py`. Rendering stops for a unit without one, because a prompt without a location has not been tested. Site labels such as "CA_CampFire" name the answer and are never shown to a model.
+A unit needs a line of location text (state and physiographic region), either in `LOCATIONS` in `src/csdv_core/label/requests.py` or in `locations.csv` in the label run folder, which suits a run with many new units. Rendering stops for a unit without one, because a prompt without a location has not been tested. Site labels such as "CA_CampFire" name the answer and are never shown to a model.
 
 On CHPC, render the 40 example windows first and compare them with the laptop's renders before the full array:
 
@@ -132,6 +134,35 @@ The two renders start from the same quads, but the CHPC mosaics were resampled o
 The answers are not exactly repeatable. Thirty example candidates asked again with identical images and prompt kept their status in 27 cases and their loss label in 29. Terra changed the state of some date for six of them and Gemini for one.
 
 Two verdicts on one candidate cost $0.016 in the example run, which is more than the pilot's $0.012 because many candidates needed the larger image. A polygon costs $0.004.
+
+`verdict` sends both models at once, on the requests of a batch of windows (`--batch-windows`, 16), and writes the answers after each batch. The windows are taken in a fixed pseudo-random order, so a run that its cap or its walltime stops has judged a random part of every unit and not the first units of `windows.csv`. A call that the cap refused leaves no record and is asked by the next run. `--stage` takes one stage or several (`1,2`), as it does for `render`, `build` and `sheets`.
+
+Three guards serve runs that nobody watches. `--refuse-over-cap` sends nothing when the expected cost of the new calls would pass the cap. A run in which more than a fifth of the calls fail ends with exit code 4, and it stops after the first batch when most of that batch failed, which is what a wrong key looks like. `--max-unrendered-share` ends the run with code 5, before any call, when too many of the selected windows have no request file. A cap that stops the run gives code 3. A last line of `answers.jsonl` or `ledger.jsonl` that a killed job cut short is left out with a warning when the file is read again.
+
+### Judging part of a window
+
+Without `judged.csv` every candidate with at least 0.3 ha inside a window is judged. With it, only the candidates the file names for a window are judged there. The others stay in the window as candidates without a verdict: unlabelled in the interval that flagged them, with their ring, and never background on anyone's say-so. This is how a run spreads a fixed number of calls over many windows.
+
+### The whole chain on CHPC
+
+The calls can run on CHPC, on a data transfer node, which has the internet that compute nodes lack. Rendering, the calls, the polygon pass and the build then form one chain of jobs, and no request image leaves CHPC.
+
+```bash
+# Once: two lines (export GEMINI_API_KEY=..., export OpenRouter_API_KEY=...)
+# in a private file, named by CSDV_KEYS_FILE in scripts/chpc/env.sh
+chmod 600 ~/.csdv_keys
+
+source scripts/chpc/env.sh
+LABEL="$CSDV_EXPORT_DIR/label/round2"
+scripts/chpc/submit_label_chain.sh "$LABEL" --stage 1 --cap 16 --dry-run
+scripts/chpc/submit_label_chain.sh "$LABEL" --stage 1 --cap 16
+# A later stage: the cap is cumulative, and the build covers both stages
+scripts/chpc/submit_label_chain.sh "$LABEL" --stage 2 --cap 76 --build-stages 1,2
+```
+
+The chain is: render (one array task per unit), verdicts (`scripts/slurm/run_label_verdict.sbatch`), the same verdict job a second time, polygon render, polygon calls, build. The second verdict job sends only what a hung call or the walltime left and costs nothing otherwise. A verdict job that ends with a non-zero code cancels everything behind it, so nothing is built on missing answers. The key file is sourced inside the verdict job only. Do not export the keys in a login shell, because Slurm copies that environment into every job.
+
+On CHPC the render job copies back only `stacks/`, `requests/` and `render_done/`. It reads `answers.jsonl` for the polygon pass and never writes it, so it can run beside a verdict job. Its marker of a finished unit names the stage (`render_done/<unit>_verdict_stage1.json`), and the polygon pass reads the stacks of the verdict pass in place of the mosaics. The four-band chips are written by the build. Run one verdict job per label run at a time (`--dependency=singleton`, which the chain script sets): two jobs would each count the spending on their own.
 
 ## What counts as loss
 

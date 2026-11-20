@@ -235,3 +235,14 @@ def test_a_server_that_stays_busy_ends_the_call(
     # Six waits for the busy server, then the three ordinary attempts.
     assert len(calls) == clients.BUSY_TRIES + 3
     assert ledger.reserve("k", 0.9) is None  # the hold was released
+
+
+def test_a_ledger_with_a_cut_last_line_still_opens(
+    tmp_path: Path, fake_post: list
+) -> None:
+    ledger = Ledger(tmp_path, cap=1.0)
+    clients.ask(ledger, "terra", "prompt", [b"img"], stage="verdict", tag={})
+    with ledger.path.open("a") as fh:
+        fh.write('{"time": "2026-11-19T10:00:00", "stage": "ver')
+    reopened = Ledger(tmp_path, cap=1.0)
+    assert len(reopened.rows) == 1 and reopened.spent() == pytest.approx(0.004)
