@@ -14,7 +14,8 @@
 # Usage (after `source scripts/chpc/env.sh`):
 #   sbatch $CSDV_SBATCH_CPU --output="$CSDV_LOG_DIR/%x-%j.out" \
 #       scripts/slurm/run_label_prepare.sbatch LABEL_DIR CONFIG_DIR \
-#       [--then render | --then "--stage 1 --cap 3"] [csdv label sample options...]
+#       [--then render | --then "--stage 1 --cap 3"] [--without-missing] \
+#       [csdv label sample options...]
 #
 #   LABEL_DIR   Label run folder, created here ($CSDV_EXPORT_DIR/label/NAME).
 #   CONFIG_DIR  Folder in the repository with the run's tracked inputs:
@@ -27,12 +28,19 @@
 #               may go straight to the calls (the pilot). Default: nothing.
 #   --then-sheets  With a chain: the `csdv label sheets` options of the
 #               sheets drawn after the build (quoted).
+#   --without-missing  Draw the sample although some sites have no finished
+#               run. Those sites are then left out of the label run for good.
 #
 # Steps:
 #   1. Copy sites.csv to LABEL_DIR/locations.csv (the location text of the
 #      prompts) and config.yaml beside it.
-#   2. `csdv label candidates` for the sites that have a finished run. Sites
-#      without one are named and left out.
+#   2. Check that every site has a finished run. The sample is drawn once and
+#      kept, so a site that is merely late (a preempted worker, a walltime)
+#      would be left out of it for good. Before the sample exists the job
+#      therefore stops with exit code 1 when a site has no run, and names
+#      the sites. Give the queue command again, or pass --without-missing
+#      when those sites are not coming (too few years, a failed download).
+#      Then `csdv label candidates` for the sites that have a run.
 #   3. `csdv label sample --design classes --sites ...`, first as a dry run
 #      whose table is in the log. A folder that has windows.csv is not
 #      sampled again.
@@ -43,17 +51,19 @@
 
 set -euo pipefail
 
-USAGE="usage: sbatch $0 LABEL_DIR CONFIG_DIR [--then render|\"chain options\"] [sample options]"
+USAGE="usage: sbatch $0 LABEL_DIR CONFIG_DIR [--then render|\"chain options\"] [--without-missing] [sample options]"
 LABEL_DIR="${1:?$USAGE}"
 CONFIG_DIR="${2:?$USAGE}"
 shift 2
 THEN=""
 SHEETS=""
+WITHOUT_MISSING=0
 SAMPLE_ARGS=()
 while (($#)); do
     case "$1" in
         --then) THEN="${2:?--then needs a value}"; shift 2 ;;
         --then-sheets) SHEETS="${2:?--then-sheets needs a value}"; shift 2 ;;
+        --without-missing) WITHOUT_MISSING=1; shift ;;
         *) SAMPLE_ARGS+=("$1"); shift ;;
     esac
 done
@@ -97,6 +107,23 @@ while IFS=, read -r UNIT _; do
 done <"$SITES"
 echo "${#READY[@]} sites have a run, ${#MISSING[@]} do not: ${MISSING[*]-}"
 ((${#READY[@]})) || { echo "ERROR: no site has a finished run." >&2; exit 1; }
+# The sample is drawn once. A site without a run now would never enter it.
+if ((${#MISSING[@]})) && [[ ! -f "$LABEL_DIR/windows.csv" ]]; then
+    if ((WITHOUT_MISSING)); then
+        echo "WARNING: --without-missing: the sample is drawn without ${#MISSING[@]}" \
+            "sites, which stay out of this label run: ${MISSING[*]}" >&2
+    else
+        echo "ERROR: ${#MISSING[@]} sites have no finished run" \
+            "($CSDV_RESULTS_ROOT/disturbance/<unit>/$RUN_TAG/summary.json): ${MISSING[*]}" >&2
+        echo "The sample is drawn once and kept, so nothing was sampled and" \
+            "nothing submitted. Give the queue command again (csdv grid queue," \
+            "or scripts/chpc/round2.sh pilot|grid), which submits what is" \
+            "missing and this step after it. \`csdv grid queue-status --name" \
+            "NAME --problems\` says why a unit is not finished. To go on" \
+            "without these sites, pass --without-missing." >&2
+        exit 1
+    fi
+fi
 UNITS=$(IFS=,; echo "${READY[*]}")
 
 csdv label candidates "${WHERE[@]}" --units "$UNITS"

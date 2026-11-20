@@ -192,6 +192,8 @@ The chain is: render (one array task per unit), verdicts (`scripts/slurm/run_lab
 
 On CHPC the render job copies back only `stacks/`, `requests/` and `render_done/`. It reads `answers.jsonl` for the polygon pass and never writes it, so it can run beside a verdict job. Its marker of a finished unit names the stage (`render_done/<unit>_verdict_stage1.json`), and the polygon pass reads the stacks of the verdict pass in place of the mosaics. The four-band chips are written by the build. Run one verdict job per label run at a time (`--dependency=singleton`, which the chain script sets): two jobs would each count the spending on their own.
 
+A label run that follows a grid queue starts with `scripts/slurm/run_label_prepare.sbatch` (submitted by `scripts/chpc/round2.sh pilot` and `grid` behind the queue's finish array). It builds the candidates of the sites in `sites.csv`, draws the sample by class and submits the chain. The sample is drawn once and kept, so a site whose run is merely late (a preempted worker, a walltime) would be left out of the label run for good. Before the sample exists the job therefore stops with exit code 1 when a site has no finished run, names the sites and submits nothing. The same `round2.sh` command given again submits what is missing and the prepare job behind it. `--without-missing` draws the sample without those sites, for sites that are not coming (too few usable years, a failed download).
+
 ## What counts as loss
 
 Canopy loss means that live trees were removed or died between two dates. Two things that change the image are not loss, and the prompt names both.

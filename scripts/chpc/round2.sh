@@ -3,8 +3,8 @@
 # login node after `git pull` and `source scripts/chpc/env.sh`.
 #
 # Usage:
-#   scripts/chpc/round2.sh pilot  [--cap 3]  [--dry-run]
-#   scripts/chpc/round2.sh grid              [--dry-run]
+#   scripts/chpc/round2.sh pilot  [--cap 3]  [--without-missing] [--dry-run]
+#   scripts/chpc/round2.sh grid              [--without-missing] [--dry-run]
 #   scripts/chpc/round2.sh stage1 [--cap 16] [--dry-run]
 #   scripts/chpc/round2.sh stage2  --cap 76  [--dry-run]
 #   scripts/chpc/round2.sh status [pilot]
@@ -25,6 +25,13 @@
 # status  Where every box stands (read from disk), what is queued, what the
 #         label run has spent.
 #
+# The sample of a label run is drawn once and kept. `pilot` and `grid`
+# therefore stop before the sample when a box has no finished run (the job
+# csdv_label_prepare fails and names the boxes): give the same command again,
+# which submits what is missing. --without-missing draws the sample without
+# those boxes, for boxes that are not coming (too few years, a failed
+# download). They stay out of the label run.
+#
 # Settings, all in scripts/chpc/env.sh: CSDV_SBATCH_CPU, CSDV_GPU_POOLS,
 # CSDV_KEYS_FILE. CSDV_ROUND2_CHECKPOINT names the pair model that maps
 # every box (default: first_look_blocks2).
@@ -37,11 +44,12 @@ set -euo pipefail
 
 STEP="${1:-}"
 [[ -n "$STEP" ]] && shift
-CAP="" DRY=() WHICH=""
+CAP="" DRY=() WHICH="" MISSING=()
 while (($#)); do
     case "$1" in
         --cap) CAP="${2:?--cap needs a value}"; shift 2 ;;
         --dry-run) DRY=(--dry-run); shift ;;
+        --without-missing) MISSING=(--without-missing); shift ;;
         pilot) WHICH="pilot"; shift ;;
         *) echo "Unknown argument: $1" >&2; exit 2 ;;
     esac
@@ -79,6 +87,7 @@ prepare() {
     cmd+=($CSDV_SBATCH_CPU "$LOG" "$SLURM/run_label_prepare.sbatch"
         "$CSDV_EXPORT_DIR/label/$name" "$CSDV_REPO/config/label/$name" --then "$then")
     [[ -n "$sheets" ]] && cmd+=(--then-sheets "$sheets")
+    cmd+=(${MISSING[@]+"${MISSING[@]}"})
     # shellcheck disable=SC2207
     cmd+=($(args_of "config/label/$name/sample.args"))
     echo "${cmd[*]}"
@@ -206,7 +215,7 @@ PY
         fi
         ;;
     *)
-        sed -n '2,31p' "$0"
+        sed -n '2,41p' "$0"
         exit 2
         ;;
 esac
