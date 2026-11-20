@@ -47,6 +47,7 @@ def env(tmp_path, monkeypatch):
         return str(2000 + len(calls))
 
     monkeypatch.setattr(queue_mod, "_sbatch", fake_sbatch)
+    monkeypatch.setattr(queue_mod, "_pool_error", lambda command: None)
     return paths, calls
 
 
@@ -72,6 +73,35 @@ def _naip(paths: GridPaths, unit: str, year: int) -> None:
 
 def _chm(paths: GridPaths, unit: str, year: int) -> None:
     _touch(paths.chm_year_dir(unit, year) / f"NAIP_{unit}_{year}0801_0p6m_chm.tif")
+
+
+def test_a_pool_that_slurm_refuses_stops_the_queue_before_any_job(
+    env, monkeypatch
+) -> None:
+    paths, calls = env
+    asked: list[list[str]] = []
+
+    def refuse_p2(command):
+        asked.append(command)
+        return (
+            "invalid partition specified: p2" if "--partition=p2" in command else None
+        )
+
+    monkeypatch.setattr(queue_mod, "_pool_error", refuse_p2)
+    with pytest.raises(SubmitError, match="--partition=p2: invalid partition"):
+        submit_queue(paths, _units(), _opts())
+    assert calls == []
+    assert not queue_dir(paths, "round2").exists()
+    # One question per pool, with the worker's own options and no dependency.
+    assert len(asked) == 2
+    assert all(c[:2] == ["sbatch", "--test-only"] for c in asked)
+    assert all("--mem=24G" in c and not any("@@" in a for a in c) for c in asked)
+    assert all(c[-2].endswith("run_chm_worker.sbatch") for c in asked)
+
+    # An answer that names nothing invalid (a busy pool) does not stop it.
+    monkeypatch.setattr(queue_mod, "_pool_error", lambda c: "Requested nodes are busy")
+    submit_queue(paths, _units(), _opts())
+    assert len(calls) == 6
 
 
 def test_pools_are_read_from_one_setting() -> None:

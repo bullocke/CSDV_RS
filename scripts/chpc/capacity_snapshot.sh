@@ -24,11 +24,11 @@ fi
 
 echo
 echo "== partitions: nodes, CPUs/node, memory/node (MB), time limit"
-sinfo -p "$PARTITIONS" -o "%-24P %6D %8c %10m %12l %20G" 2>/dev/null | sort -u
+sinfo -p "$PARTITIONS" -o "%24P %6D %8c %10m %12l %20G" 2>/dev/null | sort -u
 
 echo
 echo "== cores allocated/idle/other/total by partition"
-sinfo -p "$PARTITIONS" -o "%-24P %C" 2>/dev/null
+sinfo -p "$PARTITIONS" -o "%24P %C" 2>/dev/null
 
 echo
 echo "== my running and pending jobs"

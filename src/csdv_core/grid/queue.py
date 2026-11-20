@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 import os
 import shlex
+import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -43,6 +44,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "QueueOptions",
     "QueuePlan",
+    "check_pools",
     "chm_rows",
     "cpu_options",
     "gpu_pools",
@@ -325,6 +327,50 @@ def plan_queue(paths: GridPaths, units: list[Unit], opts: QueueOptions) -> Queue
     return plan
 
 
+def _pool_error(command: list[str]) -> str | None:
+    """What Slurm says against a job (``sbatch --test-only``), or None."""
+    out = subprocess.run(command, capture_output=True, text=True)
+    return None if out.returncode == 0 else out.stderr.strip()
+
+
+def check_pools(plan: QueuePlan) -> None:
+    """Ask Slurm whether it would take a worker of every pool. Submits nothing.
+
+    Raises:
+        SubmitError: Naming every pool that Slurm refuses, before any job of
+            the queue is submitted.
+    """
+    refused = []
+    seen: set[tuple[str, ...]] = set()
+    for job in plan.jobs:
+        if job.step != "worker":
+            continue
+        command = [arg for arg in job.command if not arg.startswith("@@")]
+        command = ["sbatch", "--test-only", *command[2:]]
+        if tuple(command) in seen:
+            continue
+        seen.add(tuple(command))
+        error = _pool_error(command)
+        if error is None:
+            continue
+        pool = " ".join(a for a in command if a.startswith(("--part", "-p")))
+        line = f"  {pool or shlex.join(command)}: {error}"
+        # Only a name Slurm does not know stops the queue. Other answers
+        # (busy nodes, no start time yet) say nothing against the pool.
+        if "invalid" in error.lower():
+            refused.append(line)
+        else:
+            logger.warning("Slurm gave no start time for a worker:\n%s", line)
+    if refused:
+        raise SubmitError(
+            "Slurm refuses a worker on these pools of $CSDV_GPU_POOLS. Nothing "
+            "was submitted.\n" + "\n".join(refused) + "\nA partition of another "
+            "cluster (kingspeak, lonepeak or granite from a notchpeak login "
+            "node) is not valid here: the queue's jobs wait for one another, "
+            "and a job cannot wait for a job of another cluster."
+        )
+
+
 def _resolve(command: list[str], ids: dict[str, list[str]]) -> list[str]:
     """Replace the ``@@step`` markers by one ``afterany`` dependency."""
     deps = []
@@ -353,6 +399,7 @@ def submit_queue(paths: GridPaths, units: list[Unit], opts: QueueOptions) -> Que
             job.command = _resolve(job.command, shown)
         return plan
 
+    check_pools(plan)
     folder = plan.folder
     for sub in ("downloaded", "claims", "failed"):
         (folder / sub).mkdir(parents=True, exist_ok=True)
