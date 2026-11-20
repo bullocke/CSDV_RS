@@ -50,9 +50,12 @@
 # submitted with CSDV_WORKER_WAIT=1 and starts at once. When it finds nothing
 # to do while some unit still has no download marker, it looks again every
 # minute. It gives up when no marker has appeared and no work was found for
-# CSDV_WORKER_IDLE_S seconds (900), which is also what ends it when a
-# download has failed. What it leaves is picked up by giving the queue
-# command again. Without the variable a worker never waits.
+# CSDV_WORKER_IDLE_S seconds (3600), which is also what ends it when a
+# download has failed. The limit has to be longer than a download: in the
+# first batch of round 2 the first two of 106 boxes took about 20 minutes
+# to arrive, longer than the 15 minutes the limit was then. What it leaves
+# is picked up by giving the queue command again. Without the variable a
+# worker never waits.
 #
 # A faulty card fails the job before any work (seen on a guest node). Give
 # the queue command again with --exclude-nodes <node>.
@@ -71,7 +74,7 @@ STALE_S="${CSDV_CLAIM_STALE_S:-2700}"
 BUDGET_S="${CSDV_WORKER_SECONDS:-14400}"
 MARGIN_S="${CSDV_WORKER_MARGIN_S:-900}"
 WAIT="${CSDV_WORKER_WAIT:-0}"
-IDLE_S="${CSDV_WORKER_IDLE_S:-900}"
+IDLE_S="${CSDV_WORKER_IDLE_S:-3600}"
 POLL_S="${CSDV_WORKER_POLL_S:-60}"
 MAX_FAILURES=2
 
