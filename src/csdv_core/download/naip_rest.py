@@ -54,7 +54,11 @@ NAD83_UTM_EPSG_BASE = 26900
 #: resolution token and acquisition date. A trailing processing date, as in
 #: ``..._20230922_20240103``, is ignored.
 _QUAD_NAME_RE = re.compile(
-    r"^m_\d{7}_[ns][ew]_(?P<zone>\d{1,2})_(?P<res>\d{1,3})_(?P<date>\d{8})"
+    r"^m_\d{7}_[ns][ew]_(?P<zone>\d{1,2})_(?P<res>\d{1,3})_(?P<date>\d{8})",
+    # The quarter is upper case in some 2024 names of the USDA service
+    # (``m_4107515_NW_18_60_20241006``). A name that is not recognised drops
+    # out of the catalogue silently, and its year with it.
+    re.IGNORECASE,
 )
 
 __all__ = [

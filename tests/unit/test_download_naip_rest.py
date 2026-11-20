@@ -34,6 +34,8 @@ from csdv_core.download.naip_rest import (
         ("m_4506922_sw_19_030_20230922_20240103", 19, 0.3, "20230922"),
         ("m_3807753_ne_17_060_20180612", 17, 0.6, "20180612"),
         ("m_3807753_ne_17_1_20120607", 17, 1.0, "20120607"),
+        # Seen in the USDA catalogue for 2024: upper-case quarter, two digits.
+        ("m_4107515_NW_18_60_20241006", 18, 0.6, "20241006"),
     ],
 )
 def test_parse_quad_name(name, zone, gsd, date):
