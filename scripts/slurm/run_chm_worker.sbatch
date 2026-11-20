@@ -19,7 +19,9 @@
 #
 # What a worker does. It checks its GPU, stages the conditioning rasters to
 # node scratch once, then looks through the queue's units for a year that
-# has a NAIP mosaic and no CHM. It claims that unit-year by creating the
+# has a NAIP mosaic and no CHM. Only units whose download has left its
+# marker QUEUE_DIR/downloaded/<unit> are looked at: a download that is still
+# running may be writing a mosaic. It claims that unit-year by creating the
 # folder QUEUE_DIR/claims/<unit>_<year>, which only one job can do, runs the
 # inference on scratch, copies the CHM to
 # $CSDV_DATA_ROOT/naip_chm/<unit>/<year>/ and drops the claim. It goes on
@@ -41,6 +43,16 @@
 #
 # The last worker to find nothing left cancels its siblings that are still
 # pending, so that the finish array does not wait on a pool that stays busy.
+# QUEUE_DIR/workers.txt names them, one `job [cluster]` per line.
+#
+# A worker on another Slurm cluster (a pool with --clusters=NAME) cannot
+# depend on the download job, because job IDs belong to one cluster. It is
+# submitted with CSDV_WORKER_WAIT=1 and starts at once. When it finds nothing
+# to do while some unit still has no download marker, it looks again every
+# minute. It gives up when no marker has appeared and no work was found for
+# CSDV_WORKER_IDLE_S seconds (900), which is also what ends it when a
+# download has failed. What it leaves is picked up by giving the queue
+# command again. Without the variable a worker never waits.
 #
 # A faulty card fails the job before any work (seen on a guest node). Give
 # the queue command again with --exclude-nodes <node>.
@@ -58,13 +70,16 @@ FAILED="$QUEUE_DIR/failed"
 STALE_S="${CSDV_CLAIM_STALE_S:-2700}"
 BUDGET_S="${CSDV_WORKER_SECONDS:-14400}"
 MARGIN_S="${CSDV_WORKER_MARGIN_S:-900}"
+WAIT="${CSDV_WORKER_WAIT:-0}"
+IDLE_S="${CSDV_WORKER_IDLE_S:-900}"
+POLL_S="${CSDV_WORKER_POLL_S:-60}"
 MAX_FAILURES=2
 
 [[ -f "$UNITS" ]] || { echo "ERROR: no $UNITS" >&2; exit 1; }
 mkdir -p "$CLAIMS" "$FAILED"
 
 echo "host=$(hostname) job=${SLURM_JOB_ID:-none} started=$(date -Is)"
-echo "queue=$QUEUE_DIR walltime=${BUDGET_S}s"
+echo "queue=$QUEUE_DIR walltime=${BUDGET_S}s wait_for_downloads=$WAIT"
 
 activate_csdv
 nvidia-smi -L || echo "WARNING: nvidia-smi failed on $(hostname -s)" >&2
@@ -142,10 +157,21 @@ declare -A TRIED=()
 N_DONE=0
 N_FAILED=0
 OUT_OF_TIME=0
+GAVE_UP=0
+N_MARKED_BEFORE=-1
+LAST_NEWS=$SECONDS
 while :; do
     FOUND=0
+    N_MARKED=0
+    N_UNMARKED=0
     while IFS=, read -r UNIT _; do
         [[ -z "$UNIT" || "$UNIT" == "unit" ]] && continue
+        # No marker: the unit's download has not finished (or has failed).
+        if [[ ! -e "$QUEUE_DIR/downloaded/$UNIT" ]]; then
+            N_UNMARKED=$((N_UNMARKED + 1))
+            continue
+        fi
+        N_MARKED=$((N_MARKED + 1))
         for YEAR_DIR in "$CSDV_DATA_ROOT/naip/$UNIT"/*/; do
             [[ -d "$YEAR_DIR" ]] || continue
             YEAR="$(basename "$YEAR_DIR")"
@@ -189,21 +215,55 @@ while :; do
         done
     done <"$UNITS"
     ((OUT_OF_TIME)) && break
+    if ((FOUND)); then
+        LAST_NEWS=$SECONDS
+        continue
+    fi
     # A pass that claimed nothing found every unit-year done, failed twice or
-    # held by another worker.
-    ((FOUND)) || break
+    # held by another worker. That ends the worker, unless it was told to
+    # wait for downloads and some are still to come.
+    ((WAIT == 1 && N_UNMARKED > 0)) || break
+    if ((N_MARKED != N_MARKED_BEFORE)); then
+        N_MARKED_BEFORE=$N_MARKED
+        LAST_NEWS=$SECONDS
+    fi
+    if ((SECONDS - LAST_NEWS >= IDLE_S)); then
+        GAVE_UP=1
+        echo "no download finished and nothing to do for $((SECONDS - LAST_NEWS)) s:" \
+            "$N_UNMARKED units have no marker in $QUEUE_DIR/downloaded"
+        break
+    fi
+    if ((SECONDS + POLL_S > BUDGET_S - MARGIN_S)); then
+        OUT_OF_TIME=1
+        break
+    fi
+    sleep "$POLL_S"
 done
 
-echo "unit-years done: $N_DONE, failed: $N_FAILED, stopped for time: $OUT_OF_TIME"
+echo "unit-years done: $N_DONE, failed: $N_FAILED, stopped for time: $OUT_OF_TIME," \
+    "gave up waiting for downloads: $GAVE_UP"
 
 # Nothing left and nobody else at work: siblings that are still waiting for
 # a GPU have nothing to do. Cancelling them lets the finish array start.
-if ((!OUT_OF_TIME)) && [[ -z "$(ls -A "$CLAIMS" 2>/dev/null)" && -f "$QUEUE_DIR/workers.txt" ]]; then
-    while read -r OTHER; do
-        [[ -z "$OTHER" || "$OTHER" == "${SLURM_JOB_ID:-}" ]] && continue
-        STATE=$(squeue -h -j "$OTHER" -o %T 2>/dev/null || true)
+# A worker that gave up waiting leaves its siblings alone: downloads may
+# still arrive. Each line of workers.txt is `job [cluster]`. With a cluster
+# the question goes to that cluster (-M), whose answer starts with a line
+# `CLUSTER: name` even without a header.
+if ((!OUT_OF_TIME && !GAVE_UP)) && [[ -z "$(ls -A "$CLAIMS" 2>/dev/null)" && -f "$QUEUE_DIR/workers.txt" ]]; then
+    while read -r OTHER WHERE _; do
+        [[ -z "$OTHER" ]] && continue
+        # The same number on another cluster is another job.
+        if [[ "$OTHER" == "${SLURM_JOB_ID:-}" ]] &&
+            [[ -z "$WHERE" || -z "${SLURM_CLUSTER_NAME:-}" || "$WHERE" == "$SLURM_CLUSTER_NAME" ]]; then
+            continue
+        fi
+        ON=()
+        [[ -n "$WHERE" ]] && ON=(-M "$WHERE")
+        STATE=$(squeue -h ${ON[@]+"${ON[@]}"} -j "$OTHER" -o %T 2>/dev/null |
+            grep -v '^CLUSTER:' | tr -d '[:space:]' || true)
         if [[ "$STATE" == "PENDING" ]]; then
-            scancel "$OTHER" 2>/dev/null && echo "cancelled pending worker $OTHER"
+            scancel ${ON[@]+"${ON[@]}"} "$OTHER" 2>/dev/null &&
+                echo "cancelled pending worker $OTHER${WHERE:+ on $WHERE}"
         fi
     done <"$QUEUE_DIR/workers.txt"
 fi

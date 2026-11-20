@@ -17,6 +17,13 @@ here submits three things for the whole batch:
 3. ``finish``: one CPU array, a task per unit, after every worker has ended:
    detection, the pair model's map on CPU (optional), export.
 
+A pool may lie on another Slurm cluster (``--clusters=NAME`` in its option
+string). Job IDs belong to one cluster, so nothing can depend on such a
+worker and it can depend on nothing. It is submitted at once and waits for
+the download markers itself, and a small ``gate`` job on the submitting
+cluster watches the other clusters' queues until those workers have ended.
+The finish array waits for the gate.
+
 Nothing is planned on the login node, and no list of unit-years is written:
 what is left to do is read from disk every time. Giving the same command
 again therefore submits only what is missing, which is also how a batch
@@ -49,6 +56,7 @@ __all__ = [
     "cpu_options",
     "gpu_pools",
     "plan_queue",
+    "pool_cluster",
     "priority_interval_ok",
     "queue_dir",
     "submit_queue",
@@ -64,8 +72,10 @@ def gpu_pools(text: str | None) -> tuple[str, ...]:
     """The GPU pools of ``$CSDV_GPU_POOLS``: sbatch options, ``;`` between pools.
 
     Each pool is one string of options for a single GPU, for example
-    ``--account=A --partition=B --qos=C --gres=gpu:1``. Allocation names
-    live in the gitignored ``scripts/chpc/env.sh`` and nowhere in the code.
+    ``--account=A --partition=B --qos=C --gres=gpu:1``, with
+    ``--clusters=NAME`` when it lies on another Slurm cluster
+    (:func:`pool_cluster`). Allocation names live in the gitignored
+    ``scripts/chpc/env.sh`` and nowhere in the code.
 
     Raises:
         SubmitError: If no pool is named.
@@ -77,6 +87,35 @@ def gpu_pools(text: str | None) -> tuple[str, ...]:
             "(see env.example.sh)."
         )
     return pools
+
+
+def pool_cluster(pool: str) -> str | None:
+    """The Slurm cluster a pool names, or None for the submitting cluster.
+
+    Read from ``--clusters=NAME``, ``--clusters NAME``, ``-M NAME`` or
+    ``-MNAME`` in the pool's option string. A pool sends its workers to one
+    cluster.
+
+    Raises:
+        SubmitError: If the option names several clusters.
+    """
+    args = shlex.split(pool)
+    name = None
+    for i, arg in enumerate(args):
+        if arg in ("--clusters", "-M"):
+            name = args[i + 1] if i + 1 < len(args) else ""
+        elif arg.startswith("--clusters="):
+            name = arg.split("=", 1)[1]
+        elif arg.startswith("-M") and not arg.startswith("--"):
+            name = arg[2:]
+    if name is None:
+        return None
+    name = name.strip()
+    if not name or "," in name or name == "all":
+        raise SubmitError(
+            f"A pool of $CSDV_GPU_POOLS must name one cluster, not '{name}': {pool}"
+        )
+    return name
 
 
 @dataclass(frozen=True)
@@ -97,6 +136,9 @@ class QueueOptions:
         worker_mem: Memory of a worker. A 4.8 km box needs far less than the
             48G of a whole quad, and a small request waits less.
         exclude_nodes: Nodes the workers must not run on.
+        gate_hours: Walltime of the gate job, which exists only when a pool
+            lies on another cluster. It has to outlast the longest wait of
+            such a worker for a GPU plus the worker's own walltime.
         download_throttle: Download tasks running at one time.
         finish_throttle: Finish tasks running at one time.
         checkpoint: Pair-model checkpoint. With it, every unit gets the
@@ -119,6 +161,7 @@ class QueueOptions:
     worker_hours: float = 4.0
     worker_mem: str = "24G"
     exclude_nodes: tuple[str, ...] = ()
+    gate_hours: float = 24.0
     download_throttle: int = 6
     finish_throttle: int = 20
     checkpoint: Path | None = None
@@ -140,6 +183,9 @@ class QueuePlan:
     jobs: list[Job] = field(default_factory=list)
     download_rows: Path | None = None
     finish_rows: Path | None = None
+    gate_rows: Path | None = None
+    #: Per worker job, in the order of ``jobs``: its cluster, None for this one.
+    worker_clusters: list[str | None] = field(default_factory=list)
 
 
 def queue_dir(paths: GridPaths, name: str) -> Path:
@@ -297,22 +343,39 @@ def plan_queue(paths: GridPaths, units: list[Unit], opts: QueueOptions) -> Queue
     if plan.to_download or plan.rows:
         seconds = round(opts.worker_hours * 3600)
         for pool in opts.pools:
+            # A worker on another cluster cannot wait for the download job.
+            # It is told to wait for the download markers instead.
+            cluster = pool_cluster(pool)
+            remote = cluster is not None
+            export = f"--export=ALL,CSDV_WORKER_SECONDS={seconds}"
             for _ in range(opts.workers_per_pool):
                 cmd = ["sbatch", "--parsable", f"--job-name=csdv_chmq_{opts.name}"]
                 cmd += [*shlex.split(pool), f"--time={_clock(opts.worker_hours)}"]
                 cmd += [f"--mem={opts.worker_mem}", one]
-                cmd += [f"--export=ALL,CSDV_WORKER_SECONDS={seconds}"]
+                cmd += [export + (",CSDV_WORKER_WAIT=1" if remote else "")]
                 if opts.exclude_nodes:
                     cmd.append(f"--exclude={','.join(opts.exclude_nodes)}")
-                cmd += ["@@download", f"{slurm}/run_chm_worker.sbatch", str(folder)]
-                plan.jobs.append(Job("worker", cmd))
+                cmd += [] if remote else ["@@download"]
+                cmd += [f"{slurm}/run_chm_worker.sbatch", str(folder)]
+                plan.jobs.append(Job("remote" if remote else "worker", cmd))
+                plan.worker_clusters.append(cluster)
+        if any(job.step == "remote" for job in plan.jobs):
+            # The gate ends when no worker of another cluster is left in its
+            # queue, which is what the finish array can wait for.
+            cmd = ["sbatch", "--parsable", f"--job-name=csdv_gate_{opts.name}"]
+            cmd += [*shlex.split(opts.cpu), f"--time={_clock(opts.gate_hours)}", one]
+            plan.gate_rows = folder / f"gate_{stamp}.txt"
+            cmd += ["@@download", f"{slurm}/run_queue_gate.sbatch"]
+            cmd += [str(plan.gate_rows)]
+            plan.jobs.append(Job("gate", cmd))
 
     if plan.to_finish:
         n = len(plan.to_finish)
         cmd = ["sbatch", "--parsable", f"--job-name=csdv_fin_{opts.name}"]
         cmd += [*shlex.split(opts.cpu), f"--array=1-{n}%{opts.finish_throttle}", many]
         plan.finish_rows = folder / f"finish_{stamp}.csv"
-        cmd += ["@@download", "@@worker", f"{slurm}/run_grid_finish.sbatch"]
+        cmd += ["@@download", "@@worker", "@@gate"]
+        cmd += [f"{slurm}/run_grid_finish.sbatch"]
         cmd += [str(folder), str(plan.finish_rows), opts.run_tag]
         cmd += ["--min-years", str(opts.min_years)]
         if opts.checkpoint is not None:
@@ -343,7 +406,7 @@ def check_pools(plan: QueuePlan) -> None:
     refused = []
     seen: set[tuple[str, ...]] = set()
     for job in plan.jobs:
-        if job.step != "worker":
+        if job.step not in ("worker", "remote"):
             continue
         command = [arg for arg in job.command if not arg.startswith("@@")]
         command = ["sbatch", "--test-only", *command[2:]]
@@ -353,7 +416,8 @@ def check_pools(plan: QueuePlan) -> None:
         error = _pool_error(command)
         if error is None:
             continue
-        pool = " ".join(a for a in command if a.startswith(("--part", "-p")))
+        named = ("--part", "-p", "--clusters", "-M")
+        pool = " ".join(a for a in command if a.startswith(named))
         line = f"  {pool or shlex.join(command)}: {error}"
         # Only a name Slurm does not know stops the queue. Other answers
         # (busy nodes, no start time yet) say nothing against the pool.
@@ -365,10 +429,24 @@ def check_pools(plan: QueuePlan) -> None:
         raise SubmitError(
             "Slurm refuses a worker on these pools of $CSDV_GPU_POOLS. Nothing "
             "was submitted.\n" + "\n".join(refused) + "\nA partition of another "
-            "cluster (kingspeak, lonepeak or granite from a notchpeak login "
-            "node) is not valid here: the queue's jobs wait for one another, "
-            "and a job cannot wait for a job of another cluster."
+            "Slurm cluster (kingspeak, lonepeak or granite from a notchpeak "
+            "login node) is valid only with --clusters=<name> in the pool's "
+            "options."
         )
+
+
+def _local_cluster() -> str:
+    """Name of the Slurm cluster this command is run on (``ClusterName``)."""
+    out = subprocess.run(["scontrol", "show", "config"], capture_output=True, text=True)
+    for line in out.stdout.splitlines() if out.returncode == 0 else []:
+        key, _, value = line.partition("=")
+        if key.strip() == "ClusterName" and value.strip():
+            return value.strip()
+    raise SubmitError(
+        "A pool of $CSDV_GPU_POOLS lies on another cluster, and `scontrol show "
+        "config` does not give this cluster's name (ClusterName), which the "
+        "workers there need to find their siblings here. Nothing was submitted."
+    )
 
 
 def _resolve(command: list[str], ids: dict[str, list[str]]) -> list[str]:
@@ -392,13 +470,21 @@ def submit_queue(paths: GridPaths, units: list[Unit], opts: QueueOptions) -> Que
     plan = plan_queue(paths, units, opts)
     ids: dict[str, list[str]] = {}
     if opts.dry_run:
-        placeholders = {"download": ["<download>"], "worker": ["<workers>"]}
+        placeholders = {
+            "download": ["<download>"],
+            "worker": ["<workers>"],
+            "gate": ["<gate>"],
+        }
         present = {job.step for job in plan.jobs}
         shown = {step: jobs for step, jobs in placeholders.items() if step in present}
         for job in plan.jobs:
             job.command = _resolve(job.command, shown)
         return plan
 
+    # This cluster's name is asked for only when a worker goes to another
+    # one. Otherwise no cluster is ever named, in the files or to Slurm.
+    clusters = plan.worker_clusters
+    here = _local_cluster() if any(clusters) else ""
     check_pools(plan)
     folder = plan.folder
     for sub in ("downloaded", "claims", "failed"):
@@ -409,6 +495,8 @@ def submit_queue(paths: GridPaths, units: list[Unit], opts: QueueOptions) -> Que
         except ValueError as exc:
             raise SubmitError(str(exc)) from exc
     by_id = {u.unit_id: u for u in units}
+    workers: list[tuple[str, str]] = []
+    away: list[tuple[str, str]] = []
     lines = ["unit,west,south,east,north"]
     for unit in units:
         box = ",".join(f"{v:.6f}" for v in unit.bbox_4326)
@@ -427,16 +515,31 @@ def submit_queue(paths: GridPaths, units: list[Unit], opts: QueueOptions) -> Que
             plan.finish_rows.write_text(
                 "unit\n" + "".join(f"{u}\n" for u in plan.to_finish), encoding="utf-8"
             )
+        elif job.step == "gate":
+            # The workers of other clusters that this submission's gate
+            # watches, one `job cluster` per line. Its own file, because
+            # workers.txt is written anew when the command is given again.
+            plan.gate_rows.write_text(
+                "".join(f"{job_id} {where}\n" for job_id, where in away),
+                encoding="utf-8",
+            )
         job.command = _resolve(job.command, ids)
         job.job_id = _sbatch(job.command)
         ids.setdefault(job.step, []).append(job.job_id)
         logger.info("%s: job %s", job.step, job.job_id)
-    if ids.get("worker"):
-        # A worker that finds nothing left cancels its pending siblings, so
-        # that the finish array does not wait on a pool that never frees up.
-        (folder / "workers.txt").write_text(
-            "\n".join(ids["worker"]) + "\n", encoding="utf-8"
-        )
+        if job.step in ("worker", "remote"):
+            where = clusters[len(workers)] or here
+            workers.append((job.job_id, where))
+            if job.step == "remote":
+                away.append((job.job_id, where))
+            # A worker that finds nothing left cancels its pending siblings,
+            # so that the finish array does not wait on a pool that never
+            # frees up. Written after every worker: one on another cluster
+            # may start before the last is submitted.
+            (folder / "workers.txt").write_text(
+                "".join(f"{job_id} {name}".rstrip() + "\n" for job_id, name in workers),
+                encoding="utf-8",
+            )
     # What a caller chains behind the queue waits for this job.
     last = folder / "last_finish_job.txt"
     if ids.get("finish"):
@@ -452,6 +555,8 @@ def submit_queue(paths: GridPaths, units: list[Unit], opts: QueueOptions) -> Que
         counts = {
             "download": len(plan.to_download),
             "worker": len(plan.rows),
+            "remote": len(plan.rows),
+            "gate": len(away),
             "finish": len(plan.to_finish),
         }
         for job in plan.jobs:

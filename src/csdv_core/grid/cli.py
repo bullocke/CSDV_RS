@@ -223,6 +223,15 @@ def submit(
 @click.option("--worker-hours", default=4.0, show_default=True, type=float)
 @click.option("--worker-mem", default="24G", show_default=True)
 @click.option("--exclude-nodes", default="", help="Comma-separated nodes to avoid.")
+@click.option(
+    "--gate-hours",
+    default=24.0,
+    show_default=True,
+    type=float,
+    help="Walltime of the job that waits for workers on other clusters "
+    "(pools with --clusters). Longer than their wait for a GPU plus "
+    "--worker-hours.",
+)
 @click.option("--download-throttle", default=6, show_default=True, type=int)
 @click.option("--finish-throttle", default=20, show_default=True, type=int)
 @click.option(
@@ -253,6 +262,7 @@ def queue(
     worker_hours: float,
     worker_mem: str,
     exclude_nodes: str,
+    gate_hours: float,
     download_throttle: int,
     finish_throttle: int,
     checkpoint: Path | None,
@@ -269,6 +279,10 @@ def queue(
     What is left to do is read from disk, so the same command given again
     submits only what is missing. For many small units. `csdv grid submit`
     remains the way to run a few whole quads.
+
+    A pool with --clusters=NAME sends its workers to another Slurm cluster.
+    They wait for the downloads themselves, and a gate job holds the finish
+    array until they have ended.
 
     Options after `--` go to detect-disturbance.
     """
@@ -295,6 +309,7 @@ def queue(
             exclude_nodes=tuple(
                 n.strip() for n in exclude_nodes.split(",") if n.strip()
             ),
+            gate_hours=gate_hours,
             download_throttle=download_throttle,
             finish_throttle=finish_throttle,
             checkpoint=checkpoint,
@@ -319,11 +334,15 @@ def queue(
     elif dry_run:
         click.echo("\nDry run: nothing submitted, no records written.")
     else:
-        ids = ",".join(j.job_id for j in plan.jobs)
+        ids = ",".join(j.job_id for j in plan.jobs if j.step != "remote")
         click.echo(
             f"\nWatch: sacct -j {ids} -X --format=JobID,JobName%24,State,Elapsed,ExitCode"
-            f"\nThen:  csdv grid queue-status --name {opts.name}"
         )
+        away = sorted({c for c in plan.worker_clusters if c})
+        if away:
+            # Job IDs of another cluster mean nothing to sacct here.
+            click.echo(f"       squeue -M {','.join(away)} -u $USER")
+        click.echo(f"Then:  csdv grid queue-status --name {opts.name}")
 
 
 @grid.command("queue-status")

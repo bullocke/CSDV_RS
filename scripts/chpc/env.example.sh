@@ -41,12 +41,17 @@ export CSDV_SBATCH_GPU="--account=EDIT --partition=EDIT --qos=EDIT --gres=gpu:1"
 # first does the work, so name every pool you may use: the general GPU
 # partition, the group's preemptable route, guest nodes. Preempted workers
 # are cancelled, which the queue is built for. Not granite-gpu-guest
-# (Blackwell cards, see above). Every pool must be a partition of the cluster
-# whose login node you submit from (`sinfo -o %P` lists them): kingspeak,
-# lonepeak and granite are Slurm clusters of their own, and the queue's jobs
-# cannot wait for a job of another cluster. `csdv grid queue` asks Slurm
-# about every pool before it submits anything.
-export CSDV_GPU_POOLS="--account=EDIT --partition=EDIT --qos=EDIT --gres=gpu:1;--account=EDIT --partition=EDIT --qos=EDIT --gres=gpu:1"
+# (Blackwell cards, see above).
+#
+# Kingspeak, lonepeak and granite are Slurm clusters of their own: from a
+# notchpeak login node their partitions are invalid by name alone. A pool
+# on another cluster starts with --clusters=<name>, as the second one below
+# does. Its workers start at once and wait for the downloads themselves,
+# and a small job on this cluster holds the finish step until they have
+# ended (docs/guides/grid_processing.md). `csdv grid queue` asks Slurm about
+# every pool before it submits anything. To see which pools would start soon:
+#   sbatch --test-only <pool options> scripts/slurm/run_chm_worker.sbatch x
+export CSDV_GPU_POOLS="--account=EDIT --partition=EDIT --qos=EDIT --gres=gpu:1;--clusters=EDIT --account=EDIT --partition=EDIT --qos=EDIT --gres=gpu:1"
 
 # EDIT: a private file with the API keys of the vision models, read only by
 # scripts/slurm/run_label_verdict.sbatch. Two lines,

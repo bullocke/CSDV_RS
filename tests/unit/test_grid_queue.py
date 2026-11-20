@@ -14,6 +14,7 @@ from csdv_core.grid.queue import (
     QueueOptions,
     chm_rows,
     gpu_pools,
+    pool_cluster,
     priority_interval_ok,
     queue_dir,
     submit_queue,
@@ -59,7 +60,7 @@ def _units() -> list[Unit]:
 
 
 def _opts(**more) -> QueueOptions:
-    return QueueOptions(name="round2", pools=POOLS, cpu=CPU, **more)
+    return QueueOptions(name="round2", **{"pools": POOLS, "cpu": CPU, **more})
 
 
 def _touch(path) -> None:
@@ -146,6 +147,143 @@ def test_a_new_batch_submits_download_workers_on_every_pool_and_finish(env) -> N
     assert (folder / "units.csv").read_text().count("\n") == 3
     assert load_unit(paths, "p_wind_a").buffer_km == 2.4
     assert len(calls) == 6
+
+
+AWAY = "--clusters=lone --account=a3 --partition=p3 --qos=q3 --gres=gpu:1"
+
+
+def test_a_pool_names_its_cluster_in_any_spelling_slurm_takes() -> None:
+    assert pool_cluster(POOLS[0]) is None
+    assert pool_cluster(AWAY) == "lone"
+    assert pool_cluster("--partition=p3 --clusters lone --gres=gpu:1") == "lone"
+    assert pool_cluster("-M lone --partition=p3") == "lone"
+    assert pool_cluster("--partition=p3 -Mlone") == "lone"
+    # A memory option is not a cluster.
+    assert pool_cluster("--mem=8G --mem-per-gpu=4G --partition=p3") is None
+    for several in ("--clusters=lone,king", "-M all", "--clusters="):
+        with pytest.raises(SubmitError, match="one cluster"):
+            pool_cluster(several)
+
+
+def test_workers_on_another_cluster_wait_on_markers_and_a_gate_holds_the_finish(
+    env, monkeypatch
+) -> None:
+    paths, calls = env
+    monkeypatch.setattr(queue_mod, "_local_cluster", lambda: "notch")
+    opts = _opts(pools=(POOLS[0], AWAY), workers_per_pool=2, gate_hours=30)
+    plan = submit_queue(paths, _units(), opts)
+    steps = [j.step for j in plan.jobs]
+    assert steps == [
+        "download",
+        "worker",
+        "worker",
+        "remote",
+        "remote",
+        "gate",
+        "finish",
+    ]
+    download, local1, local2, away1, away2, gate, finish = (
+        j.command for j in plan.jobs
+    )
+
+    # Local workers are what they were: after the download, told nothing more.
+    for worker in (local1, local2):
+        assert "--dependency=afterany:2001" in worker
+        assert "--export=ALL,CSDV_WORKER_SECONDS=14400" in worker
+    # A worker elsewhere depends on nothing, goes to its cluster and is told
+    # to wait for the download markers.
+    for worker in (away1, away2):
+        assert not any(a.startswith("--dependency") for a in worker)
+        assert "--clusters=lone" in worker and "--partition=p3" in worker
+        assert "--export=ALL,CSDV_WORKER_SECONDS=14400,CSDV_WORKER_WAIT=1" in worker
+        assert worker[-2].endswith("run_chm_worker.sbatch")
+
+    # The gate is a CPU job here, after the download, and reads the list of
+    # the workers elsewhere that this submission made.
+    assert "--partition=c" in gate and "--time=30:00:00" in gate
+    assert "--dependency=afterany:2001" in gate
+    assert gate[-2].endswith("run_queue_gate.sbatch")
+    assert gate[-1] == str(plan.gate_rows)
+    assert plan.gate_rows.read_text().splitlines() == ["2004 lone", "2005 lone"]
+
+    # The finish array waits for the download, the local workers and the
+    # gate, and for no job ID of the other cluster.
+    deps = next(a for a in finish if a.startswith("--dependency="))
+    assert deps == "--dependency=" + ",".join(
+        f"afterany:{job}" for job in (2001, 2002, 2003, 2006)
+    )
+
+    folder = queue_dir(paths, "round2")
+    assert (folder / "workers.txt").read_text().splitlines() == [
+        "2002 notch",
+        "2003 notch",
+        "2004 lone",
+        "2005 lone",
+    ]
+    record = (folder / "submissions.csv").read_text().splitlines()
+    assert [line.split(",")[1] for line in record[1:]] == steps
+    assert (folder / "last_finish_job.txt").read_text().strip() == "2007"
+
+
+def test_every_pool_elsewhere_and_nothing_to_download(env, monkeypatch) -> None:
+    paths, calls = env
+    monkeypatch.setattr(queue_mod, "_local_cluster", lambda: "notch")
+    folder = queue_dir(paths, "round2")
+    for unit in ("p_wind_a", "p_snow_b"):
+        _naip(paths, unit, 2018)
+        _touch(folder / "downloaded" / unit)
+    plan = submit_queue(paths, _units(), _opts(pools=(AWAY,), workers_per_pool=1))
+    assert [j.step for j in plan.jobs] == ["remote", "gate", "finish"]
+    remote, gate, finish = (j.command for j in plan.jobs)
+    assert not any(a.startswith("--dependency") for a in remote + gate)
+    assert "--dependency=afterany:2002" in finish
+    assert (folder / "workers.txt").read_text().splitlines() == ["2001 lone"]
+
+
+def test_a_dry_run_with_a_pool_elsewhere_asks_slurm_nothing(env, monkeypatch) -> None:
+    paths, calls = env
+
+    def never():
+        raise AssertionError("scontrol was asked in a dry run")
+
+    monkeypatch.setattr(queue_mod, "_local_cluster", never)
+    plan = submit_queue(paths, _units(), _opts(pools=(POOLS[0], AWAY), dry_run=True))
+    finish = plan.jobs[-1].command
+    assert (
+        "--dependency=afterany:<download>,afterany:<workers>,afterany:<gate>" in finish
+    )
+    assert calls == [] and not queue_dir(paths, "round2").exists()
+
+
+def test_this_clusters_name_is_needed_when_a_pool_lies_elsewhere(
+    env, monkeypatch
+) -> None:
+    paths, calls = env
+
+    class Out:
+        returncode = 0
+        stdout = "Configuration data as of now\nClusterName             = notch\n"
+
+    monkeypatch.setattr(queue_mod.subprocess, "run", lambda *a, **k: Out())
+    assert queue_mod._local_cluster() == "notch"
+    Out.stdout = "Configuration data as of now\n"
+    with pytest.raises(SubmitError, match="ClusterName"):
+        submit_queue(paths, _units(), _opts(pools=(POOLS[0], AWAY)))
+    assert calls == [] and not queue_dir(paths, "round2").exists()
+
+
+def test_pools_of_this_cluster_never_ask_for_its_name(env, monkeypatch) -> None:
+    paths, calls = env
+
+    def never():
+        raise AssertionError("scontrol was asked without a pool elsewhere")
+
+    monkeypatch.setattr(queue_mod, "_local_cluster", never)
+    plan = submit_queue(paths, _units(), _opts())
+    assert [j.step for j in plan.jobs] == ["download", *["worker"] * 4, "finish"]
+    assert plan.gate_rows is None
+    assert not list(queue_dir(paths, "round2").glob("gate_*.txt"))
+    assert not any("CSDV_WORKER_WAIT" in a for j in plan.jobs for a in j.command)
 
 
 def test_the_same_command_again_submits_only_what_is_missing(env) -> None:

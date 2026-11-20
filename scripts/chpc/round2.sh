@@ -164,6 +164,15 @@ MSG
         echo
         echo "== Your jobs in the queue: $(squeue -h -u "$USER" | wc -l)"
         squeue -h -u "$USER" -o "%.12i %.24j %.9T %.10M %R" | sort -k2 | uniq -c -f1 | head -20 || true
+        # Workers of pools on other clusters (--clusters=NAME or -M NAME in
+        # $CSDV_GPU_POOLS) do not show in the queue of this one.
+        for CLUSTER in $(tr ';' '\n' <<<"${CSDV_GPU_POOLS:-}" |
+            sed -nE 's/.*(--clusters[= ]|-M ?)([A-Za-z0-9_]+).*/\2/p' | sort -u); do
+            echo
+            echo "== Your jobs on $CLUSTER"
+            squeue -h -M "$CLUSTER" -u "$USER" -o "%.12i %.24j %.9T %.10M %R" |
+                grep -v '^CLUSTER:' | head -20 || true
+        done
         echo
         echo "== Label run $LABEL"
         if [[ -f "$LABEL/windows.csv" ]]; then
