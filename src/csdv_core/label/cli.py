@@ -299,7 +299,7 @@ def candidates_cmd(units: str | None, **where) -> None:
 @click.option(
     "--edge-m",
     type=float,
-    default=110.0,
+    default=260.0,
     show_default=True,
     help="For --design classes: a seed lies mostly this far inside its unit.",
 )

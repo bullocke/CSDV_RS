@@ -91,9 +91,12 @@ class ClassDesign:
         stage1_per_unit: Windows per unit that form stage 1, one per stratum
             in the order of :data:`CLASS_ORDER`, priority intervals first.
         judged_per_window: Candidates judged in a window, the seed included.
-        edge_m: A seed must lie mostly this far inside its unit. Canopy
-            heights within about 260 m of a mosaic's edge depend on the
-            mosaic, and the outermost cells most.
+        edge_m: A seed must lie mostly this far inside its unit's grid,
+            which is the extent of the mosaic (the box and the 150 m the
+            download adds around it). Canopy heights within 260 m of a
+            mosaic's edge depend on the mosaic: in the round-2 pilot a box
+            and its quad differed by 0.3 to 0.9 m RMSE at 150 to 260 m and
+            not at all beyond.
         plain_units: Units sampled by source, without the model's map.
         priority: Per unit, the interval the place was chosen for.
         seed: Seed of the candidate keys.
@@ -105,7 +108,7 @@ class ClassDesign:
     draw_per_stratum: int = 8
     stage1_per_unit: int = 4
     judged_per_window: int = 2
-    edge_m: float = 110.0
+    edge_m: float = 260.0
     plain_units: frozenset[str] = frozenset()
     priority: Mapping[str, str] = field(default_factory=dict)
     seed: int = 0
