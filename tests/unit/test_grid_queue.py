@@ -216,6 +216,9 @@ def test_a_unit_is_finished_only_when_its_years_are_ready(env, tmp_path) -> None
         sync_unit_years(paths, folder, unit, priority_intervals=wanted)
     wanted.write_text(f"unit,interval\n{uid},2018-2021\n")
     assert len(sync_unit_years(paths, folder, unit, priority_intervals=wanted)) == 4
+    # A background place names no interval: nothing to check.
+    wanted.write_text(f"unit,role,interval\n{uid},train,\n")
+    assert len(sync_unit_years(paths, folder, unit, priority_intervals=wanted)) == 4
 
 
 def test_a_download_with_a_failed_year_counts_when_enough_arrive(

@@ -235,7 +235,9 @@ def sync_unit_years(
             for row in csv.DictReader(lines)
             if (row.get("unit") or "").strip() == uid
         ]
-        for interval in wanted:
+        # A place sited on a condition (snow, leaf-off) and not on an event
+        # names no interval, and has none to lose.
+        for interval in filter(None, wanted):
             if not priority_interval_ok(years, interval):
                 raise SubmitError(
                     f"{uid}: its priority interval {interval} is not a pair of "

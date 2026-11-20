@@ -68,11 +68,18 @@ echo "queue=$QUEUE_DIR walltime=${BUDGET_S}s"
 
 activate_csdv
 nvidia-smi -L || echo "WARNING: nvidia-smi failed on $(hostname -s)" >&2
+# A small convolution, not only an allocation: a card that this build of
+# PyTorch does not support passes is_available() and fails at its first
+# kernel. Failing here costs nothing. Failing later would count against the
+# unit-years the worker had claimed.
 if ! python -c "import torch; assert torch.cuda.is_available(), 'no CUDA device'; \
-torch.zeros(1, device='cuda'); \
+x = torch.randn(2, 4, 64, 64, device='cuda'); \
+y = torch.nn.functional.conv2d(x, torch.randn(8, 4, 3, 3, device='cuda')); \
+assert torch.isfinite(y).all().item(), 'convolution gave no finite result'; \
 print('torch', torch.__version__, 'on', torch.cuda.get_device_name(0))"; then
     echo "ERROR: no usable GPU on $(hostname -s). Give the queue command again" \
-        "with --exclude-nodes $(hostname -s)" >&2
+        "with --exclude-nodes $(hostname -s), or take its pool out of" \
+        "CSDV_GPU_POOLS if the card is too old for this build of PyTorch." >&2
     exit 1
 fi
 
