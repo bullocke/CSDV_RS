@@ -34,7 +34,9 @@
 #
 # Settings, all in scripts/chpc/env.sh: CSDV_SBATCH_CPU, CSDV_GPU_POOLS,
 # CSDV_KEYS_FILE. CSDV_ROUND2_CHECKPOINT names the pair model that maps
-# every box (default: first_look_blocks2).
+# every box (default: first_look_blocks2). CSDV_ROUND2_QUEUE_ARGS holds
+# further `csdv grid queue` options, for the GPU capacity of a large batch:
+#   export CSDV_ROUND2_QUEUE_ARGS="--workers-per-pool 6 --worker-hours 8"
 #
 # What to look for is printed by each command. Every paid step has a cap
 # on the whole label run, refuses to start when its forecast passes the
@@ -73,7 +75,7 @@ queue() {
     [[ -f "$CKPT" ]] || { echo "ERROR: no checkpoint at $CKPT" >&2; exit 1; }
     csdv grid queue --batch "config/grid/$name.csv" --name "$name" \
         --checkpoint "$CKPT" --priority-intervals "config/label/$name/sites.csv" \
-        ${DRY[@]+"${DRY[@]}"} >&2
+        ${CSDV_ROUND2_QUEUE_ARGS:-} ${DRY[@]+"${DRY[@]}"} >&2
     local last="$CSDV_GRID_DIR/queues/$name/last_finish_job.txt"
     [[ -f "$last" ]] && cat "$last" || true
 }
