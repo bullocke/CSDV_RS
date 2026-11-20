@@ -51,9 +51,37 @@ For each unit the command submits up to five jobs, each waiting for the one befo
 
 If a job fails, Slurm cancels the jobs that wait on it. The export waits for detection to succeed and for the chips to end, so a chips failure does not hold back the export. `--gpu` chooses where the CHM tasks run (see below). `--steps` limits the chain, for example `--steps download,chm` to prepare data only.
 
-The CHM step is the only one that waits for scarce hardware, so `--gpu` chooses its partition. `notchpeak` (the default) is the general notchpeak GPU pool. `kingspeak` and `lonepeak` are the general pools on the older clusters (Titan X and 1080 Ti cards). They are slower per task, but often idle, and a CHM needs only about 4 GB of GPU memory. `notchpeak-guest` (other groups' idle notchpeak GPUs) and `granite` (granite freecycle, L40S and H100) are preemptable, so their tasks are requeued when cancelled. A requeued task starts over, and a task whose CHM already exists skips itself. Run `mychpc batch` on a login node to see how idle each pool is before a large submission. A job that waits with the reason `Priority` while GPUs look idle is behind jobs of higher fair-share priority, and those idle GPUs may be held for a larger job, so a guest route often starts sooner. Guest nodes belong to other groups and a faulty card can stay in service there. On notch089 one failed with "Unable to determine the device handle". The CHM task then stops at its GPU check and names the node, and `--exclude-nodes notch089` (comma-separated) keeps the CHM tasks of a resubmission off it. Finished years are skipped on resubmission. `granite-gpu-guest` is not offered because its Blackwell cards need a newer CUDA build than the environment has.
+The CHM step is the only one that waits for scarce hardware, so `--gpu` chooses its partition. `notchpeak` (the default) is the general notchpeak GPU pool. `kingspeak` and `lonepeak` are the general pools on the older clusters (Titan X and 1080 Ti cards). They are slower per task, but often idle, and a CHM needs only about 4 GB of GPU memory. `notchpeak-guest` (other groups' idle notchpeak GPUs) and `granite` (granite freecycle, L40S and H100) are preemptable. A preempted task is cancelled and not requeued (verified on CHPC on 2026-10-30), so give the submit command again afterwards: a task whose CHM already exists skips itself. Run `mychpc batch` on a login node to see how idle each pool is before a large submission. A job that waits with the reason `Priority` while GPUs look idle is behind jobs of higher fair-share priority, and those idle GPUs may be held for a larger job, so a guest route often starts sooner. Guest nodes belong to other groups and a faulty card can stay in service there. On notch089 one failed with "Unable to determine the device handle". The CHM task then stops at its GPU check and names the node, and `--exclude-nodes notch089` (comma-separated) keeps the CHM tasks of a resubmission off it. Finished years are skipped on resubmission. `granite-gpu-guest` is not offered because its Blackwell cards need a newer CUDA build than the environment has.
 
 Each submission appends a row to the ledger, `$CSDV_GRID_DIR/submissions.csv`, with the time, unit, run tag, years, job IDs, the detection options and the git commit.
+
+## Many small units: the work queue
+
+`csdv grid submit` gives every unit its own chain and every year its own GPU task. Each task waits in the GPU queue by itself, and one download year that fails cancels the unit's chain. For a few quads that is fine. For a hundred boxes of 4.8 km it means several hundred waits. `csdv grid queue` sends a whole batch through three submissions instead:
+
+```bash
+source scripts/chpc/env.sh
+csdv grid queue --batch config/grid/round2.csv --dry-run
+csdv grid queue --batch config/grid/round2.csv \
+    --checkpoint "$CSDV_RESULTS_ROOT/pairmodel/first_look_blocks2/best.pt" \
+    --priority-intervals config/label/round2/priority_intervals.csv
+csdv grid queue-status --name round2            # read from disk, any time
+csdv grid queue-status --name round2 --problems
+```
+
+| Submission | Script | What it does |
+|---|---|---|
+| `download` | `run_grid_download.sbatch`, an array on the data transfer nodes | One task per unit. The task plans the unit's years itself, so nothing is planned on the login node. A year that a catalogue lists and cannot deliver is dropped when at least `--min-years` (4) arrive. A finished unit gets a marker in `<queue>/downloaded/`. |
+| `workers` | `run_chm_worker.sbatch`, `--workers-per-pool` (2) jobs on every pool of `$CSDV_GPU_POOLS` | A worker checks its GPU, stages the conditioning rasters once, then takes one unit-year after another that has a mosaic and no CHM. It claims each by creating `<queue>/claims/<unit>_<year>`, which only one job can do. |
+| `finish` | `run_grid_finish.sbatch`, a CPU array | One task per unit, after every worker has ended: detection on the years that have a CHM, the pair model's map on CPU (with `--checkpoint`, written to `<run>/model/`), export. |
+
+The queue folder is `$CSDV_GRID_DIR/queues/<name>/`, named after the batch file unless `--name` says otherwise. There is no list of unit-years in it. What is left to do is read from disk every time, by the workers and by the command itself, which has three consequences. Workers can wait on several pools at once, and whichever pool frees a GPU first does the work. A worker that starts late finds less to do, and one that finds nothing exits at once (the last one cancels its siblings that are still pending, so the finish array is not held up by a pool that stays busy). And the same command given again submits only what is missing, which is how a batch recovers from a preempted worker, a faulty card (`--exclude-nodes`) or a failed download.
+
+`$CSDV_GPU_POOLS` is set in `scripts/chpc/env.sh`: one string of sbatch options per pool, with semicolons between pools (see `env.example.sh`). Allocation names stay in that file. A worker asks for 24 GB and four hours by default (`--worker-mem`, `--worker-hours`), which suits boxes. A whole quad needs `--worker-mem 48G`. A worker stops taking unit-years a quarter of an hour before its walltime.
+
+A unit-year whose inference fails is noted in `<queue>/failed/` and tried once more by another worker. After two failures it is left out, and the unit is finished without that year. A claim that a killed job left behind goes stale after 45 minutes and is taken over.
+
+The finish task refuses a unit, with a message that says why, when its download has no marker, when a CHM is still to be made (give the queue command again), when fewer than `--min-years` are left, or when the unit's interval in `--priority-intervals` (a CSV with the columns `unit` and `interval`, such as `2018-2021`) is no longer a pair of consecutive years. The last check keeps a place that was chosen for one event from being processed without the two images around it. The unit record takes the years that were processed. The export also copies the four cell layers and the model map to `$CSDV_EXPORT_DIR/run_layers/<unit>/<tag>/`, where `csdv label` reads them, so one pull of the exports is enough. The inspection chips of `csdv grid submit` are not made.
 
 ## Run tags and reruns
 

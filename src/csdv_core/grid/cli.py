@@ -1,4 +1,4 @@
-"""csdv_core.grid.cli — ``csdv grid``: locate, submit, status, export, check."""
+"""csdv_core.grid.cli — ``csdv grid``: locate, submit, queue, status, export, check."""
 
 from __future__ import annotations
 
@@ -198,6 +198,232 @@ def submit(
         click.echo("\nDry run: nothing submitted, no records written.")
     if failures:
         raise click.ClickException(f"Not submitted: {', '.join(failures)}")
+
+
+@grid.command("queue", context_settings={"max_content_width": 100})
+@click.option(
+    "--batch",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Batch CSV (label,lon,lat,buffer_km,cell,notes).",
+)
+@click.option("--name", default=None, help="Queue name. Default: the batch file's.")
+@click.option("--run-tag", default="default", show_default=True)
+@click.option("--start-year", default=2010, show_default=True, type=int)
+@click.option("--min-coverage", default=0.9, show_default=True, type=float)
+@click.option(
+    "--min-years",
+    default=4,
+    show_default=True,
+    type=int,
+    help="Fewest NAIP years a unit needs. A year that fails is dropped when "
+    "this many remain.",
+)
+@click.option("--workers-per-pool", default=2, show_default=True, type=int)
+@click.option("--worker-hours", default=4.0, show_default=True, type=float)
+@click.option("--worker-mem", default="24G", show_default=True)
+@click.option("--exclude-nodes", default="", help="Comma-separated nodes to avoid.")
+@click.option("--download-throttle", default=6, show_default=True, type=int)
+@click.option("--finish-throttle", default=20, show_default=True, type=int)
+@click.option(
+    "--checkpoint",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Pair-model checkpoint. Each unit then gets the model's map, made "
+    "on the CPU of its finish task.",
+)
+@click.option(
+    "--priority-intervals",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="CSV with columns unit and interval (2018-2021). A unit whose "
+    "interval lost a date is not finished.",
+)
+@click.option("--no-quicklooks", is_flag=True, help="Export without quicklooks.")
+@click.option("--dry-run", is_flag=True, help="Print the jobs; submit nothing.")
+@click.argument("detect_args", nargs=-1, type=click.UNPROCESSED)
+def queue(
+    batch: Path,
+    name: str | None,
+    run_tag: str,
+    start_year: int,
+    min_coverage: float,
+    min_years: int,
+    workers_per_pool: int,
+    worker_hours: float,
+    worker_mem: str,
+    exclude_nodes: str,
+    download_throttle: int,
+    finish_throttle: int,
+    checkpoint: Path | None,
+    priority_intervals: Path | None,
+    no_quicklooks: bool,
+    dry_run: bool,
+    detect_args: tuple[str, ...],
+) -> None:
+    """Send a batch of units through one work queue of GPU jobs.
+
+    Three submissions serve the whole batch: a download array, a few GPU
+    workers on every pool of $CSDV_GPU_POOLS that take unit-years one after
+    another, and a finish array (detection, the pair model's map, export).
+    What is left to do is read from disk, so the same command given again
+    submits only what is missing. For many small units. `csdv grid submit`
+    remains the way to run a few whole quads.
+
+    Options after `--` go to detect-disturbance.
+    """
+    import os
+
+    from csdv_core.grid.queue import QueueOptions, cpu_options, gpu_pools, submit_queue
+    from csdv_core.grid.submit import SubmitError
+    from csdv_core.grid.units import grid_paths, read_batch
+
+    _setup_logging()
+    try:
+        units = read_batch(batch)
+        opts = QueueOptions(
+            name=name or batch.stem,
+            pools=gpu_pools(os.environ.get("CSDV_GPU_POOLS")),
+            cpu=cpu_options(),
+            run_tag=run_tag,
+            start_year=start_year,
+            min_coverage=min_coverage,
+            min_years=min_years,
+            workers_per_pool=workers_per_pool,
+            worker_hours=worker_hours,
+            worker_mem=worker_mem,
+            exclude_nodes=tuple(
+                n.strip() for n in exclude_nodes.split(",") if n.strip()
+            ),
+            download_throttle=download_throttle,
+            finish_throttle=finish_throttle,
+            checkpoint=checkpoint,
+            priority_intervals=priority_intervals,
+            quicklooks=not no_quicklooks,
+            detect_args=tuple(detect_args),
+            dry_run=dry_run,
+        )
+        plan = submit_queue(grid_paths(), units, opts)
+    except (SubmitError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(
+        f"Queue {opts.name}: {len(units)} units. To download: "
+        f"{len(plan.to_download)}. Unit-years without a CHM now: {len(plan.rows)}. "
+        f"To finish: {len(plan.to_finish)}."
+    )
+    for job in plan.jobs:
+        prefix = f"   {job.step:<9}"
+        click.echo(f"{prefix}{job.job_id or ''}  {shlex.join(job.command)}")
+    if not plan.jobs:
+        click.echo("   nothing to submit: every unit is exported")
+    elif dry_run:
+        click.echo("\nDry run: nothing submitted, no records written.")
+    else:
+        ids = ",".join(j.job_id for j in plan.jobs)
+        click.echo(
+            f"\nWatch: sacct -j {ids} -X --format=JobID,JobName%24,State,Elapsed,ExitCode"
+            f"\nThen:  csdv grid queue-status --name {opts.name}"
+        )
+
+
+@grid.command("queue-status")
+@click.option("--name", required=True, help="Queue name.")
+@click.option("--run-tag", default="default", show_default=True)
+@click.option("--problems", is_flag=True, help="Only units that are not exported.")
+def queue_status(name: str, run_tag: str, problems: bool) -> None:
+    """Show where every unit of a queue stands, read from disk."""
+    import pandas as pd
+
+    from csdv_core.grid.queue import (
+        MAX_ROW_FAILURES,
+        _failures,
+        queue_dir,
+        years_on_disk,
+    )
+    from csdv_core.grid.status import chm_done
+    from csdv_core.grid.units import grid_paths
+
+    paths = grid_paths()
+    folder = queue_dir(paths, name)
+    listing = folder / "units.csv"
+    if not listing.exists():
+        raise click.ClickException(f"No queue at {folder}")
+    rows = []
+    for unit_id in pd.read_csv(listing)["unit"]:
+        years = years_on_disk(paths, unit_id)
+        with_chm = [y for y in years if chm_done(paths, unit_id, y)]
+        failed = [
+            y
+            for y in years
+            if y not in with_chm and _failures(folder, unit_id, y) >= MAX_ROW_FAILURES
+        ]
+        run_dir = paths.run_dir(unit_id, run_tag)
+        rows.append(
+            {
+                "unit": unit_id,
+                "downloaded": (folder / "downloaded" / unit_id).exists(),
+                "naip": len(years),
+                "chm": len(with_chm),
+                "failed": ",".join(map(str, failed)),
+                "run": (run_dir / "summary.json").exists(),
+                "model": (run_dir / "model" / f"prob_{unit_id}.tif").exists(),
+                "exported": (
+                    paths.export_run_dir(unit_id, run_tag) / "export.json"
+                ).exists(),
+            }
+        )
+    table = pd.DataFrame(rows)
+    left = int((table["naip"] - table["chm"]).sum()) - sum(
+        len(f.split(",")) for f in table["failed"] if f
+    )
+    shown = table[~table["exported"]] if problems else table
+    with pd.option_context("display.width", 200, "display.max_rows", 500):
+        click.echo(shown.to_string(index=False) if len(shown) else "(none)")
+    click.echo(
+        f"\n{len(table)} units: {int(table['downloaded'].sum())} downloaded, "
+        f"{left} unit-years waiting for a CHM, {int(table['run'].sum())} detected, "
+        f"{int(table['model'].sum())} with a model map, "
+        f"{int(table['exported'].sum())} exported."
+    )
+
+
+@grid.command("sync-unit")
+@click.option("--name", required=True, help="Queue name.")
+@click.option("--unit", "unit_id", required=True, help="Unit ID.")
+@click.option("--min-years", default=2, show_default=True, type=int)
+@click.option(
+    "--priority-intervals",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+)
+def sync_unit(
+    name: str, unit_id: str, min_years: int, priority_intervals: Path | None
+) -> None:
+    """Print the years of a unit that are ready for detection, and record them.
+
+    Used by the finish job of a queue. Fails when the download or a CHM is
+    still missing, too few years are left, or the unit's priority interval
+    lost a date.
+    """
+    from csdv_core.grid.queue import queue_dir, sync_unit_years
+    from csdv_core.grid.submit import SubmitError
+    from csdv_core.grid.units import grid_paths, load_unit
+
+    paths = grid_paths()
+    unit = load_unit(paths, unit_id)
+    if unit is None:
+        raise click.ClickException(f"No unit record for {unit_id}")
+    try:
+        years = sync_unit_years(
+            paths,
+            queue_dir(paths, name),
+            unit,
+            min_years=min_years,
+            priority_intervals=priority_intervals,
+        )
+    except SubmitError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(",".join(map(str, years)))
 
 
 @grid.command("status")

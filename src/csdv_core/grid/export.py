@@ -60,6 +60,7 @@ RUN_FILES = {
 RUN_DIRS = ("figures", "inspection")
 
 __all__ = [
+    "export_layers",
     "CHM_STEP_M",
     "NODATA_U8",
     "ONSET_YEAR_BASE",
@@ -309,6 +310,38 @@ def export_quicklooks(
     return written
 
 
+def export_layers(paths: GridPaths, unit_id: str, run_tag: str) -> list[Path]:
+    """Copy what the label steps read beside the run's vectors.
+
+    These are the four cell layers (probability, forest mask, canopy cover
+    and height per year, 19.2 m, a few MB for a quad) and, when the run has
+    one, the pair model's map (``model/``). They go to
+    ``<exports>/run_layers/<unit>/<tag>/``, where ``csdv label`` looks for
+    them, so that one pull of the exports is enough.
+    """
+    from csdv_core.label.inputs import LAYER_FILES
+
+    run_dir = paths.run_dir(unit_id, run_tag)
+    out_dir = paths.export_dir / "run_layers" / unit_id / run_tag
+    written: list[Path] = []
+    for rel in LAYER_FILES.values():
+        src = run_dir / rel
+        if src.is_file():
+            dst = out_dir / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            written.append(Path(shutil.copy2(src, dst)))
+    model = run_dir / "model"
+    if model.is_dir():
+        for src in sorted(model.glob("*.tif")):
+            # The type rasters are drawings of the agent raster.
+            if src.name.startswith("type_"):
+                continue
+            dst = out_dir / "model" / src.name
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            written.append(Path(shutil.copy2(src, dst)))
+    return written
+
+
 def export_run(
     paths: GridPaths,
     unit_id: str,
@@ -377,6 +410,7 @@ def export_run(
     unit_json = paths.unit_json(unit_id)
     if unit_json.exists():
         result.files.append(Path(shutil.copy2(unit_json, out_dir / "unit.json")))
+    result.files.extend(export_layers(paths, unit_id, run_tag))
     (out_dir / "export.json").write_text(
         json.dumps(
             {"unit": unit_id, "run_tag": run_tag, "run_dir": str(run_dir)}, indent=2

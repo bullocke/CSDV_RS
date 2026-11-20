@@ -232,6 +232,13 @@ def download_planned_years(
     help="Default: $CSDV_DATA_ROOT/naip.",
 )
 @click.option("--overwrite", is_flag=True, default=False)
+@click.option(
+    "--min-years",
+    default=None,
+    type=int,
+    help="Succeed when at least this many mosaics are on disk afterwards, "
+    "even if a year failed. Default: every planned year must arrive.",
+)
 def cli(
     site: str,
     bbox: tuple[float, float, float, float] | None,
@@ -242,6 +249,7 @@ def cli(
     pad_m: float,
     out_root: Path | None,
     overwrite: bool,
+    min_years: int | None,
 ) -> None:
     """Download NAIP one mosaic per year, choosing the source for each year.
 
@@ -277,5 +285,20 @@ def cli(
         click.echo(str(path))
     # Years asked for by name must all arrive; discovered years may be skipped.
     missing = failed + (sorted(plan.skipped) if year_list else [])
+    if missing and min_years is not None and len(paths) >= min_years:
+        # One year that a catalogue lists and cannot deliver should not cost
+        # the unit its other years. Detection runs on the years that arrived.
+        logger.warning(
+            "No mosaic written for %s. %d years arrived, at least %d were "
+            "asked for, so the download counts as done.",
+            missing,
+            len(paths),
+            min_years,
+        )
+        return
     if missing:
         raise click.ClickException(f"No mosaic written for {missing}")
+    if min_years is not None and len(paths) < min_years:
+        raise click.ClickException(
+            f"{len(paths)} mosaics written, fewer than --min-years {min_years}"
+        )

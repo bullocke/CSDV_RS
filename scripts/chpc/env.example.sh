@@ -35,6 +35,15 @@ export CSDV_SBATCH_CPU="--account=EDIT --partition=EDIT --qos=EDIT"
 # cards are not supported by the cu126 build of PyTorch.
 export CSDV_SBATCH_GPU="--account=EDIT --partition=EDIT --qos=EDIT --gres=gpu:1"
 
+# EDIT: the GPU pools that `csdv grid queue` may send CHM workers to, each a
+# string of sbatch options for one GPU, with a semicolon between pools. The
+# workers of every pool are queued at once and whichever pool frees a GPU
+# first does the work, so name every pool you may use: the general GPU
+# partition, the group's preemptable route, guest nodes. Preempted workers
+# are cancelled, which the queue is built for. Not granite-gpu-guest
+# (Blackwell cards, see above).
+export CSDV_GPU_POOLS="--account=EDIT --partition=EDIT --qos=EDIT --gres=gpu:1;--account=EDIT --partition=EDIT --qos=EDIT --gres=gpu:1"
+
 # EDIT: a private file with the API keys of the vision models, read only by
 # scripts/slurm/run_label_verdict.sbatch. Two lines,
 #   export GEMINI_API_KEY=...
