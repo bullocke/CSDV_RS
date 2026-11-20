@@ -198,7 +198,10 @@ def _quiet_chips(run: LabelRun, unit_id: str, design: SampleDesign) -> pd.DataFr
             np.nan_to_num(unit.layer("probability"), nan=0.0)
             >= cfg.candidates.weak_prob
         )
+    # Model objects are left out: an unjudged one changes no label, and on
+    # off-season images they cover the forest a quiet chip should show.
     cands = run.candidates(unit_id)
+    cands = cands[cands["source"] != "model"]
     named = (design.quiet_intervals or {}).get(unit_id)
     if named:
         unknown = sorted(set(named) - set(unit.intervals))

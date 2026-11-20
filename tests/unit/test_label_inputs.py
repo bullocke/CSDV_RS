@@ -277,3 +277,107 @@ def test_labels_need_the_units_years(unit) -> None:
     )
     with pytest.raises(ValueError, match="years"):
         window_labels(unit, WINDOW, stack, [], CFG)
+
+
+# ---- The pair model's map as a candidate source ----
+
+
+def _model_map(unit, blocks: list[tuple[int, int, int, int, int, int]]) -> Path:
+    """Write a model map with ``(band, row0, col0, rows, cols, percent)`` blocks.
+
+    Rows and columns count 9.6 m map cells from the top-left corner of the
+    unit's grid, snapped outward to the lattice of the map.
+    """
+    cell = 9.6
+    x0, _, _, y1 = unit.grid.bounds
+    left = np.floor(x0 / cell) * cell
+    top = np.ceil(y1 / cell) * cell
+    data = np.zeros((len(unit.intervals), 84, 84), dtype="uint8")
+    for band, row0, col0, rows, cols, percent in blocks:
+        data[band, row0 : row0 + rows, col0 : col0 + cols] = percent
+    folder = unit.layers_root / "model"
+    folder.mkdir(exist_ok=True)
+    path = folder / f"prob_forest_{unit.unit}.tif"
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        height=84,
+        width=84,
+        count=data.shape[0],
+        dtype="uint8",
+        crs="EPSG:26919",
+        transform=from_origin(left, top, cell, cell),
+        nodata=255,
+    ) as dst:
+        dst.write(data)
+    return path
+
+
+def test_a_unit_without_a_model_map_has_no_model_candidates(unit) -> None:
+    assert unit.model_map is None
+    every = C.unit_candidates(unit, CFG.candidates)
+    assert set(every["source"]) == {"di", "chm", "weak"}
+    assert every["model_share"].isna().all()
+
+
+def test_model_objects_are_what_no_other_candidate_touches(unit) -> None:
+    # Band 0 (2015-2018): the model flags the detected object (unit cells
+    # 10-14, so map cells 20-29) and a block of forest nobody flagged.
+    # Band 1 (2018-2021): nothing, so the CHM-loss object is the model's miss.
+    _model_map(unit, [(0, 19, 19, 12, 12, 90), (0, 50, 50, 8, 8, 60)])
+    assert unit.model_map is not None
+    every = C.unit_candidates(unit, CFG.candidates)
+    by_id = every.set_index("cand_id")
+    model = every[every["source"] == "model"]
+    assert len(model) == 1
+    found = model.iloc[0]
+    assert found["cand_id"] == f"{UNIT}-model-2018-1"
+    assert found["interval"] == "2015-2018" and found["geom_src"] == "cells"
+    assert found["area_ha"] == pytest.approx(64 * 0.9216e-2)
+    assert found["mean_prob"] == pytest.approx(0.6)
+    # The model's own outline of the detected object is not a second candidate.
+    assert by_id.loc[f"{UNIT}-di-2018-1", "model_share"] == pytest.approx(1.0)
+    chm = every[every["source"] == "chm"].iloc[0]
+    assert chm["model_share"] == 0.0
+    # The detected object of 2018-2021 lies where the model flagged in the
+    # interval before, which counts: the model dates a loss as it sees it.
+    assert by_id.loc[f"{UNIT}-di-2021-2", "model_share"] in (0.0, 1.0)
+
+
+def test_a_model_object_below_the_flag_level_is_still_a_candidate(unit) -> None:
+    # 30% is above `model_prob` (0.2) and below `model_flag_prob` (0.5).
+    _model_map(unit, [(1, 50, 50, 8, 8, 30)])
+    every = C.unit_candidates(unit, CFG.candidates)
+    model = every[every["source"] == "model"]
+    assert len(model) == 1 and model.iloc[0]["interval"] == "2018-2021"
+    assert model.iloc[0]["mean_prob"] == pytest.approx(0.3)
+    # Under 20% nothing is proposed.
+    _model_map(unit, [(1, 50, 50, 8, 8, 15)])
+    every = C.unit_candidates(unit, CFG.candidates)
+    assert "model" not in set(every["source"])
+
+
+def test_a_sheet_of_model_loss_is_cut_into_parts(unit) -> None:
+    # 70 by 30 map cells is 19.4 ha, under the split size. 70 by 40 is 25.8.
+    _model_map(unit, [(1, 44, 2, 30, 70, 80)])
+    one = C.unit_candidates(unit, CFG.candidates)
+    assert (one["source"] == "model").sum() == 1
+    _model_map(unit, [(1, 44, 2, 40, 70, 80)])
+    many = C.unit_candidates(unit, CFG.candidates)
+    parts = many[many["source"] == "model"]
+    assert len(parts) > 1 and parts["area_ha"].max() <= (614.4**2) / 1e4 + 1e-6
+    assert parts["cand_id"].is_unique and (parts["area_ha"] >= 0.3).all()
+    # Parts under the minimum size are dropped, so a little area is lost.
+    assert 0.85 * 25.8 < parts["area_ha"].sum() <= 25.81
+
+
+def test_a_map_of_other_dates_is_refused(unit) -> None:
+    path = _model_map(unit, [])
+    with rasterio.open(path) as src:
+        profile, data = src.profile, src.read()
+    profile.update(count=3)
+    with rasterio.open(path, "w", **profile) as dst:
+        dst.write(np.concatenate([data, data[:1]]))
+    with pytest.raises(ValueError, match="3 bands for the unit's 2 intervals"):
+        C.unit_candidates(unit, CFG.candidates)

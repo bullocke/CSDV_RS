@@ -515,6 +515,11 @@ class LabelCandidates(_Base):
     weak_prob: float = Field(default=0.2, ge=0, le=1)
     detected_buffer_cells: int = Field(default=1, ge=0)
     chm_loss_min_drop: float = Field(default=0.2, ge=0, le=1)
+    model_prob: float = Field(default=0.2, gt=0, le=1)
+    model_flag_prob: float = Field(default=0.5, gt=0, le=1)
+    model_buffer_cells: int = Field(default=2, ge=0)
+    model_split_ha: float = Field(default=20.0, gt=0)
+    model_split_m: float = Field(default=614.4, gt=0)
 
 
 class LabelViews(_Base):
@@ -537,6 +542,7 @@ class LabelRouting(_Base):
     consecutive_loss: Literal["label", "ignore"] = "ignore"
     disputed_date: Literal["ignore", "later"] = "later"
     stressed_recovered: Literal["ignore", "background"] = "ignore"
+    model_rejected: Literal["ignore", "background"] = "background"
     fire_perimeters: str | None = None
     fire_perimeter_share: float = Field(default=0.5, gt=0, le=1)
 

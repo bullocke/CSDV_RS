@@ -834,3 +834,112 @@ def test_render_and_verdict_take_several_stages(
     dry = ["label", "verdict", *where, "--dry-run", "--cap", "1"]
     assert "6 new verdict calls" in cli.invoke(main, [*dry, "--stage", "1,2"]).output
     assert cli.invoke(main, [*dry, "--stage", "one"]).exit_code != 0
+
+
+# ---- Model objects as candidates: they count only where they are judged ----
+
+
+def _write_model_map(run: LabelRun, percent: int = 60) -> str:
+    """A block the pair model flags in 2015-2018, on forest inside the window."""
+    unit = run.unit(UNIT)
+    cell = 9.6
+    x0, _, _, y1 = unit.grid.bounds
+    data = np.zeros((2, 84, 84), dtype="uint8")
+    data[0, 50:58, 50:58] = percent
+    folder = unit.layers_root / "model"
+    folder.mkdir(exist_ok=True)
+    with rasterio.open(
+        folder / f"prob_forest_{UNIT}.tif",
+        "w",
+        driver="GTiff",
+        height=84,
+        width=84,
+        count=2,
+        dtype="uint8",
+        crs="EPSG:26919",
+        transform=from_origin(
+            np.floor(x0 / cell) * cell, np.ceil(y1 / cell) * cell, cell, cell
+        ),
+        nodata=255,
+    ) as dst:
+        dst.write(data)
+    return f"{UNIT}-model-2018-1"
+
+
+def _verdicts(cand_id: str, states: list[str]) -> list[dict]:
+    from csdv_core.label.requests import VERDICT_PROMPT
+
+    return [
+        {
+            "window_id": "w1",
+            "cand_id": cand_id,
+            "kind": "verdict",
+            "model": model,
+            "dates": ["2015-08-01", "2018-08-02", "2021-08-03"],
+            "view": [0, 0, 1, 1, 640],
+            "extra": {"prompt": VERDICT_PROMPT},
+            "answer": _answer(states),
+            "cost": 0.0,
+            "cached": False,
+            "error": "",
+        }
+        for model in ("gem37", "terra")
+    ]
+
+
+def test_a_rejected_model_object_is_background_in_its_interval(run: LabelRun) -> None:
+    cand_id = _write_model_map(run)
+    fresh = LabelRun(root=run.root, runs_dir=run.runs_dir)
+    parts = window_parts(fresh, ROW, with_stack=False)
+    model = parts.candidates[parts.candidates["source"] == "model"]
+    assert list(model["cand_id"]) == [cand_id] and model["judged"].all()
+
+    records = _verdicts(cand_id, ["forest", "forest", "forest"])
+    built = build_window(fresh, ROW, records, with_stack=False)
+    routed = {c.cand_id: c.routed for c in built.judged}[cand_id]
+    assert routed.status == "rejected" and routed.outcomes == ["intact", "intact"]
+    inside = built.judged[[c.cand_id for c in built.judged].index(cand_id)].geometry
+    x, y = inside.representative_point().coords[0]
+    x0, _, _, y1 = built.labels.bounds
+    row, col = int((y1 - y) / 0.6), int((x - x0) / 0.6)
+    assert built.labels.reason[0, row, col] == Reason.JUDGED_INTACT
+    assert built.labels.change[0, row, col] == 0
+
+    # Treated like the other sources when the run asks for it.
+    fresh.cfg.routing.model_rejected = "ignore"
+    guarded = build_window(fresh, ROW, records, with_stack=False)
+    assert guarded.labels.reason[0, row, col] == Reason.REJECTED_FLAGGED
+    assert guarded.labels.change[0, row, col] == 255
+
+
+def test_an_accepted_model_object_is_loss(run: LabelRun) -> None:
+    cand_id = _write_model_map(run)
+    fresh = LabelRun(root=run.root, runs_dir=run.runs_dir)
+    records = _verdicts(cand_id, ["forest", "full_loss", "open"])
+    for rec in records:
+        rec["answer"].update(
+            change_type="clearcut", outline_fit="about_right", affected_share="over_75"
+        )
+    built = build_window(fresh, ROW, records, with_stack=False)
+    cand = next(c for c in built.judged if c.cand_id == cand_id)
+    assert cand.routed.status == "accepted" and cand.event is not None
+    assert (built.labels.reason[0] == Reason.ACCEPTED_FULL).any()
+
+
+def test_a_model_object_that_is_not_judged_changes_no_label(run: LabelRun) -> None:
+    plain = build_window(run, ROW, [], with_stack=False)
+    cand_id = _write_model_map(run)
+    # Candidates are computed once per label run and saved, so the set made
+    # before the map existed has to go.
+    (run.root / "candidates" / f"{UNIT}.gpkg").unlink()
+    # The judged list names another candidate of the window, not the model's.
+    pd.DataFrame({"window_id": ["w1"], "cand_id": [f"{UNIT}-di-2018-1"]}).to_csv(
+        run.root / "judged.csv", index=False
+    )
+    listed = LabelRun(root=run.root, runs_dir=run.runs_dir)
+    parts = window_parts(listed, ROW, with_stack=False)
+    assert cand_id not in set(parts.candidates["cand_id"])
+    built = build_window(listed, ROW, [], with_stack=False)
+    assert (built.labels.reason == plain.labels.reason).all()
+    # Nor does it stop a chip from being quiet: the sampler leaves it out.
+    assert cand_id in set(listed.candidates(UNIT)["cand_id"])

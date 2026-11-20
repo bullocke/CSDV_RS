@@ -198,7 +198,7 @@ def candidates_cmd(units: str | None, **where) -> None:
         frame = run.candidates(unit_id)
         big = frame[frame["area_ha"] >= run.cfg.candidates.min_ha]
         row = {"unit": unit_id, "below_min": int(len(frame) - len(big))}
-        for source in ("di", "weak", "chm"):
+        for source in ("di", "weak", "chm", "model"):
             part = big[big["source"] == source]
             row[f"{source}_n"] = len(part)
             row[f"{source}_ha"] = round(float(part["area_ha"].sum()), 1)

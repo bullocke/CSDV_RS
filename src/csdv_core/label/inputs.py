@@ -87,6 +87,18 @@ class UnitInputs:
             (self.layers_root / rel).is_file() for rel in LAYER_FILES.values()
         )
 
+    @property
+    def model_map(self) -> Path | None:
+        """The pair model's map of the unit on forest, when the run has one.
+
+        ``csdv grid queue --checkpoint`` writes it to ``<run>/model/`` and the
+        export copies it beside the cell layers.
+        """
+        if self.layers_root is None:
+            return None
+        path = self.layers_root / "model" / f"prob_forest_{self.unit}.tif"
+        return path if path.is_file() else None
+
     def layer(self, name: str) -> np.ndarray:
         """A cell layer as ``(years, rows, cols)``.
 

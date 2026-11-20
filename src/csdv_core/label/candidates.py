@@ -9,11 +9,20 @@ cells whose disturbance probability is raised but which were not detected.
 drop in canopy cover, which catches loss the detection normalises away (a
 fire that affects a whole neighbourhood). Each candidate is later judged by
 the vision models, so false ones cost a call and nothing else.
+
+A unit whose run holds a map of the pair model gets a fourth source.
+``model`` objects are connected map cells the model gives a raised loss
+probability that no candidate of the interval touches: loss the canopy
+height missed, and the model's false alarms, which become judged negatives.
+Every candidate then also carries ``model_share``, the share of it that the
+model flags, so that a sample can favour the places where the model and
+the detection disagree.
 """
 
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
@@ -37,6 +46,7 @@ CANDIDATE_COLUMNS = [
     "object_id",
     "geom_src",
     "mean_prob",
+    "model_share",
     "geometry",
 ]
 _EIGHT = np.ones((3, 3), dtype=bool)
@@ -46,6 +56,8 @@ __all__ = [
     "cell_objects",
     "di_candidates",
     "detected_cells",
+    "model_candidates",
+    "model_shares",
     "other_candidates",
     "unit_candidates",
     "window_candidates",
@@ -198,18 +210,229 @@ def other_candidates(unit: UnitInputs, cfg: LabelCandidates) -> gpd.GeoDataFrame
     return gpd.GeoDataFrame(rows, columns=CANDIDATE_COLUMNS, crs=unit.grid.crs)
 
 
+def _read_model_map(unit: UnitInputs, path: Path):
+    """The model map: percent ``(intervals, rows, cols)`` and its transform.
+
+    Raises:
+        ValueError: If the map's CRS or number of bands is not the unit's.
+    """
+    import rasterio
+
+    with rasterio.open(path) as src:
+        prob = src.read()
+        transform = src.transform
+        epsg = src.crs.to_epsg()
+    if epsg != unit.epsg:
+        raise ValueError(f"{path}: EPSG {epsg}, the unit has {unit.epsg}")
+    if prob.shape[0] != len(unit.intervals):
+        raise ValueError(
+            f"{path}: {prob.shape[0]} bands for the unit's "
+            f"{len(unit.intervals)} intervals"
+        )
+    return prob, transform
+
+
+def _on_map(geoms, shape: tuple[int, int], transform) -> np.ndarray:
+    from rasterio.features import rasterize
+
+    geoms = [g for g in geoms if g is not None and not g.is_empty]
+    if not geoms:
+        return np.zeros(shape, dtype=bool)
+    return rasterize(
+        ((g, 1) for g in geoms),
+        out_shape=shape,
+        transform=transform,
+        fill=0,
+        all_touched=True,
+        dtype="uint8",
+    ).astype(bool)
+
+
+def _split_large(poly, split_ha: float, step_m: float) -> list:
+    """Cut a polygon above ``split_ha`` along lattice lines every ``step_m``."""
+    if poly.area / 1e4 <= split_ha:
+        return [poly]
+    x0, y0, x1, y1 = poly.bounds
+    parts = []
+    for ix in range(int(np.floor(x0 / step_m)), int(np.ceil(x1 / step_m))):
+        for iy in range(int(np.floor(y0 / step_m)), int(np.ceil(y1 / step_m))):
+            tile = box(ix * step_m, iy * step_m, (ix + 1) * step_m, (iy + 1) * step_m)
+            part = poly.intersection(tile)
+            if not part.is_empty:
+                parts.append(part)
+    return parts
+
+
+def model_candidates(
+    unit: UnitInputs,
+    cfg: LabelCandidates,
+    others: gpd.GeoDataFrame,
+    path: Path | None = None,
+) -> gpd.GeoDataFrame:
+    """Objects of the pair model's map that no other candidate touches.
+
+    A map cell (9.6 m) joins an object when the model's loss probability on
+    forest is at least ``cfg.model_prob`` and no candidate of the same
+    interval lies within ``cfg.model_buffer_cells`` cells. Connected cells
+    of at least the minimum size form one object, and an object above
+    ``cfg.model_split_ha`` is cut into parts. ``mean_prob`` is the model's
+    mean probability over the object, not the detection's.
+
+    Args:
+        unit: The unit.
+        cfg: Candidate thresholds.
+        others: The unit's candidates of the other sources.
+        path: The map. Default: ``unit.model_map``.
+
+    Returns:
+        The model objects, empty when the unit has no map.
+    """
+    from rasterio.features import shapes
+
+    path = path or unit.model_map
+    empty = gpd.GeoDataFrame([], columns=CANDIDATE_COLUMNS, crs=unit.grid.crs)
+    if path is None:
+        return empty
+    prob, transform = _read_model_map(unit, path)
+    cell_ha = abs(transform.a * transform.e) / 1e4
+    min_cells = int(np.ceil(cfg.min_ha / cell_ha - 1e-9))
+    rows = []
+    for k, interval in enumerate(unit.intervals):
+        band = prob[k]
+        taken = _on_map(
+            others.loc[others["interval"] == interval, "geometry"],
+            band.shape,
+            transform,
+        )
+        if cfg.model_buffer_cells:
+            taken = ndi.binary_dilation(
+                taken, structure=_EIGHT, iterations=cfg.model_buffer_cells
+            )
+        mask = (band != 255) & (band >= round(cfg.model_prob * 100)) & ~taken
+        labels, n = ndi.label(mask, structure=_EIGHT)
+        if n == 0:
+            continue
+        sizes = np.bincount(labels.ravel(), minlength=n + 1)
+        keep = np.flatnonzero(sizes >= min_cells)
+        keep = keep[keep > 0]
+        if not len(keep):
+            continue
+        kept = np.where(np.isin(labels, keep), labels, 0).astype("int32")
+        groups: dict[int, list] = {}
+        for geom, value in shapes(
+            kept, mask=kept > 0, connectivity=8, transform=transform
+        ):
+            groups.setdefault(int(value), []).append(shape(geom))
+        year = unit.years[k + 1]
+        n_out = 0
+        for value, polys in sorted(groups.items()):
+            whole = unary_union(polys).buffer(0)
+            mean = float(band[labels == value].mean()) / 100.0
+            for part in _split_large(whole, cfg.model_split_ha, cfg.model_split_m):
+                if part.area / 1e4 < cfg.min_ha:
+                    continue
+                n_out += 1
+                rows.append(
+                    {
+                        "cand_id": f"{unit.unit}-model-{year}-{n_out}",
+                        "unit": unit.unit,
+                        "source": "model",
+                        "interval": interval,
+                        "area_ha": part.area / 1e4,
+                        "object_id": -1,
+                        "geom_src": "cells",
+                        "mean_prob": mean,
+                        "model_share": 1.0,
+                        "geometry": part,
+                    }
+                )
+    return gpd.GeoDataFrame(rows, columns=CANDIDATE_COLUMNS, crs=unit.grid.crs)
+
+
+def model_shares(
+    unit: UnitInputs,
+    cfg: LabelCandidates,
+    candidates: gpd.GeoDataFrame,
+    path: Path | None = None,
+) -> np.ndarray:
+    """Share of each candidate that the pair model flags.
+
+    The share is taken of the candidate's map cells at or above
+    ``cfg.model_flag_prob``, in the candidate's interval and in the ones
+    beside it, and the largest of the three counts. The neighbours are
+    allowed because the model, like the vision models, often dates a loss
+    one image from where the canopy height does. On the round-1 units a
+    candidate the holdout model flagged by half or more was loss in 92% of
+    cases, and one it flagged by under a tenth in 55%.
+
+    Returns:
+        One value per candidate, NaN where the unit has no map or the
+        candidate lies off it.
+    """
+    from rasterio.features import geometry_mask
+    from rasterio.windows import Window, from_bounds
+    from rasterio.windows import transform as window_transform
+
+    path = path or unit.model_map
+    out = np.full(len(candidates), np.nan)
+    if path is None or not len(candidates):
+        return out
+    prob, transform = _read_model_map(unit, path)
+    n_bands, height, width = prob.shape
+    cut = round(cfg.model_flag_prob * 100)
+    whole = Window(0, 0, width, height)
+    for i, (interval, geom) in enumerate(
+        zip(candidates["interval"], candidates.geometry, strict=True)
+    ):
+        if interval not in unit.intervals or geom is None or geom.is_empty:
+            continue
+        window = from_bounds(*geom.bounds, transform=transform)
+        window = window.round_offsets().round_lengths().intersection(whole)
+        if window.width < 1 or window.height < 1:
+            continue
+        rows = slice(int(window.row_off), int(window.row_off + window.height))
+        cols = slice(int(window.col_off), int(window.col_off + window.width))
+        inside = geometry_mask(
+            [geom],
+            out_shape=(rows.stop - rows.start, cols.stop - cols.start),
+            transform=window_transform(window, transform),
+            invert=True,
+            all_touched=True,
+        )
+        k = unit.intervals.index(interval)
+        best = np.nan
+        for band in (k - 1, k, k + 1):
+            if not 0 <= band < n_bands:
+                continue
+            values = prob[band][rows, cols]
+            valid = inside & (values != 255)
+            if valid.any():
+                share = float((values[valid] >= cut).mean())
+                best = share if np.isnan(best) else max(best, share)
+        out[i] = best
+    return out
+
+
 def unit_candidates(unit: UnitInputs, cfg: LabelCandidates) -> gpd.GeoDataFrame:
-    """All candidates of a unit: detected, weak and CHM-loss objects.
+    """All candidates of a unit: detected, weak, CHM-loss and model objects.
 
     Without the cell layers on this machine only the detected objects are
-    returned, with a warning.
+    returned, with a warning. Model objects and ``model_share`` need the
+    pair model's map of the unit. Without it ``model_share`` is NaN.
     """
     parts = [di_candidates(unit)]
     if unit.has_layers:
         parts.append(other_candidates(unit, cfg))
     else:
         logger.warning("%s: no cell layers, detected objects only", unit.unit)
-    out = pd.concat(parts, ignore_index=True)[CANDIDATE_COLUMNS]
+    out = pd.concat(parts, ignore_index=True)
+    out = gpd.GeoDataFrame(out, geometry="geometry", crs=unit.grid.crs)
+    out["model_share"] = model_shares(unit, cfg, out)
+    if unit.model_map is not None:
+        found = model_candidates(unit, cfg, out)
+        if len(found):
+            out = pd.concat([out, found], ignore_index=True)
+    out = out[CANDIDATE_COLUMNS]
     return gpd.GeoDataFrame(out, geometry="geometry", crs=unit.grid.crs)
 
 

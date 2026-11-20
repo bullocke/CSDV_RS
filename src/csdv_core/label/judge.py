@@ -212,8 +212,14 @@ def route_candidates(
         flagged = unit.intervals.index(row.interval)
         pair = verdicts.get(row.cand_id, {})
         if row.judged and all(m in pair for m in models):
+            # Only the pair model flagged a `model` candidate, so no height
+            # loss stands against a joint "no loss" in its interval.
+            free = row.source == "model" and cfg.routing.model_rejected == "background"
             routed[row.cand_id] = route(
-                pair[models[0]], pair[models[1]], flagged, cfg.routing
+                pair[models[0]],
+                pair[models[1]],
+                None if free else flagged,
+                cfg.routing,
             )
         else:
             small = row.area_ha < cfg.candidates.min_ha

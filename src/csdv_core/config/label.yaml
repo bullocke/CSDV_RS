@@ -25,6 +25,22 @@ candidates:
   # cover falls by at least this much. Cells that only flicker around the
   # forest threshold do not start a candidate.
   chm_loss_min_drop: 0.2
+  # The pair model's map as a fourth source (`model`), used where a unit's
+  # run holds one (model/prob_forest_<unit>.tif). A map cell joins a model
+  # object when its loss probability on forest is at least this value.
+  model_prob: 0.2
+  # Probability from which a map cell counts as flagged when the share of a
+  # candidate that the model flags is measured (`model_share`).
+  model_flag_prob: 0.5
+  # Map cells (9.6 m) around the candidates of an interval that never start
+  # a model object, so that the model's version of a candidate's edge does
+  # not become a candidate of its own.
+  model_buffer_cells: 2
+  # A model object larger than `model_split_ha` is cut along lattice lines
+  # every `model_split_m` (two chips). On an off-season image the model can
+  # flag a whole hillside, and one object would be seen through one window.
+  model_split_ha: 20.0
+  model_split_m: 614.4
 
 views:
   # Standard view edge (640 px at 0.6 m).
@@ -85,6 +101,15 @@ routing:
   # stops reading defoliation as loss (98 candidate dates in the scale
   # test, in Rhode Island 2016, New Jersey 2017 and the Adirondacks 2021).
   stressed_recovered: ignore
+  # What a `model` candidate becomes in its own interval when both vision
+  # models report no loss. The other sources stay unlabelled there
+  # (`guard_flagged_interval`), because the canopy height saw a loss that
+  # the models may have missed. A model object has no such evidence behind
+  # it: only the pair model flagged it. "background" labels it like any
+  # other interval the models call intact, which is what makes the pair
+  # model's false alarms into negatives it can learn from. "ignore" treats
+  # it like the other sources.
+  model_rejected: background
 
 outlines:
   # Types whose edges are sharp enough to trust a model polygon as a label.

@@ -261,6 +261,12 @@ def window_parts(
     if listed is not None:
         near["judged"] &= near["cand_id"].isin(listed.get(window.window_id, set()))
     near["clipped"] = near["visible_ha"] < 0.98 * near["area_ha"]
+    # A `model` candidate is a place to ask about, not evidence. Where it is
+    # not judged it leaves the labels as they would be without the model's
+    # map: no unlabelled patch, no ring. Otherwise the stable forest that
+    # the model flags on an off-season image, which is the ground most
+    # wanted as background, would all be left out.
+    near = near[(near["source"] != "model") | near["judged"]].reset_index(drop=True)
     return WindowParts(unit, window, near, stack)
 
 
