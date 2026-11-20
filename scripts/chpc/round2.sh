@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+# Round 2 of the training labels: one command per CHPC session. Run on a
+# login node after `git pull` and `source scripts/chpc/env.sh`.
+#
+# Usage:
+#   scripts/chpc/round2.sh pilot  [--cap 3]  [--dry-run]
+#   scripts/chpc/round2.sh grid              [--dry-run]
+#   scripts/chpc/round2.sh stage1 [--cap 16] [--dry-run]
+#   scripts/chpc/round2.sh stage2  --cap 76  [--dry-run]
+#   scripts/chpc/round2.sh status [pilot]
+#
+# pilot   The whole chain on the few boxes of config/grid/round2_pilot.csv:
+#         downloads, GPU workers on every pool of $CSDV_GPU_POOLS, detection
+#         and the model map, candidates, the sample, rendering, the calls
+#         (cap $3, own label folder round2_pilot), labels and sheets. One
+#         submission, then scripts/chpc/round2_pull.sh pilot on the laptop.
+# grid    The same for the boxes of config/grid/round2.csv, up to the
+#         rendered request images of stage 1. No paid call. Give it again
+#         when `status` shows unit-years or units left: it submits only
+#         what is missing.
+# stage1  The calls, polygons, labels and sheets of stage 1.
+# stage2  Reads config/label/round2/stage2_plan.csv (written after the
+#         stage-1 check-in, pulled with git), gives those windows to stage
+#         2, then renders, calls and builds. The cap is cumulative.
+# status  Where every box stands (read from disk), what is queued, what the
+#         label run has spent.
+#
+# Settings, all in scripts/chpc/env.sh: CSDV_SBATCH_CPU, CSDV_GPU_POOLS,
+# CSDV_KEYS_FILE. CSDV_ROUND2_CHECKPOINT names the pair model that maps
+# every box (default: first_look_blocks2).
+#
+# What to look for is printed by each command. Every paid step has a cap
+# on the whole label run, refuses to start when its forecast passes the
+# cap, and stops the chain behind it when calls fail.
+
+set -euo pipefail
+
+STEP="${1:-}"
+[[ -n "$STEP" ]] && shift
+CAP="" DRY=() WHICH=""
+while (($#)); do
+    case "$1" in
+        --cap) CAP="${2:?--cap needs a value}"; shift 2 ;;
+        --dry-run) DRY=(--dry-run); shift ;;
+        pilot) WHICH="pilot"; shift ;;
+        *) echo "Unknown argument: $1" >&2; exit 2 ;;
+    esac
+done
+
+: "${CSDV_REPO:?source scripts/chpc/env.sh first}"
+: "${CSDV_SBATCH_CPU:?CSDV_SBATCH_CPU is not set in scripts/chpc/env.sh}"
+cd "$CSDV_REPO"
+mkdir -p "$CSDV_LOG_DIR"
+CKPT="${CSDV_ROUND2_CHECKPOINT:-$CSDV_RESULTS_ROOT/pairmodel/first_look_blocks2/best.pt}"
+SLURM="$CSDV_REPO/scripts/slurm"
+LOG="--output=$CSDV_LOG_DIR/%x-%j.out"
+
+# args_of FILE: the options kept in a tracked one-line file, or nothing.
+args_of() { [[ -f "$1" ]] && grep -v '^#' "$1" | tr '\n' ' ' || true; }
+
+# queue NAME: send the batch through the grid queue and print the job that
+# everything chained behind it waits for (empty when nothing was submitted).
+queue() {
+    local name="$1"
+    [[ -f "$CKPT" ]] || { echo "ERROR: no checkpoint at $CKPT" >&2; exit 1; }
+    csdv grid queue --batch "config/grid/$name.csv" --name "$name" \
+        --checkpoint "$CKPT" --priority-intervals "config/label/$name/sites.csv" \
+        ${DRY[@]+"${DRY[@]}"} >&2
+    local last="$CSDV_GRID_DIR/queues/$name/last_finish_job.txt"
+    [[ -f "$last" ]] && cat "$last" || true
+}
+
+# prepare NAME THEN [sheets options]: candidates, sample and the chain behind.
+prepare() {
+    local name="$1" then="$2" sheets="${3:-}" after="$4"
+    local cmd=(sbatch --parsable)
+    [[ -n "$after" ]] && cmd+=("--dependency=afterany:$after")
+    # shellcheck disable=SC2206
+    cmd+=($CSDV_SBATCH_CPU "$LOG" "$SLURM/run_label_prepare.sbatch"
+        "$CSDV_EXPORT_DIR/label/$name" "$CSDV_REPO/config/label/$name" --then "$then")
+    [[ -n "$sheets" ]] && cmd+=(--then-sheets "$sheets")
+    # shellcheck disable=SC2207
+    cmd+=($(args_of "config/label/$name/sample.args"))
+    echo "${cmd[*]}"
+    if ((${#DRY[@]})); then
+        echo "Dry run: the label run is not prepared."
+    else
+        echo "prepare job: $("${cmd[@]}")"
+    fi
+}
+
+case "$STEP" in
+    pilot)
+        CAP="${CAP:-3}"
+        AFTER=$(queue round2_pilot)
+        prepare round2_pilot "--stage 1 --cap $CAP" "--stage 1 --max-pairs 2" "$AFTER"
+        # Boxes cut inside a quad that is already processed: their canopy
+        # heights against the quad's, by distance from the box's edge. The
+        # pairs are the rows of sites.csv with a quad in the column `against`.
+        python3 - "config/label/round2_pilot/sites.csv" <<'PY' | while read -r BOX QUAD; do
+import csv, sys
+rows = [l for l in open(sys.argv[1], encoding="utf-8") if not l.lstrip().startswith("#")]
+for row in csv.DictReader(rows):
+    if (row.get("against") or "").strip():
+        print(row["unit"].strip(), row["against"].strip())
+PY
+            CMD=(sbatch --parsable)
+            [[ -n "$AFTER" ]] && CMD+=("--dependency=afterany:$AFTER")
+            # shellcheck disable=SC2206
+            CMD+=($CSDV_SBATCH_CPU "$LOG" "$SLURM/run_csdv_cpu.sbatch" grid compare-units
+                --unit "$BOX" --against "$QUAD"
+                --out-dir "$CSDV_EXPORT_DIR/checks/round2_pilot")
+            echo "${CMD[*]}"
+            ((${#DRY[@]})) || echo "compare job: $("${CMD[@]}")"
+        done
+        cat <<MSG
+
+Pilot submitted. When \`squeue -u \$USER\` is empty:
+  scripts/chpc/round2.sh status pilot      # every box exported, spent under \$$CAP
+Then on the laptop: scripts/chpc/round2_pull.sh pilot
+MSG
+        ;;
+    grid)
+        AFTER=$(queue round2)
+        prepare round2 render "" "$AFTER"
+        cat <<MSG
+
+Batch submitted. No paid call is in this chain. In the morning:
+  scripts/chpc/round2.sh status            # boxes exported, unit-years left
+  scripts/chpc/round2.sh grid              # again, if anything is left
+Then on the laptop: scripts/chpc/round2_pull.sh grid
+MSG
+        ;;
+    stage1)
+        CAP="${CAP:-16}"
+        scripts/chpc/submit_label_chain.sh "$CSDV_EXPORT_DIR/label/round2" \
+            --stage 1 --cap "$CAP" --sheets "--stage 1 --max-pairs 1" ${DRY[@]+"${DRY[@]}"}
+        echo
+        echo "Afterwards on the laptop: scripts/chpc/round2_pull.sh stage1"
+        ;;
+    stage2)
+        : "${CAP:?stage2 needs --cap, the cumulative cap of the label run (76 in the plan)}"
+        LABEL="$CSDV_EXPORT_DIR/label/round2"
+        PLAN="config/label/round2/stage2_plan.csv"
+        [[ -f "$PLAN" ]] || { echo "ERROR: no $PLAN. git pull after the stage-1 check-in." >&2; exit 1; }
+        WHERE=(--label-dir "$LABEL" --runs-dir "$CSDV_RESULTS_ROOT/disturbance"
+            --run-subdir default --run-tag default)
+        [[ -f "$LABEL/config.yaml" ]] && WHERE+=(--config "$LABEL/config.yaml")
+        csdv label allocate "${WHERE[@]}" --plan "$PLAN" --stage 2 ${DRY[@]+"${DRY[@]}"}
+        scripts/chpc/submit_label_chain.sh "$LABEL" --stage 2 --cap "$CAP" \
+            --build-stages 1,2 --sheets "--stage 2 --max-pairs 1" ${DRY[@]+"${DRY[@]}"}
+        echo
+        echo "Afterwards on the laptop: scripts/chpc/round2_pull.sh final"
+        ;;
+    status)
+        NAME="round2${WHICH:+_$WHICH}"
+        LABEL="$CSDV_EXPORT_DIR/label/$NAME"
+        echo "== Boxes of $NAME that are not exported yet"
+        csdv grid queue-status --name "$NAME" --problems || true
+        # The whole table, where round2_pull.sh finds it.
+        mkdir -p "$CSDV_EXPORT_DIR/checks/$NAME"
+        csdv grid queue-status --name "$NAME" \
+            >"$CSDV_EXPORT_DIR/checks/$NAME/queue_status.txt" 2>&1 || true
+        echo
+        echo "== Your jobs in the queue: $(squeue -h -u "$USER" | wc -l)"
+        squeue -h -u "$USER" -o "%.12i %.24j %.9T %.10M %R" | sort -k2 | uniq -c -f1 | head -20 || true
+        echo
+        echo "== Label run $LABEL"
+        if [[ -f "$LABEL/windows.csv" ]]; then
+            python - "$LABEL" <<'PY'
+import json, sys
+from pathlib import Path
+
+import pandas as pd
+
+root = Path(sys.argv[1])
+windows = pd.read_csv(root / "windows.csv")
+print(f"windows by stage: {windows['stage'].value_counts().sort_index().to_dict()}")
+done = sorted(p.stem for p in (root / "render_done").glob("*.json")) if (root / "render_done").is_dir() else []
+print(f"render markers: {len(done)}")
+spent, calls = 0.0, 0
+ledger = root / "ledger.jsonl"
+if ledger.exists():
+    for line in ledger.read_text().splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        spent += row.get("cost", 0.0)
+        calls += 1
+print(f"calls: {calls}, spent: ${spent:.2f}")
+labels = root / "labels" / "labels.gpkg"
+print(f"labels built: {labels.exists()}, sheets: {len(list((root / 'sheets').glob('*.png'))) if (root / 'sheets').is_dir() else 0}")
+PY
+        else
+            echo "not prepared yet (no windows.csv)"
+        fi
+        ;;
+    *)
+        sed -n '2,31p' "$0"
+        exit 2
+        ;;
+esac

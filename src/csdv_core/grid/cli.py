@@ -426,6 +426,59 @@ def sync_unit(
     click.echo(",".join(map(str, years)))
 
 
+@grid.command("compare-units")
+@click.option("--unit", "unit_id", required=True, help="The unit to check (a box).")
+@click.option("--against", "against_id", required=True, help="The unit around it.")
+@click.option(
+    "--out-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Folder for chm_<unit>_vs_<against>.csv. Default: print only.",
+)
+@click.option(
+    "--accept-rmse-m",
+    default=0.05,
+    show_default=True,
+    type=float,
+    help="Largest RMSE, away from the edge, at which the two count as equal.",
+)
+def compare_units_cmd(
+    unit_id: str, against_id: str, out_dir: Path | None, accept_rmse_m: float
+) -> None:
+    """Compare the canopy heights of a unit with those of a unit around it.
+
+    For a box cut inside a quad: the difference by distance from the box's
+    edge, for every year both have. Away from the edge the two should be
+    equal, because the model reads every mosaic in chips on one lattice.
+    Needs the 0.6 m CHMs, so it runs on CHPC.
+    """
+    import pandas as pd
+
+    from csdv_core.grid.compare import compare_units, write_comparison
+    from csdv_core.grid.units import grid_paths
+
+    _setup_logging()
+    try:
+        rows = compare_units(grid_paths(), unit_id, against_id)
+    except (FileNotFoundError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    table = pd.DataFrame([vars(r) for r in rows])
+    with pd.option_context("display.width", 200, "display.max_rows", 200):
+        click.echo(table.drop(columns=["unit", "against"]).to_string(index=False))
+    inner = table[table["band"].str.endswith("and more")]
+    same = inner[inner["date_unit"] == inner["date_against"]]
+    worst = float(same["rmse_m"].max()) if len(same) else float("nan")
+    verdict = "equal" if worst <= accept_rmse_m else "NOT equal"
+    click.echo(
+        f"{unit_id} against {against_id}: {len(same)} of {len(inner)} years on the "
+        f"same flight. Largest RMSE away from the edge: {worst:.3f} m ({verdict} "
+        f"at {accept_rmse_m} m)."
+    )
+    if out_dir is not None:
+        path = write_comparison(rows, out_dir / f"chm_{unit_id}_vs_{against_id}.csv")
+        click.echo(f"Wrote {path}")
+
+
 @grid.command("status")
 @click.option("--run-tag", default=None, help="Only this run tag.")
 @click.option(

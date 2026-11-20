@@ -388,6 +388,12 @@ def submit_queue(paths: GridPaths, units: list[Unit], opts: QueueOptions) -> Que
         (folder / "workers.txt").write_text(
             "\n".join(ids["worker"]) + "\n", encoding="utf-8"
         )
+    # What a caller chains behind the queue waits for this job.
+    last = folder / "last_finish_job.txt"
+    if ids.get("finish"):
+        last.write_text(ids["finish"][-1] + "\n", encoding="utf-8")
+    elif last.exists():
+        last.unlink()
     record = folder / "submissions.csv"
     new = not record.exists()
     with record.open("a", encoding="utf-8") as fh:

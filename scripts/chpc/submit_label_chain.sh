@@ -22,6 +22,11 @@
 #   --no-polygons   Leave out the polygon pass (labels use the candidate
 #                   outlines, with an unlabelled ring where a model doubts them).
 #   --no-build      Stop after the calls.
+#   --render-only   Render the request images of the stage and stop. No
+#                   call is made and --cap is not needed.
+#   --sheets ARGS   After the build, draw review sheets with these
+#                   `csdv label sheets` options (quoted, e.g. "--stage 1
+#                   --max-pairs 1").
 #   --throttle K    Render tasks running at one time (default 20).
 #   --dry-run       Print the sbatch commands, submit nothing.
 #
@@ -42,9 +47,10 @@
 
 set -euo pipefail
 
-usage() { sed -n '2,39p' "$0"; }
+usage() { sed -n '2,44p' "$0"; }
 
 STAGE="" CAP="" BUILD_STAGES="" AFTER="" POLYGONS=1 BUILD=1 THROTTLE=20 DRY=0
+RENDER_ONLY=0 SHEETS=""
 POS=()
 while (($#)); do
     case "$1" in
@@ -54,6 +60,8 @@ while (($#)); do
         --after) AFTER="${2:?--after needs a job ID}"; shift 2 ;;
         --no-polygons) POLYGONS=0; shift ;;
         --no-build) BUILD=0; shift ;;
+        --render-only) RENDER_ONLY=1; shift ;;
+        --sheets) SHEETS="${2:?--sheets needs the options of csdv label sheets}"; shift 2 ;;
         --throttle) THROTTLE="${2:?--throttle needs a number}"; shift 2 ;;
         --dry-run) DRY=1; shift ;;
         -h | --help) usage; exit 0 ;;
@@ -62,16 +70,18 @@ while (($#)); do
 done
 LABEL="${POS[0]:?$(usage)}"
 : "${STAGE:?--stage is required}"
-: "${CAP:?--cap is required}"
 BUILD_STAGES="${BUILD_STAGES:-$STAGE}"
 
 : "${CSDV_REPO:?source scripts/chpc/env.sh first}"
 : "${CSDV_SBATCH_CPU:?CSDV_SBATCH_CPU is not set in scripts/chpc/env.sh}"
-: "${CSDV_KEYS_FILE:?CSDV_KEYS_FILE is not set in scripts/chpc/env.sh}"
 for needed in windows.csv units.csv; do
     [[ -f "$LABEL/$needed" ]] || { echo "ERROR: $LABEL has no $needed." >&2; exit 1; }
 done
-[[ -f "$CSDV_KEYS_FILE" ]] || { echo "ERROR: no key file at $CSDV_KEYS_FILE." >&2; exit 1; }
+if ((!RENDER_ONLY)); then
+    : "${CAP:?--cap is required}"
+    : "${CSDV_KEYS_FILE:?CSDV_KEYS_FILE is not set in scripts/chpc/env.sh}"
+    [[ -f "$CSDV_KEYS_FILE" ]] || { echo "ERROR: no key file at $CSDV_KEYS_FILE." >&2; exit 1; }
+fi
 mkdir -p "$CSDV_LOG_DIR"
 
 N=$(($(wc -l <"$LABEL/units.csv") - 1))
@@ -103,12 +113,17 @@ submit() {
 }
 
 IDS=()
-echo "Label run $LABEL: $N units, stage $STAGE, cap \$$CAP, build stages $BUILD_STAGES"
+echo "Label run $LABEL: $N units, stage $STAGE, cap \$${CAP:-none}, build stages $BUILD_STAGES"
 
 # shellcheck disable=SC2086
 submit "${AFTER:+afterok:$AFTER}" $CSDV_SBATCH_CPU $ARRAY "$LOG_ARRAY" \
     "$SLURM/run_label_render.sbatch" "$LABEL" --stage "$STAGE"
 RENDER=$JOB
+if ((RENDER_ONLY)); then
+    echo
+    ((DRY)) && echo "Dry run: nothing was submitted." || echo "Submitted the render array $JOB. No call is made."
+    exit 0
+fi
 submit "afterany:$RENDER,singleton" "$LOG" \
     "$SLURM/run_label_verdict.sbatch" "$LABEL" --stage "$STAGE" --cap "$CAP"
 submit "afterany:$JOB,singleton" "$LOG" \
@@ -128,6 +143,11 @@ if ((BUILD)); then
     # shellcheck disable=SC2086
     submit "afterok:$LAST" $CSDV_SBATCH_CPU "$LOG" \
         "$SLURM/run_label_build.sbatch" "$LABEL" --stage "$BUILD_STAGES"
+    if [[ -n "$SHEETS" ]]; then
+        # shellcheck disable=SC2086
+        submit "afterok:$JOB" $CSDV_SBATCH_CPU "$LOG" \
+            "$SLURM/run_label_sheets.sbatch" "$LABEL" $SHEETS
+    fi
 fi
 
 LIST=$(IFS=,; echo "${IDS[*]}")

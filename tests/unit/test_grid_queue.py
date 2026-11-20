@@ -262,3 +262,65 @@ def test_export_copies_the_layers_and_the_model_map(env) -> None:
         "model/prob_forest_u.tif",
         "model/prob_u.tif",
     ]
+
+
+def test_a_box_is_compared_with_its_quad_by_distance_from_its_edge(env) -> None:
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+
+    from csdv_core.grid.compare import compare_units
+
+    paths, _ = env
+    rng = np.random.default_rng(0)
+    quad = rng.uniform(0, 30, (1500, 1500)).astype("float32")
+    # The box is the quad's pixels 200 to 1200 (600 m on a side). Its outer
+    # 60 m (100 pixels) are 1 m higher, as an edge effect would be, and a
+    # block away from the edge has no height in the box.
+    box = quad[200:1200, 200:1200].copy()
+    edge = np.ones(box.shape, dtype=bool)
+    edge[100:-100, 100:-100] = False
+    box[edge] += 1.0
+    box[500:520, 500:520] = np.nan
+
+    def write(unit: str, year: int, date: str, data, x0: float, y1: float) -> None:
+        folder = paths.chm_year_dir(unit, year)
+        folder.mkdir(parents=True)
+        with rasterio.open(
+            folder / f"NAIP_{unit}_{date}_0p6m_chm.tif",
+            "w",
+            driver="GTiff",
+            height=data.shape[0],
+            width=data.shape[1],
+            count=1,
+            dtype="float32",
+            crs="EPSG:26917",
+            transform=from_origin(x0, y1, 0.6, 0.6),
+            nodata=float("nan"),
+        ) as dst:
+            dst.write(data, 1)
+
+    for year, date in ((2018, "20180801"), (2021, "20210715")):
+        write("q1", year, date, quad, 300000.0, 4500000.0)
+        write("p_box", year, date, box, 300000.0 + 120.0, 4500000.0 - 120.0)
+    # A year the quad was flown on another day, and one only the quad has.
+    write("q1", 2023, "20230601", quad, 300000.0, 4500000.0)
+    write("p_box", 2023, "20230905", box, 300120.0, 4499880.0)
+    write("q1", 2016, "20160801", quad, 300000.0, 4500000.0)
+
+    rows = compare_units(paths, "p_box", "q1", edges_m=(30.0, 60.0, 120.0))
+    assert sorted({r.year for r in rows}) == [2018, 2021, 2023]
+    by_band = {r.band: r for r in rows if r.year == 2018}
+    assert list(by_band) == ["0-30 m", "30-60 m", "60-120 m", "120 m and more"]
+    assert by_band["0-30 m"].rmse_m == pytest.approx(1.0, abs=1e-4)
+    assert by_band["30-60 m"].mean_m == pytest.approx(1.0, abs=1e-4)
+    assert by_band["60-120 m"].rmse_m == pytest.approx(0.0, abs=1e-6)
+    inner = by_band["120 m and more"]
+    assert inner.rmse_m == pytest.approx(0.0, abs=1e-6) and inner.share_over_half_m == 0
+    assert inner.pixels == 600 * 600 - 20 * 20
+    other_day = next(r for r in rows if r.year == 2023)
+    assert (
+        other_day.date_unit == "2023-09-05" and other_day.date_against == "2023-06-01"
+    )
+    with pytest.raises(FileNotFoundError):
+        compare_units(paths, "p_box", "p_box_missing")
