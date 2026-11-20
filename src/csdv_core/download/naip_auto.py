@@ -150,6 +150,59 @@ def plan_years(
     return YearsPlan(tuple(planned), skipped)
 
 
+def image_share(
+    path: Path | str, bbox_4326: tuple[float, float, float, float], max_px: int = 1024
+) -> float:
+    """Share of the box in which a mosaic holds imagery.
+
+    A catalogue lists a quad by its footprint, and the quad can still be
+    empty over the box (a flight the provider never finished). A pixel
+    counts as imagery when it is not zero in every band, as in
+    :func:`csdv_core.chm_inference.naip_gaps.naip_gap`.
+
+    Args:
+        path: The mosaic.
+        bbox_4326: ``(west, south, east, north)`` of the box.
+        max_px: Longest side of the reduced read.
+
+    Returns:
+        Share between 0 and 1. Ground of the box outside the mosaic counts
+        as without imagery.
+    """
+    import rasterio
+    from rasterio.enums import Resampling
+    from rasterio.warp import transform_bounds
+    from rasterio.windows import from_bounds
+
+    with rasterio.open(path) as src:
+        bounds = transform_bounds("EPSG:4326", src.crs, *bbox_4326, densify_pts=21)
+        window = from_bounds(*bounds, transform=src.transform)
+        scale = max(1.0, max(window.width, window.height) / max_px)
+        shape = (
+            src.count,
+            max(1, round(window.height / scale)),
+            max(1, round(window.width / scale)),
+        )
+        block = src.read(
+            window=window,
+            out_shape=shape,
+            boundless=True,
+            fill_value=0,
+            resampling=Resampling.nearest,
+        )
+    return float(block.any(axis=0).mean())
+
+
+def _discard(path: Path) -> None:
+    """Remove a mosaic, its sidecar and its year folder when that is empty."""
+    path.with_suffix(".provenance.json").unlink(missing_ok=True)
+    path.unlink(missing_ok=True)
+    try:
+        path.parent.rmdir()
+    except OSError:
+        pass
+
+
 def download_planned_years(
     bbox_4326: tuple[float, float, float, float],
     plan: YearsPlan,
@@ -158,8 +211,13 @@ def download_planned_years(
     out_root: Path | str,
     pad_m: float = 150.0,
     overwrite: bool = False,
+    min_image_share: float | None = None,
 ) -> tuple[list[Path], list[int]]:
     """Download every planned year from its source.
+
+    With ``min_image_share`` a mosaic that holds imagery over less of the
+    box than this share is removed and its year counts as failed, whether
+    the mosaic was written now or was on disk already.
 
     Returns:
         ``(written or existing GeoTIFFs, years that failed)``.
@@ -179,7 +237,7 @@ def download_planned_years(
             100 * year_plan.coverage,
         )
         try:
-            paths.append(
+            path = Path(
                 download(
                     bbox_4326,
                     site=site,
@@ -192,6 +250,26 @@ def download_planned_years(
         except ValueError as exc:
             logger.error("%d: %s", year_plan.year, exc)
             failed.append(year_plan.year)
+            continue
+        if min_image_share is not None:
+            share = image_share(path, bbox_4326)
+            logger.info(
+                "%d: imagery over %.0f%% of the box", year_plan.year, 100 * share
+            )
+            if share < min_image_share:
+                logger.error(
+                    "%d: the mosaic holds imagery over %.0f%% of the box "
+                    "(< %.0f%%), although the catalogue lists %.0f%%. Removed %s",
+                    year_plan.year,
+                    100 * share,
+                    100 * min_image_share,
+                    100 * year_plan.coverage,
+                    path.name,
+                )
+                _discard(path)
+                failed.append(year_plan.year)
+                continue
+        paths.append(path)
     return paths, failed
 
 
@@ -215,7 +293,8 @@ def download_planned_years(
     default=DEFAULT_MIN_COVERAGE,
     show_default=True,
     type=float,
-    help="Skip years whose quads cover less of the box than this share.",
+    help="Skip years whose quads cover less of the box than this share, and "
+    "drop a mosaic that holds imagery over less of the box than this.",
 )
 @click.option("--half-km", default=2.5, show_default=True, type=float)
 @click.option(
@@ -279,7 +358,13 @@ def cli(
         raise click.ClickException("No NAIP year to download over this box")
 
     paths, failed = download_planned_years(
-        bbox_4326, plan, site=site, out_root=out_root, pad_m=pad_m, overwrite=overwrite
+        bbox_4326,
+        plan,
+        site=site,
+        out_root=out_root,
+        pad_m=pad_m,
+        overwrite=overwrite,
+        min_image_share=min_coverage,
     )
     for path in paths:
         click.echo(str(path))

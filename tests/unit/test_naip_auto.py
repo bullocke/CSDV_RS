@@ -70,6 +70,7 @@ def _fake_sources(monkeypatch, calls):
 
     monkeypatch.setattr(naip_pc, "download_naip_year", fake("pc"))
     monkeypatch.setattr(naip_rest, "download_naip_rest_year", fake("rest"))
+    monkeypatch.setattr(naip_auto, "image_share", lambda path, bbox: 1.0)
 
 
 def test_cli_downloads_each_year_from_its_source(monkeypatch, tmp_path):
@@ -89,3 +90,63 @@ def test_cli_fails_when_a_named_year_is_unusable(monkeypatch, tmp_path):
     assert result.exit_code != 0
     assert "2023" in result.output
     assert calls == [("pc", 2021)]
+
+
+def _mosaic(path, filled_share: float):
+    """A four-band mosaic over BBOX whose western part holds imagery."""
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_bounds
+
+    west, south, east, north = BBOX
+    data = np.zeros((4, 200, 200), dtype="uint8")
+    data[:, :, : round(200 * filled_share)] = 90
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        width=200,
+        height=200,
+        count=4,
+        dtype="uint8",
+        crs="EPSG:4326",
+        transform=from_bounds(west, south, east, north, 200, 200),
+    ) as dst:
+        dst.write(data)
+    path.with_suffix(".provenance.json").write_text("{}")
+    return path
+
+
+def test_image_share_counts_pixels_that_hold_imagery(tmp_path):
+    path = _mosaic(tmp_path / "a.tif", 0.25)
+    assert naip_auto.image_share(path, BBOX) == pytest.approx(0.25, abs=0.01)
+    # Ground of the box outside the mosaic holds no imagery either.
+    west, south, east, north = BBOX
+    wider = (west, south, east + (east - west), north)
+    assert naip_auto.image_share(path, wider) == pytest.approx(0.125, abs=0.01)
+
+
+def test_a_mosaic_that_is_mostly_empty_is_removed_and_its_year_fails(
+    monkeypatch, tmp_path
+):
+    shares = {2021: 1.0, 2023: 0.17}
+
+    def download(bbox, *, site, year, out_root, pad_m, overwrite):
+        return _mosaic(out_root / site / str(year) / f"NAIP_{year}.tif", shares[year])
+
+    monkeypatch.setattr(naip_pc, "download_naip_year", download)
+    plan = plan_years({2021: 1.0, 2023: 1.0}, {})
+    paths, failed = naip_auto.download_planned_years(
+        BBOX, plan, site="t", out_root=tmp_path, min_image_share=0.9
+    )
+    assert [p.parent.name for p in paths] == ["2021"]
+    assert failed == [2023]
+    # Nothing is left for a CHM worker to take.
+    assert not (tmp_path / "t" / "2023").exists()
+    assert (tmp_path / "t" / "2021" / "NAIP_2021.provenance.json").exists()
+    # Without the threshold the catalogue's word is taken, as before.
+    paths, failed = naip_auto.download_planned_years(
+        BBOX, plan, site="t", out_root=tmp_path
+    )
+    assert len(paths) == 2 and failed == []
