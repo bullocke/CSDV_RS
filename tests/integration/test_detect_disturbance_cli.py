@@ -45,6 +45,10 @@ ORIGIN_X = 500_000.0
 ORIGIN_Y = 4_000_000.0
 #: Shift of the uint16 year, in pixels east and south.
 SHIFT_PX = 6
+#: Site name of the open woodland with a small block of forest.
+WOODLAND_SITE = "WOODLAND"
+#: Side (pixels) of that block: 10 x 10 cells of 2.4 m.
+WOODLAND_FOREST_PX = 40
 #: Clearcut rows and columns in reference pixels.
 CLEARCUT_ROWS = slice(100, 150)
 CLEARCUT_COLS = slice(90, 140)
@@ -192,12 +196,13 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     return {"data": data_root, "results": results_root, "config": config_path}
 
 
-def _detect(config_path: Path, *extra: str) -> object:
-    """Invoke ``csdv detect-disturbance`` on the synthetic site.
+def _detect(config_path: Path, *extra: str, site: str = SITE) -> object:
+    """Invoke ``csdv detect-disturbance`` on a synthetic site.
 
     Args:
         config_path: Overlay YAML.
         *extra: Further command-line options.
+        site: Site name.
 
     Returns:
         The Click result.
@@ -205,7 +210,7 @@ def _detect(config_path: Path, *extra: str) -> object:
     arguments = [
         "detect-disturbance",
         "--site",
-        SITE,
+        site,
         "--config",
         str(config_path),
         *GRID_OPTIONS,
@@ -342,6 +347,41 @@ def test_detect_disturbance_end_to_end(project: dict[str, Path]) -> None:
     assert figures.exit_code == 0, figures.output
     assert onset_png.is_file()
     assert (run_dir / "figures" / "refined_examples.png").is_file()
+
+
+def _write_woodland_site(data_root: Path) -> None:
+    """Write a site of open woodland with one small block of forest.
+
+    The woodland is a tenth of the synthetic canopy's height (about 2 m), so
+    its cells fail the forest rule. The block holds ``WOODLAND_FOREST_PX``
+    pixels a side at full height, fewer forest cells than any date needs
+    for its statistics.
+
+    Args:
+        data_root: Value of ``CSDV_DATA_ROOT``.
+    """
+    site_dir = data_root / "naip_chm" / WOODLAND_SITE
+    for year, year_heights in _canopy_years().items():
+        woodland = year_heights * 0.1
+        block = slice(0, WOODLAND_FOREST_PX)
+        woodland[block, block] = year_heights[block, block]
+        path = site_dir / str(year) / f"CHM_{WOODLAND_SITE}_{year}0612_0p6m.tif"
+        _write_chm(path, woodland, left=ORIGIN_X, top=ORIGIN_Y, nodata=-9999.0)
+
+
+def test_detect_disturbance_with_almost_no_forest(project: dict[str, Path]) -> None:
+    """A site with too little forest for any date ends with an empty map."""
+    _write_woodland_site(project["data"])
+    result = _detect(project["config"], site=WOODLAND_SITE)
+    assert result.exit_code == 0, result.output
+    run_dir = project["results"] / "disturbance" / WOODLAND_SITE
+    assert (run_dir / "summary.json").is_file()
+    onset_year, _ = _read_band(run_dir / "detection" / "onset_year.tif")
+    assert not (onset_year > 0).any()
+    with rasterio.open(run_dir / "layers" / "forest.tif") as dataset:
+        forest = dataset.read()
+    forest_cells = (forest == 1).reshape(forest.shape[0], -1).sum(axis=1)
+    assert 0 < forest_cells.max() < 200
 
 
 def test_from_run_rejects_changed_window(project: dict[str, Path]) -> None:

@@ -113,7 +113,10 @@ def standardize_date(
     (median/MAD and mean/SD). ``local`` uses
     :func:`csdv_core.change.di.local_z` on a :func:`window_cells` window.
     ``local_twopass`` repeats the local z after removing cells whose spatial
-    loss probability exceeds ``decide.p_boundary`` from the population.
+    loss probability exceeds ``decide.p_boundary`` from the population. A date
+    with fewer than ``decide.min_fit_cells`` population cells keeps its first
+    pass, because no null can be fitted to so few values. The decision stage
+    skips such a date by the same threshold.
 
     Args:
         values: float32 ``(rows, cols)`` change values, NaN = missing.
@@ -137,6 +140,14 @@ def standardize_date(
     sigmas_cells = sigmas_in_cells(params, cell_m)
     finite_first = np.isfinite(first_pass)
     support = population & finite_first
+    support_count = int(support.sum())
+    if support_count < params.decide.min_fit_cells:
+        logger.warning(
+            "Second pass skipped: %d population cells with a first-pass z < %d",
+            support_count,
+            params.decide.min_fit_cells,
+        )
+        return first_pass
     loss_probability = di_decide.spatial_prob(
         first_pass,
         support,

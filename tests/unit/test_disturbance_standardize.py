@@ -84,6 +84,24 @@ def test_twopass_lowers_z_on_planted_patch() -> None:
     assert twopass_patch_mean < single_patch_mean
 
 
+@pytest.mark.parametrize("forest_cells", [0, 150, 600])
+def test_twopass_keeps_first_pass_on_a_small_population(forest_cells: int) -> None:
+    """Too few population cells for a null: the date keeps its first pass.
+
+    150 cells are under the 200 that the statistics need, so z is all NaN.
+    600 cells give a finite z and are still under ``decide.min_fit_cells``.
+    """
+    values = _noise_field(4)
+    population = np.zeros(values.shape, dtype=bool)
+    population.ravel()[:forest_cells] = True
+    single = standardize.standardize_date(values, population, _params("local"), CELL_M)
+    twopass = standardize.standardize_date(
+        values, population, _params("local_twopass"), CELL_M
+    )
+    np.testing.assert_array_equal(twopass, single)
+    assert np.isfinite(twopass).all() == (forest_cells == 600)
+
+
 def test_standardize_stack_leaves_empty_dates_nan() -> None:
     """Date 0 of a change stack (all NaN) stays NaN, later dates are finite."""
     later = _noise_field(3)
