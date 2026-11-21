@@ -39,6 +39,7 @@ from csdv_core.download.naip_pc import (
     grid_from_bounds,
     median_date_tag,
     naip_output_path,
+    site_epsg,
     snap_bounds,
 )
 
@@ -338,6 +339,7 @@ def download_naip_rest_year(
     out_root: Path | str,
     pad_m: float = 150.0,
     overwrite: bool = False,
+    epsg: int | None = None,
 ) -> Path:
     """Mosaic one year of NAIP from the USDA image service over a box.
 
@@ -347,6 +349,8 @@ def download_naip_rest_year(
     :data:`~csdv_core.download.naip_pc.SNAP_M`, and
     ``<out_root>/<site>/<year>/NAIP_<site>_<YYYYMMDD>_<res>.tif``. A
     ``<stem>.provenance.json`` sidecar records the quads and their dates.
+    With ``epsg`` the service is asked for that CRS in place of the quads'
+    own, as in :func:`~csdv_core.download.naip_pc.download_naip_year`.
 
     Returns:
         Path of the written (or already present) GeoTIFF.
@@ -368,7 +372,8 @@ def download_naip_rest_year(
             f"No NAIP imagery for {year} over {bbox_4326} in the USDA image service"
         )
     names = [parse_quad_name(quad["Name"]) for quad in quads]
-    epsg = _dominant([name.epsg for name in names], "CRS", year)
+    quad_epsg = _dominant([name.epsg for name in names], "CRS", year)
+    epsg = site_epsg(epsg, quad_epsg, year)
     gsd = float(_dominant([name.gsd for name in names], "GSD", year))
     gsds = sorted({name.gsd for name in names})
     logger.info("%d: %d NAIP quads, ground sample distance %s", year, len(quads), gsds)

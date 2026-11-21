@@ -62,9 +62,10 @@ def _fake_sources(monkeypatch, calls):
     monkeypatch.setattr(naip_rest, "available_years", lambda bbox: {2025: 1.0})
 
     def fake(source):
-        def download(bbox, *, site, year, out_root, pad_m, overwrite):
+        def download(bbox, *, site, year, out_root, pad_m, overwrite, epsg):
             calls.append((source, year))
-            return out_root / site / str(year) / f"NAIP_{site}_{year}0701_0p6m.tif"
+            name = f"NAIP_{site}_{year}0701_0p6m.tif"
+            return _mosaic(out_root / site / str(year) / name, 1.0)
 
         return download
 
@@ -92,7 +93,7 @@ def test_cli_fails_when_a_named_year_is_unusable(monkeypatch, tmp_path):
     assert calls == [("pc", 2021)]
 
 
-def _mosaic(path, filled_share: float):
+def _mosaic(path, filled_share: float, crs: str = "EPSG:4326"):
     """A four-band mosaic over BBOX whose western part holds imagery."""
     import numpy as np
     import rasterio
@@ -110,7 +111,7 @@ def _mosaic(path, filled_share: float):
         height=200,
         count=4,
         dtype="uint8",
-        crs="EPSG:4326",
+        crs=crs,
         transform=from_bounds(west, south, east, north, 200, 200),
     ) as dst:
         dst.write(data)
@@ -132,7 +133,7 @@ def test_a_mosaic_that_is_mostly_empty_is_removed_and_its_year_fails(
 ):
     shares = {2021: 1.0, 2023: 0.17}
 
-    def download(bbox, *, site, year, out_root, pad_m, overwrite):
+    def download(bbox, *, site, year, out_root, pad_m, overwrite, epsg):
         return _mosaic(out_root / site / str(year) / f"NAIP_{year}.tif", shares[year])
 
     monkeypatch.setattr(naip_pc, "download_naip_year", download)
@@ -150,3 +151,37 @@ def test_a_mosaic_that_is_mostly_empty_is_removed_and_its_year_fails(
         BBOX, plan, site="t", out_root=tmp_path
     )
     assert len(paths) == 2 and failed == []
+
+
+def test_every_year_of_a_site_is_asked_for_in_one_crs(monkeypatch, tmp_path):
+    """The first year sets the CRS, and a later run takes it from the disk."""
+    quad_crs = {2019: 26917, 2021: 26917, 2023: 26918}
+    asked: dict[int, int | None] = {}
+
+    def download(bbox, *, site, year, out_root, pad_m, overwrite, epsg):
+        asked[year] = epsg
+        code = epsg or quad_crs[year]
+        return _mosaic(out_root / site / str(year) / "NAIP.tif", 1.0, f"EPSG:{code}")
+
+    monkeypatch.setattr(naip_pc, "download_naip_year", download)
+    monkeypatch.setattr(naip_auto, "image_share", lambda path, bbox: 1.0)
+    plan = plan_years({2019: 1.0, 2021: 1.0}, {})
+    naip_auto.download_planned_years(BBOX, plan, site="t", out_root=tmp_path)
+    assert asked == {2019: None, 2021: 26917}
+    assert naip_auto.epsg_on_disk(tmp_path / "t") == 26917
+    # A year added later, delivered in the neighbouring zone.
+    asked.clear()
+    plan = plan_years({2023: 1.0}, {})
+    paths, _ = naip_auto.download_planned_years(BBOX, plan, site="t", out_root=tmp_path)
+    assert asked == {2023: 26917}
+    assert naip_auto.mosaic_epsg(paths[0]) == 26917
+
+
+def test_site_epsg_keeps_the_quads_crs_for_a_first_year():
+    assert naip_pc.site_epsg(None, 26918, 2023) == 26918
+    assert naip_pc.site_epsg(26917, 26918, 2023) == 26917
+    assert naip_pc.site_epsg(26918, 26918, 2023) == 26918
+
+
+def test_epsg_on_disk_is_none_without_a_mosaic(tmp_path):
+    assert naip_auto.epsg_on_disk(tmp_path / "nothing") is None

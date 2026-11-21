@@ -48,6 +48,8 @@ __all__ = [
     "YearsPlan",
     "discover_years",
     "download_planned_years",
+    "epsg_on_disk",
+    "mosaic_epsg",
     "plan_years",
 ]
 
@@ -193,6 +195,33 @@ def image_share(
     return float(block.any(axis=0).mean())
 
 
+def mosaic_epsg(path: Path | str) -> int | None:
+    """EPSG code of a mosaic, or None when its CRS has none."""
+    import rasterio
+
+    with rasterio.open(path) as src:
+        return src.crs.to_epsg() if src.crs else None
+
+
+def epsg_on_disk(site_dir: Path | str) -> int | None:
+    """EPSG code that most mosaics of a site share, or None without a mosaic.
+
+    Args:
+        site_dir: ``<out_root>/<site>``, with one folder per year.
+
+    Returns:
+        The most common code, the earliest year's on a tie.
+    """
+    counts: dict[int, int] = {}
+    for path in sorted(Path(site_dir).glob("[0-9]*/*.tif")):
+        code = mosaic_epsg(path)
+        if code is not None:
+            counts[code] = counts.get(code, 0) + 1
+    if not counts:
+        return None
+    return max(counts, key=lambda code: counts[code])
+
+
 def _discard(path: Path) -> None:
     """Remove a mosaic, its sidecar and its year folder when that is empty."""
     path.with_suffix(".provenance.json").unlink(missing_ok=True)
@@ -219,11 +248,17 @@ def download_planned_years(
     box than this share is removed and its year counts as failed, whether
     the mosaic was written now or was on disk already.
 
+    Every year is written in one CRS: that of the site's mosaics on disk,
+    or else of the first year that arrives. Quads that a state delivered in
+    the neighbouring UTM zone are warped into it. A mosaic already on disk
+    in another CRS is reported and left as it is.
+
     Returns:
         ``(written or existing GeoTIFFs, years that failed)``.
     """
     paths: list[Path] = []
     failed: list[int] = []
+    epsg = epsg_on_disk(Path(out_root) / site)
     for year_plan in plan.years:
         download = (
             naip_pc.download_naip_year
@@ -245,6 +280,7 @@ def download_planned_years(
                     out_root=out_root,
                     pad_m=pad_m,
                     overwrite=overwrite,
+                    epsg=epsg,
                 )
             )
         except ValueError as exc:
@@ -269,6 +305,19 @@ def download_planned_years(
                 _discard(path)
                 failed.append(year_plan.year)
                 continue
+        written_epsg = mosaic_epsg(path)
+        if epsg is None:
+            epsg = written_epsg
+        elif written_epsg != epsg:
+            logger.error(
+                "%d: %s is in EPSG:%s, the site's other years are in EPSG:%d. "
+                "Detection refuses a site with two CRS. Move this mosaic and "
+                "its CHM aside and download again.",
+                year_plan.year,
+                path.name,
+                written_epsg,
+                epsg,
+            )
         paths.append(path)
     return paths, failed
 

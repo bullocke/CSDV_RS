@@ -56,6 +56,7 @@ __all__ = [
     "naip_mosaic",
     "program_year",
     "search_naip_items",
+    "site_epsg",
     "snap_bounds",
 ]
 
@@ -444,6 +445,29 @@ def _dominant(values: Sequence[Any], what: str, year: int) -> Any:
     return max(counts, key=lambda value: counts[value])
 
 
+def site_epsg(wanted: int | None, quad_epsg: int, year: int) -> int:
+    """The CRS of a year's mosaic: the site's, or else the quads' own.
+
+    Args:
+        wanted: EPSG code of the site's other years, or None for a first year.
+        quad_epsg: EPSG code most quads of this year carry.
+        year: NAIP year, for the log.
+
+    Returns:
+        EPSG code of the mosaic.
+    """
+    if wanted is None or wanted == quad_epsg:
+        return quad_epsg
+    logger.warning(
+        "%d: the quads are in EPSG:%d, the mosaic is written in EPSG:%d "
+        "like the other years of the site",
+        year,
+        quad_epsg,
+        wanted,
+    )
+    return wanted
+
+
 def _item_epsg(item: Any) -> int:
     epsg = item.properties.get("proj:epsg")
     if epsg is None:
@@ -464,6 +488,7 @@ def download_naip_year(
     pad_m: float = 150.0,
     overwrite: bool = False,
     attempts: int = 3,
+    epsg: int | None = None,
 ) -> Path:
     """Mosaic one year of Planetary Computer NAIP over a box at native GSD.
 
@@ -472,6 +497,11 @@ def download_naip_year(
     widened by ``pad_m`` before snapping because the model's outermost ~50 m
     is unreliable. A ``<stem>.provenance.json`` sidecar records the quads and
     every acquisition date.
+
+    A state can deliver one year in the neighbouring UTM zone (Maryland 2023
+    is in zone 18 as far west as 79 W). ``epsg`` names the CRS of the site's
+    other years, and the quads are then warped into it, because detection
+    needs every year of a site in one CRS.
 
     Returns:
         Path of the written (or already present) GeoTIFF.
@@ -485,7 +515,8 @@ def download_naip_year(
         return existing[0]
 
     items = search_naip_items(bbox_4326, year=year)
-    epsg = _dominant([_item_epsg(item) for item in items], "CRS", year)
+    quad_epsg = _dominant([_item_epsg(item) for item in items], "CRS", year)
+    epsg = site_epsg(epsg, quad_epsg, year)
     gsd = float(_dominant([item.properties.get("gsd") for item in items], "GSD", year))
     dst_crs = f"EPSG:{epsg}"
     utm_bounds = transform_bounds("EPSG:4326", dst_crs, *bbox_4326, densify_pts=21)
