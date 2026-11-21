@@ -17,7 +17,9 @@ from csdv_core.label.lattice import pixel_slices
 from csdv_core.label.stacks import WindowStack
 from csdv_core.label.views import View
 
-LETTERS = "ABCDEFGHIJKL"
+#: One letter per date of a stack. A box on a state line takes the flights of
+#: both states and can hold more than twelve years (15 in one round-2 box).
+LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 BANDS = {"rgb": (0, 1, 2), "cir": (3, 0, 1)}
 _FONT_PATHS = (
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -119,6 +121,15 @@ def render_date(
 
 
 def captions(dates: list[str]) -> list[str]:
+    """The letter and date written on each image of a stack.
+
+    Raises:
+        ValueError: If there are more dates than letters.
+    """
+    if len(dates) > len(LETTERS):
+        raise ValueError(
+            f"{len(dates)} dates, and only {len(LETTERS)} letters to name them"
+        )
     return [f"{LETTERS[i]}  {d}" for i, d in enumerate(dates)]
 
 

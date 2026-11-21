@@ -381,3 +381,28 @@ def test_a_map_of_other_dates_is_refused(unit) -> None:
         dst.write(np.concatenate([data, data[:1]]))
     with pytest.raises(ValueError, match="3 bands for the unit's 2 intervals"):
         C.unit_candidates(unit, CFG.candidates)
+
+
+def test_a_verdict_request_names_fifteen_dates() -> None:
+    """A box on a state line holds more years than twelve letters."""
+    from shapely.geometry import box
+
+    from csdv_core.label.requests import LOCATIONS, verdict_request
+
+    dates = [f"{year}-08-01" for year in range(2010, 2025)]
+    side = 512 + 2 * 64
+    bounds = WINDOW.stack_bounds(64)
+    stack = WindowStack(
+        bounds=bounds,
+        epsg=26919,
+        years=list(range(2010, 2025)),
+        dates=dates,
+        native_m=[0.6] * 15,
+        data=np.full((15, 4, side, side), 90, dtype=np.uint8),
+    )
+    x, y = bounds[0] + 150.0, bounds[1] + 150.0
+    request = verdict_request(
+        stack, "c1", box(x, y, x + 60, y + 60), next(iter(LOCATIONS)), CFG.views
+    )
+    assert len(request.images) == 15
+    assert "O: 2024-08-01" in request.prompt
