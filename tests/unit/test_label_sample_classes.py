@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -383,11 +384,15 @@ def test_a_plan_can_take_the_windows_of_one_season(run: LabelRun) -> None:
     assert list(model["stage"]) == [1, 2, 2, 3, 2]
     assert model["incl_prob"].iloc[3] == pytest.approx(2 / 3)
 
+    # A row with a season takes what is left when it asks for more: the
+    # plan is written without the season of every seed.
     plan = pd.DataFrame(
         {"unit": [UNIT], "sub_stratum": [sub], "season": ["nov-apr"], "n": [3]}
     )
-    with pytest.raises(ValueError, match="nov-apr: 3 asked, 2 left"):
-        allocate_stage(table, plan, 2, seeds=seeds)
+    out = allocate_stage(table, plan, 2, seeds=seeds)
+    model = out[out["sub_stratum"] == sub].sort_values("rank")
+    assert list(model["stage"]) == [1, 2, 0, 2, 0]
+    assert out.attrs["clipped"] == [(UNIT, f"{sub} nov-apr", 3, 2)]
     with pytest.raises(ValueError, match="the seeds are needed"):
         allocate_stage(table, plan, 2)
     plan["season"] = "winter"
@@ -397,6 +402,60 @@ def test_a_plan_can_take_the_windows_of_one_season(run: LabelRun) -> None:
     plan["season"] = "nov-apr"
     with pytest.raises(ValueError, match="6 candidates listed, 7 when"):
         allocate_stage(table, plan, 2, seeds=seeds.drop(pool.index[-1]))
+
+
+def test_the_season_of_a_seed_is_that_of_its_quad(
+    run: LabelRun, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run dates a year by the median over its quads. The mosaic's sidecar
+    says which quad, flown when, covers each candidate."""
+    from types import SimpleNamespace
+
+    from csdv_core.label import sample_classes
+
+    plain = seed_seasons(run, [UNIT], _design())
+    assert set(plain["date"]) == {
+        run.unit(UNIT).dates[2018],
+        run.unit(UNIT).dates[2021],
+    }
+    assert plain.attrs["run_dates"] == 2  # no data root: both years
+
+    def mosaic(year: int, items: list[str]) -> None:
+        folder = tmp_path / "naip" / UNIT / str(year)
+        folder.mkdir(parents=True)
+        path = folder / f"NAIP_{UNIT}_{year}0803_0p6m.tif"
+        path.write_bytes(b"")
+        sidecar = {"item_ids": items}
+        path.with_suffix(".provenance.json").write_text(json.dumps(sidecar))
+
+    # 2021: every quad was flown on one winter day, whatever the run says.
+    mosaic(2021, ["nh_m_4407159_sw_19_060_20220112", "nh_m_4407159_se_19_060_20220112"])
+    seeds = seed_seasons(run, [UNIT], _design(), tmp_path)
+    late = seeds[seeds["sub_stratum"].str.endswith("-priority")]
+    assert set(late["date"]) == {"2022-01-12"} and set(late["season"]) == {"nov-apr"}
+    # 2018 has no mosaic here: its seeds keep the run's date.
+    early = seeds[~seeds["sub_stratum"].str.endswith("-priority")]
+    assert set(early["date"]) == {run.unit(UNIT).dates[2018]}
+    assert seeds.attrs["run_dates"] == 1
+
+    # 2018: two flights. The quad that covers the candidate decides, and a
+    # candidate no listed quad reaches keeps the run's date.
+    mosaic(2018, ["nh_m_4407159_sw_19_060_20181026", "nh_m_4407159_se_19_060_20190102"])
+    seen = []
+
+    def quad_of(path, epsg, bounds):
+        seen.append((path.name, epsg, bounds))
+        return SimpleNamespace(date="2019-01-02") if len(seen) == 1 else None
+
+    monkeypatch.setattr(sample_classes, "provenance_date", quad_of)
+    seeds = seed_seasons(run, [UNIT], _design(), tmp_path)
+    early = seeds[~seeds["sub_stratum"].str.endswith("-priority")]
+    assert list(early["date"]) == ["2019-01-02", run.unit(UNIT).dates[2018]]
+    assert list(early["season"]) == ["nov-apr", "may-oct"]
+    assert seeds.attrs["run_dates"] == 0
+    cands = run.candidates(UNIT).set_index("cand_id")
+    first = cands.loc[early["cand_id"].iloc[0]]
+    assert seen[0] == (f"NAIP_{UNIT}_20180803_0p6m.tif", 26919, first.geometry.bounds)
 
 
 def test_quiet_chips_are_judged_on_off_season_intervals(run: LabelRun) -> None:

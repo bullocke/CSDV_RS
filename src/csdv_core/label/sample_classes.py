@@ -44,7 +44,7 @@ windows taken so far over candidates in the stratum.
 
 A later stage can also steer by season. A plan row that names a season
 (``nov-apr`` or ``may-oct``, by the month of the later image of the seed's
-interval) splits its stratum in two. The windows drawn in a stratum are its
+interval, at the seed) splits its stratum in two. The windows drawn in a stratum are its
 first candidates in key order, so those of one season are the first of that
 season, and taking them in the order of rank is still a random sample of the
 season's candidates. The inclusion probability of a split stratum is then
@@ -54,13 +54,16 @@ windows taken in the season over candidates of the season (``season_n``).
 from __future__ import annotations
 
 import logging
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from shapely.geometry import box
 
+from csdv_core.label.naip import local_mosaics, parse_item_id, provenance_date
 from csdv_core.label.pipeline import LabelRun
 from csdv_core.label.sample import (
     SampleDesign,
@@ -201,11 +204,6 @@ def _unit_seeds(run: LabelRun, unit_id: str, design: ClassDesign) -> pd.DataFram
     wanted = design.priority.get(unit_id)
     cands["when"] = np.where(cands["interval"] == wanted, "priority", "other")
     cands["sub"] = cands["class"] + "-" + cands["when"]
-    unit = run.unit(unit_id)
-    later = {
-        name: unit.dates[unit.years[k + 1]] for k, name in enumerate(unit.intervals)
-    }
-    cands["season"] = [image_season(later[i]) for i in cands["interval"]]
     cands["key"] = [_key(design.seed, c) for c in cands["cand_id"]]
     return cands
 
@@ -401,32 +399,104 @@ def _set_inclusion(table: pd.DataFrame) -> None:
     table.loc[seeded, "incl_prob"] = prob[seeded]
 
 
-def seed_seasons(run: LabelRun, units: Sequence[str], design: ClassDesign):
-    """Every candidate that can seed a window, with its stratum and season.
+def _mosaic_dates(mosaic: Path) -> set[str] | None:
+    """Dates of the quads a mosaic was pasted from, or None without a sidecar."""
+    try:
+        sidecar = json.loads(mosaic.with_suffix(".provenance.json").read_text())
+        parsed = [parse_item_id(str(item)) for item in sidecar["item_ids"]]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    dates = {item[2] for item in parsed if item is not None}
+    return dates or None
+
+
+def _later_dates(
+    run: LabelRun, unit_id: str, cands: pd.DataFrame, data_root: Path | None
+) -> tuple[list[str], int]:
+    """Date of the later image of each candidate's interval, at the candidate.
+
+    A box can span quads flown months apart, and the date a run records for
+    a year is the median over its quads (the Vermont box of round 2: 26
+    October 2018 for a year whose western two thirds were flown on 2 January
+    2019). So the date is read as for a rendered window: from the sidecar of
+    the unit's mosaic, as the quad that fills most of the candidate's
+    bounding box. Without a mosaic or a sidecar it is the run's date.
 
     Returns:
-        A table with the columns ``unit``, ``cand_id``, ``sub_stratum`` and
-        ``season``. :func:`allocate_stage` needs it for a plan that names
-        seasons. The design has to be that of the draw (the units sampled
-        without the model, the priority intervals, the edge).
+        The dates, and the number of years that fell back to the run's date.
+    """
+    unit = run.unit(unit_id)
+    later = {name: unit.years[k + 1] for k, name in enumerate(unit.intervals)}
+    mosaics: dict[int, tuple[Path, set[str]] | None] = {}
+    for year in sorted({later[i] for i in cands["interval"]}):
+        mosaics[year] = None
+        for path in local_mosaics(data_root, unit_id, year) if data_root else []:
+            dates = _mosaic_dates(path)
+            if dates:
+                mosaics[year] = (path, dates)
+                break
+    out = []
+    for interval, geom in zip(cands["interval"], cands.geometry, strict=True):
+        year = later[interval]
+        found = mosaics[year]
+        date = unit.dates[year]
+        if found is not None and len(found[1]) == 1:
+            date = next(iter(found[1]))
+        elif found is not None:
+            quad = provenance_date(found[0], unit.epsg, geom.bounds)
+            date = quad.date if quad is not None else date
+        out.append(date)
+    return out, sum(1 for found in mosaics.values() if found is None)
+
+
+def seed_seasons(
+    run: LabelRun,
+    units: Sequence[str],
+    design: ClassDesign,
+    data_root: Path | None = None,
+) -> pd.DataFrame:
+    """Every candidate that can seed a window, with its stratum and season.
+
+    Args:
+        run: The label run.
+        units: Units to list.
+        design: The design of the draw (the units sampled without the model,
+            the priority intervals, the edge).
+        data_root: Root of the NAIP mosaics (``naip/<unit>/<year>/``), whose
+            sidecars give the date at each candidate. Without it the season
+            is that of the run's date of the year.
+
+    Returns:
+        A table with the columns ``unit``, ``cand_id``, ``sub_stratum``,
+        ``date`` and ``season``, which :func:`allocate_stage` needs for a
+        plan that names seasons. ``attrs["run_dates"]`` counts the
+        unit-years that took the run's date.
     """
     rows = []
+    fallen = 0
     for unit_id in units:
         seeds = _unit_seeds(run, unit_id, design)
         if seeds.empty:
             continue
+        dates, missing = _later_dates(run, unit_id, seeds, data_root)
+        fallen += missing
         rows.append(
             pd.DataFrame(
                 {
                     "unit": unit_id,
                     "cand_id": seeds["cand_id"].to_numpy(),
                     "sub_stratum": seeds["sub"].to_numpy(),
-                    "season": seeds["season"].to_numpy(),
+                    "date": dates,
+                    "season": [image_season(d) for d in dates],
                 }
             )
         )
-    columns = ["unit", "cand_id", "sub_stratum", "season"]
-    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=columns)
+    columns = ["unit", "cand_id", "sub_stratum", "date", "season"]
+    table = (
+        pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=columns)
+    )
+    table.attrs["run_dates"] = fallen
+    return table
 
 
 def _split_by_season(out: pd.DataFrame, named: pd.DataFrame, seeds: pd.DataFrame):
@@ -475,7 +545,10 @@ def allocate_stage(
             of the stratum the stage adds. Strata that are not named get
             none. An optional column ``season`` (``nov-apr`` or ``may-oct``)
             limits a row to the windows whose seed ends on an image of that
-            season, and splits the stratum by season from then on.
+            season, and splits the stratum by season from then on. Such a
+            row takes the windows that are left when it asks for more: the
+            plan is written from the dates of a few rendered windows, and
+            the season of every seed is known only here.
         stage: The stage to fill (2 or more).
         judged_windows: Windows that hold answers. They keep their stage.
         seeds: The table of :func:`seed_seasons`. Needed when the plan
@@ -486,12 +559,14 @@ def allocate_stage(
         taken in the order of ``rank``, after those of earlier stages. With
         seasons in the plan the table also has the columns ``season`` and
         ``season_n`` (candidates of the season in the stratum), set for the
-        strata that are split.
+        strata that are split. ``attrs["clipped"]`` lists the rows with a
+        season that got fewer windows than they asked for, as ``(unit,
+        stratum and season, asked, taken)``.
 
     Raises:
-        ValueError: If the plan asks for more windows than a stratum has
-            left, names a stratum or a season the sample does not have, or
-            the stage is not above 1.
+        ValueError: If a row without a season asks for more windows than
+            its stratum has left, the plan names a stratum or a season the
+            sample does not have, or the stage is not above 1.
     """
     if stage < 2:
         raise ValueError("Stage 1 is set when the sample is drawn")
@@ -520,6 +595,7 @@ def allocate_stage(
     back = (out["stage"] == stage) & ~out["window_id"].isin(held)
     out.loc[back, "stage"] = 0
     short = []
+    clipped = []
     for row in plan.itertuples():
         n = int(row.n)
         if n <= 0:
@@ -536,7 +612,10 @@ def allocate_stage(
             group = group[group["season"] == row.season]
             name = f"{name} {row.season}"
         free = group[group["stage"] == 0].sort_values("rank")
-        if len(free) < n:
+        if len(free) < n and row.season:
+            clipped.append((row.unit, name, n, len(free)))
+            n = len(free)
+        elif len(free) < n:
             short.append(f"{row.unit} {name}: {n} asked, {len(free)} left")
             continue
         out.loc[free.index[:n], "stage"] = stage
@@ -545,6 +624,7 @@ def allocate_stage(
             "The plan asks for more windows than were drawn: " + "; ".join(short)
         )
     _set_inclusion(out)
+    out.attrs["clipped"] = clipped
     return out
 
 

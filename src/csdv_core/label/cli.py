@@ -613,12 +613,20 @@ def _sample_classes(
     show_default=True,
     help="The edge the sample was drawn with. Read when the plan names seasons.",
 )
+@click.option(
+    "--data-root",
+    default=None,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Root of the local mosaics, whose sidecars date each seed when the "
+    "plan names seasons. Default: $CSDV_DATA_ROOT.",
+)
 @click.option("--dry-run", is_flag=True, help="Report the stage, write nothing.")
 def allocate_cmd(
     plan_csv: Path,
     stage: int,
     sites_csv: Path | None,
     edge_m: float,
+    data_root: Path | None,
     dry_run: bool,
     **where,
 ) -> None:
@@ -633,10 +641,13 @@ def allocate_cmd(
 
     A plan row with a season splits its stratum by the season of the later
     image of the seed's interval, and the inclusion probabilities of that
-    stratum are then counted per season. The candidates of each season are
-    listed again from the run, which needs the sites file and the edge of
-    the draw. The command refuses when a stratum does not hold the number
-    of candidates it held at the draw.
+    stratum are then counted per season. The image is that of the quad
+    which covers the seed, read from the sidecar of the unit's mosaic as
+    for a rendered window. The candidates of each season are listed again
+    from the run, which needs the sites file and the edge of the draw. The
+    command refuses when a stratum does not hold the number of candidates
+    it held at the draw. A row with a season that asks for more windows
+    than are left takes those that are left, and the command says so.
     """
     import shutil
     import time
@@ -671,7 +682,16 @@ def allocate_cmd(
             edge_m=edge_m, plain_units=frozenset(plain), priority=priority
         )
         named = plan[plan["season"].fillna("").astype(str).str.strip() != ""]
-        seeds = seed_seasons(run, sorted(set(named["unit"])), design)
+        from csdv_core.io.paths import project_paths
+
+        root = data_root or project_paths().data_root
+        seeds = seed_seasons(run, sorted(set(named["unit"])), design, root)
+        if seeds.attrs["run_dates"]:
+            click.echo(
+                f"{seeds.attrs['run_dates']} unit-years have no mosaic with a "
+                f"sidecar under {root}/naip: their seeds take the season of "
+                "the date the run records, the median over the unit's quads."
+            )
     try:
         out = allocate_stage(table, plan, stage, judged_windows=answered, seeds=seeds)
     except ValueError as exc:
@@ -687,6 +707,15 @@ def allocate_cmd(
         f"{n} judged candidates, about ${2 * n * CALL_COST:.2f} for the verdicts "
         f"and up to ${n * POLYGON_COST:.2f} for polygons."
     )
+    clipped = out.attrs.get("clipped", [])
+    if clipped:
+        lacking = sum(asked - taken for _, _, asked, taken in clipped)
+        click.echo(
+            f"{len(clipped)} rows with a season asked for {lacking} more windows "
+            "than their season has left, and took what is left:"
+        )
+        for unit_id, name, asked, taken in clipped:
+            click.echo(f"  {unit_id} {name}: {asked} asked, {taken} taken")
     off = chosen[chosen["season"] == OFF_SEASON]
     if len(off):
         n_off = int(off["window_id"].map(per_window).fillna(0).sum())
