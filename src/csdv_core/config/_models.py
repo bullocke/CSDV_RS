@@ -542,7 +542,7 @@ class LabelRouting(_Base):
     consecutive_loss: Literal["label", "ignore"] = "ignore"
     disputed_date: Literal["ignore", "later"] = "later"
     stressed_recovered: Literal["ignore", "background"] = "ignore"
-    model_rejected: Literal["ignore", "background"] = "background"
+    model_rejected: Literal["ignore", "background", "confident"] = "background"
     fire_perimeters: str | None = None
     fire_perimeter_share: float = Field(default=0.5, gt=0, le=1)
 

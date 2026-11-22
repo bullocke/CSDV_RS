@@ -5,3 +5,26 @@ chips:
 rules:
   # As in the scale test (decision 18 there).
   never_green_ndvi: 0.05
+# Decision 10 of round 2 (2026-11-22, issue 3.1 of the plan). A candidate
+# that both vision models reject is background in the interval that flagged
+# it only when both are confident (`routing.reject_confidence`). A weak
+# rejection stays unlabelled. This holds for the height sources (the policy
+# line) and for the pair model's own alarms (the routing line).
+#
+# Nothing is lost by it. The reason raster of every chip keeps
+# `rejected_flagged` (26) and `rejected_weak` (27) apart from `judged_intact`,
+# and the `candidates` layer of labels.gpkg keeps each candidate's status,
+# outcomes and both models' reasons. To undo, remove a line and build again
+# (`csdv label build`, no new call): without the policy line a confident
+# rejection of a height source is unlabelled again, and without the routing
+# line every rejected model alarm is background, confident or not.
+#
+# The evidence, from the user's read of the stage-1 sheets: of five confident
+# rejections of height candidates drawn at random, one hid real loss (a new
+# road) and one was unclear. Of twelve rejected model alarms, the four
+# confident ones were background, and of the eight weak ones two held real
+# loss and two were unclear.
+policy:
+  rejected_flagged: 0
+routing:
+  model_rejected: confident

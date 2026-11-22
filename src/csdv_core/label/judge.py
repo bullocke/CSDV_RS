@@ -235,13 +235,19 @@ def route_candidates(
         if row.judged and all(m in pair for m in models):
             # Only the pair model flagged a `model` candidate, so no height
             # loss stands against a joint "no loss" in its interval.
-            free = row.source == "model" and cfg.routing.model_rejected == "background"
-            routed[row.cand_id] = route(
+            mode = cfg.routing.model_rejected
+            free = row.source == "model" and mode != "ignore"
+            result = route(
                 pair[models[0]],
                 pair[models[1]],
                 None if free else flagged,
                 cfg.routing,
             )
+            if free and mode == "confident" and result.status == "rejected_weak":
+                # A joint "no loss" below the confidence bar is not enough
+                # to call the model's alarm background.
+                result = route(pair[models[0]], pair[models[1]], flagged, cfg.routing)
+            routed[row.cand_id] = result
         else:
             small = row.area_ha < cfg.candidates.min_ha
             routed[row.cand_id] = unjudged(n, flagged, small=small)

@@ -108,7 +108,12 @@ routing:
   # it: only the pair model flagged it. "background" labels it like any
   # other interval the models call intact, which is what makes the pair
   # model's false alarms into negatives it can learn from. "ignore" treats
-  # it like the other sources.
+  # it like the other sources. "confident" labels it background only when
+  # both models reject it with a confidence of `reject_confidence` or more,
+  # and leaves it unlabelled (`rejected_weak`) otherwise. In the stage-1
+  # check of round 2 the user read 12 rejected model objects: the four
+  # confident ones were background, and of the eight weak ones two held
+  # real loss and two were unclear.
   model_rejected: background
 
 outlines:

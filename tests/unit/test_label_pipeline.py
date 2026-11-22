@@ -911,6 +911,21 @@ def test_a_rejected_model_object_is_background_in_its_interval(run: LabelRun) ->
     assert guarded.labels.reason[0, row, col] == Reason.REJECTED_FLAGGED
     assert guarded.labels.change[0, row, col] == 255
 
+    # Background only for a confident rejection when the run asks for that.
+    fresh.cfg.routing.model_rejected = "confident"
+    sure = build_window(fresh, ROW, records, with_stack=False)
+    assert sure.labels.reason[0, row, col] == Reason.JUDGED_INTACT
+    records[0]["answer"]["confidence"] = fresh.cfg.routing.reject_confidence - 1
+    weak = build_window(fresh, ROW, records, with_stack=False)
+    routed = {c.cand_id: c.routed for c in weak.judged}[cand_id]
+    assert routed.status == "rejected_weak"
+    assert weak.labels.reason[0, row, col] == Reason.REJECTED_WEAK
+    assert weak.labels.change[0, row, col] == 255
+    # The same weak rejection is background under the default.
+    fresh.cfg.routing.model_rejected = "background"
+    loose = build_window(fresh, ROW, records, with_stack=False)
+    assert loose.labels.reason[0, row, col] == Reason.JUDGED_INTACT
+
 
 def test_an_accepted_model_object_is_loss(run: LabelRun) -> None:
     cand_id = _write_model_map(run)
