@@ -6,7 +6,7 @@
 #   scripts/chpc/round2.sh pilot  [--cap 3]  [--without-missing] [--dry-run]
 #   scripts/chpc/round2.sh grid              [--without-missing] [--dry-run]
 #   scripts/chpc/round2.sh stage1 [--cap 16] [--dry-run]
-#   scripts/chpc/round2.sh stage2  --cap 76  [--dry-run]
+#   scripts/chpc/round2.sh stage2  --cap 76  [--reallocate] [--dry-run]
 #   scripts/chpc/round2.sh evaluate [--optional] [--only RUN,RUN] [--dry-run]
 #   scripts/chpc/round2.sh status [pilot]
 #
@@ -24,7 +24,12 @@
 #         stage-1 check-in, pulled with git), gives those windows to stage
 #         2, then renders, calls and builds. The cap is cumulative. Copies
 #         config/label/round2/config.yaml to the label folder when it has
-#         changed, so that the build of both stages uses it.
+#         changed, so that the build of both stages uses it. Given again
+#         after calls of stage 2 were made (a chain that stopped, calls
+#         that failed), it keeps the windows of stage 2 as they are and
+#         only submits the chain, which asks for what has no answer yet.
+#         A new allocation would add the plan's windows on top of those
+#         that hold answers. --reallocate asks for that all the same.
 # evaluate  The model tests of the round (config/pair/round2.csv), after
 #         stage 2 has built its labels. No paid call. It makes the label
 #         folder round2_norej (the same answers built without decision 10,
@@ -57,9 +62,10 @@ set -euo pipefail
 
 STEP="${1:-}"
 [[ -n "$STEP" ]] && shift
-CAP="" DRY=() WHICH="" MISSING=() TABLE_ARGS=()
+CAP="" DRY=() WHICH="" MISSING=() TABLE_ARGS=() REALLOCATE=0
 while (($#)); do
     case "$1" in
+        --reallocate) REALLOCATE=1; shift ;;
         --optional) TABLE_ARGS+=(--optional); shift ;;
         --only) TABLE_ARGS+=(--only "${2:?--only needs a list of runs}"); shift 2 ;;
         --cap) CAP="${2:?--cap needs a value}"; shift 2 ;;
@@ -182,10 +188,38 @@ MSG
             fi
         fi
         [[ -f "$LABEL/config.yaml" ]] && WHERE+=(--config "$LABEL/config.yaml")
-        # The plan names seasons, so the allocation lists the candidates of
-        # each season again, with the sites file of the draw.
-        csdv label allocate "${WHERE[@]}" --plan "$PLAN" --stage 2 \
-            --sites config/label/round2/sites.csv ${DRY[@]+"${DRY[@]}"}
+        # Windows of stage 2 that hold answers keep their stage, and an
+        # allocation adds the plan's windows to them. So once calls were
+        # made, the stage is only taken up again.
+        ANSWERED=$(python3 - "$LABEL" <<'PY'
+import csv, json, sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+with open(root / "windows.csv", newline="", encoding="utf-8") as handle:
+    stage2 = {r["window_id"] for r in csv.DictReader(handle) if r["stage"] in ("2", "2.0")}
+seen = set()
+answers = root / "answers.jsonl"
+if stage2 and answers.exists():
+    for line in answers.read_text(encoding="utf-8").splitlines():
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if record.get("window_id") in stage2 and not record.get("error"):
+            seen.add(record["window_id"])
+print(len(seen))
+PY
+        )
+        if ((ANSWERED > 0 && REALLOCATE == 0)); then
+            echo "$ANSWERED windows of stage 2 hold answers: the allocation is kept," \
+                "and the chain asks for what has no answer yet."
+        else
+            # The plan names seasons, so the allocation lists the candidates
+            # of each season again, with the sites file of the draw.
+            csdv label allocate "${WHERE[@]}" --plan "$PLAN" --stage 2 \
+                --sites config/label/round2/sites.csv ${DRY[@]+"${DRY[@]}"}
+        fi
         scripts/chpc/submit_label_chain.sh "$LABEL" --stage 2 --cap "$CAP" \
             --build-stages 1,2 --sheets "--stage 2 --max-pairs 1" ${DRY[@]+"${DRY[@]}"}
         echo
