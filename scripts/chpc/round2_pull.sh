@@ -7,6 +7,7 @@
 #   scripts/chpc/round2_pull.sh grid   [--dry-run]
 #   scripts/chpc/round2_pull.sh stage1 [--dry-run]
 #   scripts/chpc/round2_pull.sh final  [--dry-run]
+#   scripts/chpc/round2_pull.sh sheets LIST [--dry-run]
 #
 # pilot   The label folder round2_pilot (tables, answers, ledger, labels,
 #         sheets), the exported runs, cell layers, model maps and quicklooks
@@ -14,7 +15,13 @@
 # grid    The label folder round2 as far as it exists (candidates, the
 #         sample, render markers and dates) and the queue's status table
 #         (written by `scripts/chpc/round2.sh status` on CHPC).
-# stage1  The same plus answers, ledger, labels and sheets.
+#         After stage 1 it also brings answers, ledger and labels, without
+#         the sheets.
+# stage1  The same plus answers, ledger, labels and every sheet. An overview
+#         sheet is about 6 MB and a pair sheet 1.5 MB, so the 1,600 windows
+#         of stage 1 come to about 12 GB. Use `grid` and `sheets` for less.
+# sheets  The sheets of the windows named in LIST, a text file with one
+#         window ID a line (`#` starts a comment).
 # final   The same after stage 2, plus the label rasters of the chips and
 #         the model runs of round 2 (pairmodel/r2_*).
 #
@@ -26,9 +33,14 @@
 
 set -euo pipefail
 
-STEP="${1:?usage: $0 pilot|grid|stage1|final [--dry-run]}"
+USAGE="usage: $0 pilot|grid|stage1|final [--dry-run], or sheets LIST [--dry-run]"
+STEP="${1:?$USAGE}"
+shift
 DRY=()
-[[ "${2:-}" == "--dry-run" ]] && DRY=(--dry-run)
+ARGS=()
+for arg in "$@"; do
+    if [[ "$arg" == "--dry-run" ]]; then DRY=(--dry-run); else ARGS+=("$arg"); fi
+done
 
 : "${CSDV_CHPC_HOST:?export CSDV_CHPC_HOST, e.g. u0123456@dtn07.chpc.utah.edu}"
 : "${CSDV_CHPC_EXPORTS:?export CSDV_CHPC_EXPORTS, the absolute \$CSDV_EXPORT_DIR on CHPC}"
@@ -96,8 +108,19 @@ case "$STEP" in
             --include='chips/*_aux.tif'
         tree pairmodel --include='r2_*/***' --exclude='*.pt' --exclude='*'
         ;;
+    sheets)
+        LIST="${ARGS[0]:?$USAGE}"
+        mapfile -t WINDOWS < <(sed -e 's/#.*//' -e 's/[[:space:]]//g' -e '/^$/d' "$LIST")
+        [[ ${#WINDOWS[@]} -gt 0 ]] || { echo "ERROR: no window ID in $LIST" >&2; exit 1; }
+        RULES=(--include='sheets/')
+        for window in "${WINDOWS[@]}"; do
+            RULES+=("--include=sheets/${window}_*")
+        done
+        echo "Sheets of ${#WINDOWS[@]} windows"
+        tree label/round2 "${RULES[@]}" --exclude='*'
+        ;;
     *)
-        echo "usage: $0 pilot|grid|stage1|final [--dry-run]" >&2
+        echo "$USAGE" >&2
         exit 2
         ;;
 esac
