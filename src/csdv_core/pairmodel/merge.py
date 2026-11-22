@@ -8,7 +8,11 @@ this module writes a new label folder whose ``chips/`` holds
   name) and window ids prefixed with it (``stable_forest:W0001``), so that
   windows of different runs never share an id;
 - the raster files of every chip, as hard links where the file system allows
-  them and symbolic links otherwise.
+  them and symbolic links otherwise;
+- ``sites.csv``: the rows of each run's own ``sites.csv`` (the label folder
+  of a run by places has one), with a column ``run``. Training reads the
+  roles and the ties between units from it (``--hold-role``, and units tied
+  to a held-out unit by ``holdout_with``), so it travels with the chips.
 
 A chip id that an earlier run already holds is left out of a later run, and
 the number left out is logged. The source folders are not changed.
@@ -38,6 +42,7 @@ class MergeResult:
     dropped: dict[str, int]
     files: int
     hard_links: int
+    sites: int = 0
 
 
 def _link(source: Path, target: Path) -> bool:
@@ -114,6 +119,20 @@ def merge_chips(out_dir: Path, runs: Mapping[str, Path]) -> MergeResult:
             files += 1
     merged = pd.concat(tables, ignore_index=True)
     merged.to_parquet(chips_out / "chips.parquet", index=False)
+    sites = []
+    for name, label_dir in runs.items():
+        path = Path(label_dir) / "sites.csv"
+        if not path.is_file():
+            continue
+        table = pd.read_csv(path, dtype=str, keep_default_na=False, comment="#")
+        if "unit" in table:
+            sites.append(table.assign(run=name))
+    n_sites = 0
+    if sites:
+        both = pd.concat(sites, ignore_index=True).fillna("")
+        both = both.drop_duplicates("unit")
+        both.to_csv(chips_out / "sites.csv", index=False)
+        n_sites = len(both)
     logger.info(
         "%d chips, %d files linked (%d hard links) in %s",
         len(merged),
@@ -121,4 +140,4 @@ def merge_chips(out_dir: Path, runs: Mapping[str, Path]) -> MergeResult:
         hard,
         chips_out,
     )
-    return MergeResult(chips_out, counts, dropped, files, hard)
+    return MergeResult(chips_out, counts, dropped, files, hard, n_sites)

@@ -8,6 +8,8 @@
 #   scripts/chpc/round2_pull.sh stage1 [--dry-run]
 #   scripts/chpc/round2_pull.sh final  [--dry-run]
 #   scripts/chpc/round2_pull.sh sheets LIST [--dry-run]
+#   scripts/chpc/round2_pull.sh chips  [--dry-run]
+#   scripts/chpc/round2_pull.sh evaluate [--optional] [--dry-run]
 #
 # pilot   The label folder round2_pilot (tables, answers, ledger, labels,
 #         sheets), the exported runs, cell layers, model maps and quicklooks
@@ -22,8 +24,17 @@
 #         of stage 1 come to about 12 GB. Use `grid` and `sheets` for less.
 # sheets  The sheets of the windows named in LIST, a text file with one
 #         window ID a line (`#` starts a comment).
-# final   The same after stage 2, plus the label rasters of the chips and
-#         the model runs of round 2 (pairmodel/r2_*).
+# final   The label folder after stage 2: tables, answers, ledger, labels
+#         and the chip table (chips/chips.parquet). Tens of MB. No sheet and
+#         no raster: the sheets of both stages come to about 25 GB, so take
+#         the ones to read with `sheets LIST`.
+# chips   The label rasters of the chips of round 2 (change, reason, agent,
+#         aux), for galleries of training samples. Not needed for the
+#         tables or the maps.
+# evaluate  The model runs of config/pair/round2.csv that exist on CHPC, as
+#         scripts/chpc/pull_pair_defoliation.sh --table does (maps, scores,
+#         comparisons, no checkpoint), and the chip table and sites table of
+#         the merged folders and of round2_norej.
 #
 # Settings (environment, as for pull_exports.sh): CSDV_CHPC_HOST,
 # CSDV_CHPC_EXPORTS, and optionally CSDV_LOCAL_EXPORTS.
@@ -33,7 +44,7 @@
 
 set -euo pipefail
 
-USAGE="usage: $0 pilot|grid|stage1|final [--dry-run], or sheets LIST [--dry-run]"
+USAGE="usage: $0 pilot|grid|stage1|final|chips|evaluate [--dry-run], or sheets LIST [--dry-run]"
 STEP="${1:?$USAGE}"
 shift
 DRY=()
@@ -101,12 +112,25 @@ case "$STEP" in
         label round2 --include='sheets/***'
         ;;
     final)
+        label round2 --include='chips/' --include='chips/chips.parquet'
+        ;;
+    chips)
         df -h /mnt/c 2>/dev/null | tail -1 || true
-        label round2 --include='sheets/***' --include='chips/' \
+        label round2 --include='chips/' \
             --include='chips/chips.parquet' --include='chips/*_change.tif' \
             --include='chips/*_reason.tif' --include='chips/*_agent.tif' \
             --include='chips/*_aux.tif'
-        tree pairmodel --include='r2_*/***' --exclude='*.pt' --exclude='*'
+        ;;
+    evaluate)
+        OPTIONAL=()
+        [[ " ${ARGS[*]-} " == *" --optional "* ]] && OPTIONAL=(--optional)
+        "$REPO/scripts/chpc/pull_pair_defoliation.sh" --table "$REPO/config/pair/round2.csv" \
+            ${OPTIONAL[@]+"${OPTIONAL[@]}"} ${DRY[@]+"${DRY[@]}"}
+        label round2_norej --include='chips/' --include='chips/chips.parquet'
+        for name in merged_r2 merged_r2_norej; do
+            tree "label/$name" --include='chips/' --include='chips/chips.parquet' \
+                --include='chips/sites.csv' --exclude='*'
+        done
         ;;
     sheets)
         LIST="${ARGS[0]:?$USAGE}"

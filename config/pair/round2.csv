@@ -1,0 +1,64 @@
+# The tests of round 2 of the training labels (analysis/vlm_labeling/3_round2/
+# PLAN.md, section 3). Every run trains on one merged chip folder, so that a
+# model and its control share the chips, the split by blocks, the validation
+# samples and the band statistics, and differ only in what is drawn:
+#
+#   merged_r2        scale_test + round2 + stable_forest (csdv pair merge-chips)
+#   merged_r2_norej  the same with round2_norej, the labels of round 2 built
+#                    without decision 10 (a confident joint rejection stays
+#                    unlabelled, every rejected model alarm is background)
+#
+# Test A, the known failures of round 1. Six units of the scale test are held
+# out one at a time and mapped, with round 2 in training (holdout_r2_) and
+# without it (holdout_r1_). The stable-forest chips are drawn in neither, so
+# that the difference is round 2 alone. Places of round 2 that saw the event
+# or the flight of a held-out unit are held out with it (holdout_with in the
+# chip folder's sites.csv, read by `csdv pair train` itself).
+#
+# Test B, the reserved places. The 20 places with the role test and Oregon
+# are held out, the model is scored on the label chips of the 20 places
+# (csdv pair score), with round 2 and without, two seeds each.
+#
+# Test C, decision 10. The model of test B trained on the labels without the
+# decision (reserved_norej_), and each of the two models scored on the test
+# chips of the other label run (rescore rows). On the labels without the
+# decision the rejected candidates are unlabelled, so both models are scored
+# on the same cells. The difference between a model's two scores is what it
+# does on the confident rejections themselves.
+#
+# Optional rows: West Virginia and the Smokies with round 2 and 15% of the
+# draws without loss from the stable-forest chips, the model one would use.
+#
+# Submit with scripts/chpc/round2.sh evaluate (which builds the variant and
+# the merged folders first), pull with scripts/chpc/round2_pull.sh evaluate.
+# About 50 minutes of GPU for a train row, 40 for a score row, 10 for a
+# rescore row.
+#
+# Columns as in config/pair/defoliation.csv. kind: train (hold the unit out,
+# map it, compare), score (hold the unit and the test places out, score the
+# test places), rescore (score the model of another row on this label run).
+run,kind,labels,dates,unit,seed,model,batch,notes,train_args
+holdout_r2_q3708104,train,merged_r2,2,q3708104,0,,yes,West Virginia held out with round 2,--exclude-runs stable_forest
+holdout_r1_q3708104,train,merged_r2,2,q3708104,0,,yes,West Virginia held out: the control,--exclude-runs round2 --exclude-runs stable_forest
+holdout_r2_q3508321,train,merged_r2,2,q3508321,0,,yes,Smokies held out with round 2,--exclude-runs stable_forest
+holdout_r1_q3508321,train,merged_r2,2,q3508321,0,,yes,Smokies held out: the control,--exclude-runs round2 --exclude-runs stable_forest
+holdout_r2_q3508207,train,merged_r2,2,q3508207,0,,yes,Blue Ridge (Helene) held out with round 2,--exclude-runs stable_forest
+holdout_r1_q3508207,train,merged_r2,2,q3508207,0,,yes,Blue Ridge (Helene) held out: the control,--exclude-runs round2 --exclude-runs stable_forest
+holdout_r2_q4010549,train,merged_r2,2,q4010549,0,,yes,Colorado burn held out with round 2,--exclude-runs stable_forest
+holdout_r1_q4010549,train,merged_r2,2,q4010549,0,,yes,Colorado burn held out: the control,--exclude-runs round2 --exclude-runs stable_forest
+holdout_r2_q4107127,train,merged_r2,2,q4107127,0,,yes,Rhode Island held out with round 2,--exclude-runs stable_forest
+holdout_r1_q4107127,train,merged_r2,2,q4107127,0,,yes,Rhode Island held out: the control,--exclude-runs round2 --exclude-runs stable_forest
+holdout_r2_q4709438,train,merged_r2,2,q4709438,0,,yes,Oregon held out with round 2,--exclude-runs stable_forest
+holdout_r1_q4709438,train,merged_r2,2,q4709438,0,,yes,Oregon held out: the control,--exclude-runs round2 --exclude-runs stable_forest
+reserved_r2_s0,score,merged_r2,2,q4709438,0,,yes,Test places and Oregon held out with round 2,--hold-role test --exclude-runs stable_forest
+reserved_r2_s1,score,merged_r2,2,q4709438,1,,yes,The same with another seed,--hold-role test --exclude-runs stable_forest
+reserved_r1_s0,score,merged_r2,2,q4709438,0,,yes,Test places and Oregon held out: the control,--hold-role test --exclude-runs round2 --exclude-runs stable_forest
+reserved_r1_s1,score,merged_r2,2,q4709438,1,,yes,The control with another seed,--hold-role test --exclude-runs round2 --exclude-runs stable_forest
+reserved_norej_s0,score,merged_r2_norej,2,q4709438,0,,yes,Test B with round 2 labelled without decision 10,--hold-role test --exclude-runs stable_forest
+reserved_norej_s1,score,merged_r2_norej,2,q4709438,1,,yes,The same with another seed,--hold-role test --exclude-runs stable_forest
+reserved_r2_s0_on_norej,rescore,merged_r2_norej,2,q4709438,0,reserved_r2_s0,yes,The model with decision 10 on the labels without it,
+reserved_r2_s1_on_norej,rescore,merged_r2_norej,2,q4709438,1,reserved_r2_s1,yes,The same with another seed,
+reserved_norej_s0_on_r2,rescore,merged_r2,2,q4709438,0,reserved_norej_s0,yes,The model without decision 10 on the labels with it,
+reserved_norej_s1_on_r2,rescore,merged_r2,2,q4709438,1,reserved_norej_s1,yes,The same with another seed,
+holdout_r2sf_q3708104,train,merged_r2,2,q3708104,0,,optional,West Virginia held out with round 2 and stable-forest draws,--run-draws stable_forest=0.15
+holdout_r2sf_q3508321,train,merged_r2,2,q3508321,0,,optional,Smokies held out with round 2 and stable-forest draws,--run-draws stable_forest=0.15

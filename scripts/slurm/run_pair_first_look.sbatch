@@ -43,7 +43,13 @@
 #                        Compute nodes have no internet: fetch the file on a
 #                        login node first (the command is printed when it is
 #                        missing).
-#   CSDV_PAIR_STAGES     Steps to run. Default "train predict compare".
+#   CSDV_PAIR_STAGES     Steps to run. Default "train predict compare". The
+#                        step "score" scores the checkpoint on the label
+#                        chips of the units with the role CSDV_PAIR_SCORE_ROLE
+#                        (default test) in the chip folder's sites.csv, and
+#                        maps nothing: "train score" for a test on many
+#                        small places, "score" alone with the checkpoint of
+#                        another run.
 #   CSDV_PAIR_CHECKPOINT Checkpoint for the map and the comparison. Default
 #                        best.pt of this run. With the checkpoint of another
 #                        run and CSDV_PAIR_STAGES="predict compare", the job
@@ -92,7 +98,7 @@ echo "run=$RUN_DIR holdout=$HOLDOUT split=$SPLIT_MODE val=$VAL stages=$STAGES sm
 echo "checkpoint=$CHECKPOINT"
 if [[ " $STAGES " == *" train "* && "$CHECKPOINT" != "$RUN_DIR/best.pt" ]]; then
     echo "ERROR: CSDV_PAIR_CHECKPOINT names another run, so this job must not train." \
-        "Set CSDV_PAIR_STAGES=\"predict compare\"." >&2
+        "Set CSDV_PAIR_STAGES=\"predict compare\" or \"score\"." >&2
     exit 1
 fi
 if [[ " $STAGES " != *" train "* && ! -f "$CHECKPOINT" ]]; then
@@ -198,6 +204,13 @@ if [[ " $STAGES " == *" compare "* ]]; then
     csdv pair compare --prob "$RUN_DIR/map/prob_$HOLDOUT.tif" --chips-dir "$CHIPS" \
         "${WHERE[@]}" --checkpoint "$CHECKPOINT" --data-root "$CSDV_DATA_ROOT" \
         --out-dir "$RUN_DIR/compare" --panels "$PANELS"
+    export_results
+fi
+
+if [[ " $STAGES " == *" score "* ]]; then
+    csdv pair score --checkpoint "$CHECKPOINT" --chips-dir "$CHIPS" \
+        --role "${CSDV_PAIR_SCORE_ROLE:-test}" --out-dir "$RUN_DIR/score" \
+        --workers "$WORKERS"
     export_results
 fi
 

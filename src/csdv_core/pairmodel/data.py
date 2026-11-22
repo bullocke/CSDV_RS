@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 IGNORE = 255
 #: Pixel size of the chips, metres.
 GSD = 0.6
+#: Sites table of a chip folder (see :func:`load_sites`).
+SITES_FILE = "sites.csv"
 #: A cell is ignore when at least this share of it has no imagery on a date.
 NO_IMAGERY_SHARE = 0.5
 #: A third image is used when at least this share of the crop has imagery.
@@ -56,13 +58,17 @@ __all__ = [
     "band_stats",
     "build_sample",
     "build_triple",
+    "SITES_FILE",
     "load_index",
+    "load_sites",
     "make_split",
     "missing_files",
     "pair_target",
     "read_date",
     "read_pair",
+    "role_units",
     "sample_weights",
+    "tied_units",
     "unit_folds",
 ]
 
@@ -136,6 +142,49 @@ def _json_list(value: Any) -> list:
     if isinstance(value, str):
         return json.loads(value)
     return list(value) if value is not None else []
+
+
+def load_sites(chips_dir: Path) -> pd.DataFrame | None:
+    """The sites table of a chip folder, or None when it has none.
+
+    ``sites.csv`` in a chip folder (written by ``csdv pair merge-chips`` from
+    the ``sites.csv`` of each label run) has one row per unit with the
+    optional columns ``role`` (``train`` or ``test``), ``holdout_with`` (a
+    unit that saw the same event or flight) and whatever else the label run
+    recorded (``target``, ``kind``).
+    """
+    path = Path(chips_dir) / SITES_FILE
+    if not path.is_file():
+        return None
+    sites = pd.read_csv(path, dtype=str, keep_default_na=False, comment="#")
+    if "unit" not in sites:
+        raise ValueError(f"{path} needs the column unit")
+    return sites
+
+
+def role_units(sites: pd.DataFrame | None, roles: Sequence[str]) -> list[str]:
+    """Units of the sites table with one of the roles."""
+    if sites is None or "role" not in sites or not roles:
+        return []
+    return sorted(sites.loc[sites["role"].str.strip().isin(set(roles)), "unit"])
+
+
+def tied_units(sites: pd.DataFrame | None, holdout: Sequence[str]) -> list[str]:
+    """Units that have to be held out with ``holdout``.
+
+    A unit is tied to another when its ``holdout_with`` names it: both saw
+    one event or one flight, so a model tested on one must not train on the
+    other. Several units may be named, separated by ``;`` or blanks.
+    """
+    if sites is None or "holdout_with" not in sites or not holdout:
+        return []
+    held = set(holdout)
+    tied = [
+        unit
+        for unit, names in zip(sites["unit"], sites["holdout_with"], strict=True)
+        if held & set(names.replace(";", " ").split()) and unit not in held
+    ]
+    return sorted(tied)
 
 
 def load_index(chips_dir: Path, *, min_valid: float = 0.05) -> pd.DataFrame:
@@ -392,6 +441,7 @@ def sample_weights(
     unit_power: float = 0.5,
     min_loss: float = 0.01,
     run_draws: Mapping[str, float] | None = None,
+    exclude_runs: Sequence[str] = (),
 ) -> np.ndarray:
     """Sampling weight of every row of ``index``.
 
@@ -413,11 +463,35 @@ def sample_weights(
             None or empty leaves the weights exactly as without it. A share
             of 0 gives the run's samples without loss no weight, and the
             others the weights they have without that run.
+        exclude_runs: Label runs whose samples are never drawn, with loss or
+            without. The other samples get the weights they have without
+            those runs: the control of a model trained with them, on the
+            same chip folder, split and band statistics.
 
     Raises:
-        ValueError: If a named run has no sample without loss, or the named
-            shares leave nothing for the other samples without loss.
+        ValueError: If a named run has no sample without loss, the named
+            shares leave nothing for the other samples without loss, or an
+            excluded run is not in the index or leaves no sample.
     """
+    if exclude_runs:
+        runs = index["run"] if "run" in index else pd.Series("", index=index.index)
+        absent = sorted(set(exclude_runs) - set(runs))
+        if absent:
+            raise ValueError(f"No sample from the label runs {absent}")
+        keep = ~runs.isin(set(exclude_runs)).to_numpy()
+        if not keep.any():
+            raise ValueError("The excluded runs leave no sample to draw")
+        weights = np.zeros(len(index), dtype="float64")
+        weights[keep] = sample_weights(
+            index[keep].reset_index(drop=True),
+            loss_draws=loss_draws,
+            unit_power=unit_power,
+            min_loss=min_loss,
+            run_draws={
+                k: v for k, v in (run_draws or {}).items() if k not in exclude_runs
+            },
+        )
+        return weights
     has_loss = (index["loss_share"] >= min_loss).to_numpy()
     weights = np.zeros(len(index), dtype="float64")
     groups: dict[str, tuple[np.ndarray, float]] = {

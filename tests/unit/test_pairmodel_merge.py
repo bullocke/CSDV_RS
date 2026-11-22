@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import numpy as np
@@ -128,3 +129,141 @@ def test_merge_chips_command(tmp_path: Path) -> None:
         pair, ["merge-chips", "--out", str(tmp_path / "n"), "--run", "nofolder"]
     )
     assert bad.exit_code != 0
+
+
+def test_an_excluded_run_is_never_drawn() -> None:
+    """The control of a model trained with a run: the others as without it."""
+    index = _index()
+    weights = D.sample_weights(index, loss_draws=0.5, exclude_runs=["stable"])
+    assert (weights[8:] == 0).all() and weights.sum() == pytest.approx(1.0)
+    alone = D.sample_weights(index.iloc[:8].drop(columns="run"), loss_draws=0.5)
+    assert weights[:8] == pytest.approx(alone)
+    # A run with loss leaves with all of its samples, not only the quiet ones.
+    weights = D.sample_weights(index, loss_draws=0.5, exclude_runs=["scale"])
+    assert (weights[:8] == 0).all() and weights[8:].sum() == pytest.approx(1.0)
+    # A share for an excluded run is dropped with it.
+    both = D.sample_weights(index, run_draws={"stable": 0.15}, exclude_runs=["stable"])
+    assert (both[8:] == 0).all()
+    with pytest.raises(ValueError, match="No sample from the label runs"):
+        D.sample_weights(index, exclude_runs=["other"])
+    with pytest.raises(ValueError, match="leave no sample"):
+        D.sample_weights(index, exclude_runs=["scale", "stable"])
+
+
+def _sites(folder: Path, rows: list[str]) -> None:
+    text = "unit,role,holdout_with,target\n" + "\n".join(rows) + "\n"
+    (folder / "sites.csv").write_text(text)
+
+
+def test_merge_carries_the_sites_of_its_runs(tmp_path: Path) -> None:
+    first = _run(tmp_path, "scale", [("qa_c0", 1), ("qb_c0", None)])
+    second = _run(tmp_path, "places", [("pa_c0", 1), ("pb_c0", 1), ("pc_c0", None)])
+    _sites(second, ["pa,train,qa,wind", "pb,test,,fire", "pc,train,,snow"])
+    result = merge_chips(tmp_path / "merged", {"scale": first, "places": second})
+    assert result.sites == 3
+    sites = D.load_sites(result.chips_dir)
+    assert list(sites["unit"]) == ["pa", "pb", "pc"] and set(sites["run"]) == {"places"}
+    assert D.role_units(sites, ["test"]) == ["pb"]
+    assert D.tied_units(sites, ["qa"]) == ["pa"]
+    assert D.tied_units(sites, ["qb"]) == [] and D.tied_units(None, ["qa"]) == []
+    assert D.load_sites(first / "chips") is None
+
+
+def test_training_holds_out_tied_units_and_roles(tmp_path: Path) -> None:
+    from csdv_core.pairmodel import train as T
+
+    first = _run(tmp_path, "scale", [("qa_c0", 1), ("qb_c0", 1), ("qc_c0", None)])
+    second = _run(tmp_path, "places", [("pa_c0", 1), ("pb_c0", 1), ("pc_c0", None)])
+    _sites(second, ["pa,train,qa,wind", "pb,test,,fire", "pc,train,,snow", "pz,test,,"])
+    chips = merge_chips(tmp_path / "merged", {"scale": first, "places": second})
+    cfg = T.TrainConfig(
+        chips_dir=chips.chips_dir,
+        out_dir=tmp_path / "run",
+        holdout_units=("qa",),
+        val_units=("qb",),
+    )
+    planned = T.plan(cfg)
+    # The place that saw the event of the held-out unit is held out with it.
+    assert planned.split.test == ("pa", "qa") and planned.held_with == ("pa",)
+    assert "pa" not in set(planned.train_index["unit"])
+    assert "ties them to a held-out unit: pa" in T.describe(planned)
+    # With the test places held out as well. A place without chips is no unit.
+    with_role = T.plan(T.dataclasses.replace(cfg, hold_roles=("test",)))
+    assert with_role.split.test == ("pa", "pb", "qa")
+    assert set(with_role.train_index["unit"]) == {"qc", "pc"}
+    # The draws of a control that leaves a run out.
+    control = T.dataclasses.replace(cfg, exclude_runs=("places",))
+    text = T.describe_draws(T.plan(control), control)
+    table = pd.read_csv(
+        io.StringIO(text.split("\n", 1)[1]), sep=r"\s{2,}", engine="python"
+    )
+    assert table.loc["places", ["draws with loss", "draws without"]].sum() == 0
+    assert table.loc["scale", ["draws with loss", "draws without"]].sum() == 1
+    # A folder without a sites table cannot hold out a role.
+    alone = T.TrainConfig(
+        chips_dir=first / "chips", out_dir=tmp_path / "r", hold_roles=("test",)
+    )
+    with pytest.raises(ValueError, match="roles cannot be held out"):
+        T.plan(alone)
+
+
+def test_score_writes_samples_units_and_pooled_scores(tmp_path: Path) -> None:
+    import json
+
+    import torch
+
+    from csdv_core.pairmodel.model import SiamesePairNet
+    from csdv_core.pairmodel.score import counts_of, score
+
+    first = _run(tmp_path, "scale", [("qa_c0", 1)])
+    second = _run(tmp_path, "places", [("pa_c0", 1), ("pb_c0", 0), ("pc_c0", None)])
+    _sites(second, ["pa,train,,wind", "pb,test,,fire", "pc,test,,snow", "pz,test,,"])
+    chips = merge_chips(tmp_path / "merged", {"scale": first, "places": second})
+    torch.manual_seed(0)
+    model = SiamesePairNet(encoder="resnet18", cell_px=16, n_agents=0)
+    checkpoint = tmp_path / "best.pt"
+    torch.save(
+        {
+            "model": model.state_dict(),
+            "encoder": "resnet18",
+            "cell_px": 16,
+            "n_agents": 0,
+            "n_dates": 2,
+            "mean": [60.0] * 4,
+            "std": [30.0] * 4,
+            "best_threshold": 0.4,
+        },
+        checkpoint,
+    )
+    out = tmp_path / "score"
+    result = score(
+        checkpoint, chips.chips_dir, out, ["pb", "pc", "pz"], workers=0, device="cpu"
+    )
+    assert result.units == ("pb", "pc") and result.threshold == 0.4
+    samples = pd.read_parquet(out / "samples.parquet")
+    # Two chips of three dates: two intervals each.
+    assert len(samples) == 4 and set(samples["run"]) == {"places"}
+    cells = (128 // 16) ** 2
+    loss = samples[(samples["unit"] == "pb") & (samples["k"] == 0)].iloc[0]
+    assert sum(loss["pos"]) > 0 and sum(loss["pos"]) + sum(loss["neg"]) <= cells
+    quiet = samples[samples["unit"] == "pc"]
+    assert all(sum(p) == 0 for p in quiet["pos"])
+    assert all(sum(n) == cells for n in quiet["neg"])
+    units = pd.read_csv(out / "units.csv").set_index("unit")
+    assert units.loc["pc", "loss_cells"] == 0 and units.loc["pb", "loss_cells"] > 0
+    record = json.loads((out / "score.json").read_text())
+    assert record["units"] == 2 and record["samples"] == 4
+    assert record["pooled"]["loss_cells"] == counts_of(samples).n_pos
+    assert record["ends_november_to_april"]["background_cells"] == 0
+
+    # The command takes the units from the roles of the sites table.
+    cli = CliRunner()
+    args = ["score", "--checkpoint", str(checkpoint), "--chips-dir"]
+    args += [str(chips.chips_dir), "--out-dir", str(tmp_path / "again")]
+    done = cli.invoke(
+        pair, [*args, "--role", "test", "--workers", "0", "--device", "cpu"]
+    )
+    assert done.exit_code == 0, done.output
+    assert "4 samples of 2 units" in done.output
+    none = cli.invoke(pair, args)
+    assert none.exit_code != 0 and "--units or --role" in none.output

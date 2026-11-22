@@ -108,6 +108,22 @@ scripts/chpc/submit_pair_defoliation.sh --table config/pair/stable_forest.csv
 scripts/chpc/pull_pair_defoliation.sh --table config/pair/stable_forest.csv
 ```
 
+### A run left out, tied units, and a test on many places
+
+`--exclude-runs NAME` never draws the samples of a label run, with loss or without, and gives every other sample the weight it has without that run. The blocks split, the validation samples and the band statistics stay those of the whole folder, so it is the control of a model trained with the run. Validation still holds the run's blocks, which favours the control a little when the best epoch is chosen. Chips of an excluded run are not decoded into the cache. The dry run prints the share of the training draws per label run, with loss and without. A unit's weight grows with the root of its sample count, so a run of many small units takes a larger share of the draws than of the samples.
+
+`csdv pair merge-chips` also writes `chips/sites.csv`, from the `sites.csv` of every label run that has one (a run by places, such as round 2). Training reads two of its columns. A unit whose `holdout_with` names a held-out unit saw the same event or flight and is held out with it, always. `--hold-role test` holds out the units with that role as well. The dry run names the units held out this way.
+
+`csdv pair score` scores a checkpoint on the label chips of units it did not train on, without a map. It reads each chip whole, as validation does, and writes `samples.parquet` (one row per chip and interval with the counts of loss and background cells by predicted percent, from which any grouping can be pooled later), `units.csv` and `score.json` (pooled scores, and those of the intervals that end on an image from November to April). `--role test` takes the units from `chips/sites.csv`. It does not check that the model did not train on them.
+
+```bash
+csdv pair train --chips-dir $CHIPS --holdout-units q4709438 --hold-role test \
+    --exclude-runs round2 --split blocks --dry-run
+csdv pair score --checkpoint best.pt --chips-dir $CHIPS --role test --out-dir score
+```
+
+The tests of round 2 use all three (`config/pair/round2.csv`, submitted by `scripts/chpc/round2.sh evaluate`). A row of kind `score` trains a model and scores it on the test places. A row of kind `rescore` scores the model of another row on the chips of its own label run.
+
 ## Loading
 
 The chip rasters are compressed with the bands of a pixel stored together, so a crop of two dates decodes every band of the whole chip. That takes about 50 ms per sample and was two thirds of an epoch. `--cache-dir` names a folder where every chip of the run is decoded once into an uncompressed array (about 12 MB per chip of seven dates, 30 GB for the full scale test) that the loader processes open as a memory map. A sample is then read in about 1 ms and is identical. The cache is built at the start of training, in parallel, and a manifest of the size and modification time of each chip's files decides which chips are decoded again. Put it on node scratch (the job script does).

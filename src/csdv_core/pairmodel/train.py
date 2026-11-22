@@ -59,6 +59,10 @@ class TrainConfig:
         chips_dir: Chip folder of the label run.
         out_dir: Run folder.
         holdout_units: Test units, kept out of training and validation.
+            Units tied to one of them in the chip folder's sites table are
+            held out as well (:func:`csdv_core.pairmodel.data.tied_units`).
+        hold_roles: Roles of the sites table whose units are held out too,
+            for example ``("test",)``.
         val_units: Validation units (ignored when ``fold`` is set).
         fold: Use this grouped fold as validation.
         n_folds: Number of grouped folds.
@@ -89,6 +93,10 @@ class TrainConfig:
         loss_draws: Share of training draws that hold loss.
         run_draws: Share of draws for the samples without loss of named label
             runs of a merged chip folder (see ``sample_weights``).
+        exclude_runs: Label runs of a merged chip folder that are never
+            drawn in training. The split, the validation samples and the
+            band statistics stay those of the whole folder, so the run is
+            the control of one trained with them.
         agents: Train a second head that names the agent of a loss.
         agent_weight: Weight of the agent head's loss beside the loss head's.
         patience: Epochs without a better validation score before stopping.
@@ -101,6 +109,7 @@ class TrainConfig:
     chips_dir: Path
     out_dir: Path
     holdout_units: tuple[str, ...] = ()
+    hold_roles: tuple[str, ...] = ()
     val_units: tuple[str, ...] = ()
     fold: int | None = None
     n_folds: int = 5
@@ -123,6 +132,7 @@ class TrainConfig:
     third_drop: float = 0.3
     loss_draws: float = 0.5
     run_draws: dict[str, float] = field(default_factory=dict)
+    exclude_runs: tuple[str, ...] = ()
     agents: bool = True
     agent_weight: float = 0.5
     patience: int = 8
@@ -172,6 +182,26 @@ class _Plan:
     val_index: Any
     sides: Any = None
     agent_cells: Any = None
+    held_with: tuple[str, ...] = ()
+
+
+def held_out(cfg: TrainConfig, index: Any) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Every unit a run holds out, and those among them it did not name.
+
+    The named units, the units of ``hold_roles``, and the units tied to any
+    of these by the sites table of the chip folder. Units of the table that
+    have no chip are left out.
+    """
+    sites = D.load_sites(cfg.chips_dir)
+    known = set(index["unit"])
+    held = set(cfg.holdout_units) | (set(D.role_units(sites, cfg.hold_roles)) & known)
+    if cfg.hold_roles and sites is None:
+        raise ValueError(
+            f"No {D.SITES_FILE} in {cfg.chips_dir}: roles cannot be held out"
+        )
+    held |= set(D.tied_units(sites, sorted(held))) & known
+    added = tuple(sorted(held - set(cfg.holdout_units)))
+    return tuple(sorted(held)), added
 
 
 def _plan_blocks(cfg: TrainConfig, index: Any) -> _Plan:
@@ -211,6 +241,8 @@ def plan(cfg: TrainConfig) -> _Plan:
         ValueError: If the split is unknown or cannot be made.
     """
     index = D.load_index(cfg.chips_dir)
+    holdout, added = held_out(cfg, index)
+    cfg = dataclasses.replace(cfg, holdout_units=holdout)
     if cfg.split == "blocks":
         planned = _plan_blocks(cfg, index)
     elif cfg.split == "units":
@@ -227,6 +259,7 @@ def plan(cfg: TrainConfig) -> _Plan:
         planned = _Plan(index, split, train_index, val_index)
     else:
         raise ValueError(f"Unknown split {cfg.split!r}: use units or blocks")
+    planned.held_with = added
     if cfg.max_val_samples and len(planned.val_index) > cfg.max_val_samples:
         planned.val_index = planned.val_index.sample(
             cfg.max_val_samples, random_state=cfg.seed
@@ -268,7 +301,44 @@ def describe(planned: _Plan) -> str:
         f"test: {len(planned.split.test)} units, {held['chip_id'].nunique()} chips, "
         f"{len(held)} samples ({', '.join(planned.split.test)})"
     )
+    if planned.held_with:
+        lines.append(
+            f"held out by role or because the sites table ties them to a "
+            f"held-out unit: {', '.join(planned.held_with)}"
+        )
     return "\n".join(lines)
+
+
+def describe_draws(planned: _Plan, cfg: TrainConfig) -> str:
+    """Share of the training draws per label run, with loss and without.
+
+    A merged chip folder holds runs of very different sizes, and a unit's
+    weight grows with the root of its sample count, so many small units can
+    take most of the draws. Empty for a folder of one run.
+    """
+    part = planned.train_index
+    if "run" not in part or part["run"].nunique() < 2:
+        return ""
+    weights = D.sample_weights(
+        part,
+        loss_draws=cfg.loss_draws,
+        run_draws=cfg.run_draws,
+        exclude_runs=cfg.exclude_runs,
+    )
+    loss = (part["loss_share"] >= 0.01).to_numpy()
+    table = pd.DataFrame(
+        {
+            "units": part.groupby("run")["unit"].nunique(),
+            "samples": part.groupby("run").size(),
+            "draws with loss": pd.Series(weights * loss).groupby(part["run"]).sum(),
+            "draws without": pd.Series(weights * ~loss).groupby(part["run"]).sum(),
+        }
+    )
+    total = weights.sum()
+    table[["draws with loss", "draws without"]] = (
+        table[["draws with loss", "draws without"]] / total
+    ).round(3)
+    return "Training draws per label run:\n" + table.to_string()
 
 
 def describe_agents(planned: _Plan, chips_dir: Path, cell_px: int) -> str:
@@ -450,10 +520,14 @@ def train(cfg: TrainConfig, *, resume: bool = True) -> TrainResult:
         # Before the device is set up: the build starts processes.
         from csdv_core.pairmodel.cache import build_cache
 
+        # Chips of an excluded run are never drawn, so they are not decoded.
+        drawn = planned.train_index
+        if cfg.exclude_runs and "run" in drawn:
+            drawn = drawn[~drawn["run"].isin(set(cfg.exclude_runs))]
         build_cache(
             cfg.chips_dir,
             cfg.cache_dir,
-            pd.concat([planned.train_index, planned.val_index])[["chip_id", "n_dates"]],
+            pd.concat([drawn, planned.val_index])[["chip_id", "n_dates"]],
             workers=max(cfg.workers, 1),
         )
     out = Path(cfg.out_dir)
@@ -498,8 +572,14 @@ def train(cfg: TrainConfig, *, resume: bool = True) -> TrainResult:
     )
     val_set = D.PairDataset(planned.val_index, cfg.chips_dir, units=val_units, **common)
     weights = D.sample_weights(
-        planned.train_index, loss_draws=cfg.loss_draws, run_draws=cfg.run_draws
+        planned.train_index,
+        loss_draws=cfg.loss_draws,
+        run_draws=cfg.run_draws,
+        exclude_runs=cfg.exclude_runs,
     )
+    draws = describe_draws(planned, cfg)
+    if draws:
+        logger.info("\n%s", draws)
     sampler = WeightedRandomSampler(
         torch.as_tensor(weights, dtype=torch.double),
         num_samples=cfg.samples_per_epoch,

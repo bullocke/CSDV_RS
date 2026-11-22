@@ -7,6 +7,7 @@
 #   scripts/chpc/round2.sh grid              [--without-missing] [--dry-run]
 #   scripts/chpc/round2.sh stage1 [--cap 16] [--dry-run]
 #   scripts/chpc/round2.sh stage2  --cap 76  [--dry-run]
+#   scripts/chpc/round2.sh evaluate [--optional] [--only RUN,RUN] [--dry-run]
 #   scripts/chpc/round2.sh status [pilot]
 #
 # pilot   The whole chain on the few boxes of config/grid/round2_pilot.csv:
@@ -24,6 +25,14 @@
 #         2, then renders, calls and builds. The cap is cumulative. Copies
 #         config/label/round2/config.yaml to the label folder when it has
 #         changed, so that the build of both stages uses it.
+# evaluate  The model tests of the round (config/pair/round2.csv), after
+#         stage 2 has built its labels. No paid call. It makes the label
+#         folder round2_norej (the same answers built without decision 10,
+#         one CPU job), merges the chips of scale_test, round2 and
+#         stable_forest into merged_r2 and merged_r2_norej, and submits one
+#         GPU job per row of the table, each waiting for the folder it
+#         reads. Give it again to submit what is not done. --optional and
+#         --only are passed to scripts/chpc/submit_pair_defoliation.sh.
 # status  Where every box stands (read from disk), what is queued, what the
 #         label run has spent.
 #
@@ -48,9 +57,11 @@ set -euo pipefail
 
 STEP="${1:-}"
 [[ -n "$STEP" ]] && shift
-CAP="" DRY=() WHICH="" MISSING=()
+CAP="" DRY=() WHICH="" MISSING=() TABLE_ARGS=()
 while (($#)); do
     case "$1" in
+        --optional) TABLE_ARGS+=(--optional); shift ;;
+        --only) TABLE_ARGS+=(--only "${2:?--only needs a list of runs}"); shift 2 ;;
         --cap) CAP="${2:?--cap needs a value}"; shift 2 ;;
         --dry-run) DRY=(--dry-run); shift ;;
         --without-missing) MISSING=(--without-missing); shift ;;
@@ -179,6 +190,93 @@ MSG
             --build-stages 1,2 --sheets "--stage 2 --max-pairs 1" ${DRY[@]+"${DRY[@]}"}
         echo
         echo "Afterwards on the laptop: scripts/chpc/round2_pull.sh final"
+        echo "Then here: scripts/chpc/round2.sh evaluate (the model tests, no paid call)"
+        ;;
+    evaluate)
+        : "${CSDV_SBATCH_CPU:?set CSDV_SBATCH_CPU in scripts/chpc/env.sh}"
+        LABELS="$CSDV_EXPORT_DIR/label"
+        BASE="$LABELS/round2"
+        VARIANT="$LABELS/round2_norej"
+        for name in scale_test round2 stable_forest; do
+            [[ -f "$LABELS/$name/chips/chips.parquet" ]] || {
+                echo "ERROR: no chips/chips.parquet in $LABELS/$name. For round2:" \
+                    "the build of stage 2 has to have ended." >&2
+                exit 1
+            }
+        done
+        if squeue -h -u "$USER" -o "%j" | grep '^csdv_label' | grep -qv '_norej$'; then
+            echo "ERROR: a job of the label chain is still queued or running." \
+                "Wait for it, so that the answers and chips are complete." >&2
+            exit 1
+        fi
+        read -r -a CPU <<<"$CSDV_SBATCH_CPU"
+        run() {
+            # run COMMAND...: print it in a dry run, do it otherwise.
+            if [[ ${#DRY[@]} -gt 0 ]]; then
+                printf 'would run:'; printf ' %q' "$@"; echo
+            else
+                "$@"
+            fi
+        }
+        submit() {
+            # submit DEPENDENCY SBATCH-ARGUMENTS...: prints the job ID.
+            local after="$1"
+            shift
+            local cmd=(sbatch --parsable "${CPU[@]}" --output="$CSDV_LOG_DIR/%x-%j.out")
+            [[ -n "$after" ]] && cmd+=(--dependency="afterok:$after" --kill-on-invalid-dep=yes)
+            cmd+=("$@")
+            if [[ ${#DRY[@]} -gt 0 ]]; then
+                printf 'would submit:' >&2; printf ' %q' "${cmd[@]}" >&2; echo >&2
+                echo "<job>"
+            else
+                "${cmd[@]}"
+            fi
+        }
+        # 1. The labels without decision 10: the same sample and answers,
+        #    another config.yaml, the stacks through a link. No call.
+        BUILD=""
+        if [[ -f "$VARIANT/chips/chips.parquet" ]]; then
+            echo "round2_norej is built."
+        else
+            run mkdir -p "$VARIANT"
+            for file in windows.csv units.csv judged.csv answers.jsonl \
+                locations.csv sites.csv sample_strata.csv; do
+                [[ -f "$BASE/$file" ]] && run cp -p "$BASE/$file" "$VARIANT/"
+            done
+            [[ -d "$VARIANT/candidates" ]] || run cp -rp "$BASE/candidates" "$VARIANT/"
+            [[ -e "$VARIANT/stacks" ]] || run ln -s ../round2/stacks "$VARIANT/stacks"
+            run cp config/label/round2_norej/config.yaml "$VARIANT/config.yaml"
+            BUILD="$(submit "" --job-name=csdv_label_build_norej \
+                "$CSDV_REPO/scripts/slurm/run_label_build.sbatch" "$VARIANT" --stage 1,2)"
+            echo "build of round2_norej: job $BUILD"
+        fi
+        # 2. The merged chip folders. Links only, so a small CPU job each.
+        merge() {
+            # merge NAME ROUND2-FOLDER DEPENDENCY: prints the job ID, or nothing.
+            local name="$1" round="$2" after="$3"
+            if [[ -f "$LABELS/$name/chips/chips.parquet" ]]; then
+                echo "$name is merged." >&2
+                return 0
+            fi
+            submit "$after" --job-name="csdv_merge_$name" --time=01:00:00 \
+                "$CSDV_REPO/scripts/slurm/run_csdv_cpu.sbatch" pair merge-chips \
+                --out "$LABELS/$name" --run "scale_test=$LABELS/scale_test" \
+                --run "round2=$round" --run "stable_forest=$LABELS/stable_forest"
+        }
+        MERGE_A="$(merge merged_r2 "$BASE" "")"
+        MERGE_B="$(merge merged_r2_norej "$VARIANT" "$BUILD")"
+        [[ -n "$MERGE_A" ]] && echo "merge of merged_r2: job $MERGE_A"
+        [[ -n "$MERGE_B" ]] && echo "merge of merged_r2_norej: job $MERGE_B"
+        # 3. One GPU job per row of the run table, after both merges.
+        AFTER=""
+        for id in "$MERGE_A" "$MERGE_B"; do
+            [[ -n "$id" ]] && AFTER="${AFTER:+$AFTER:}$id"
+        done
+        scripts/chpc/submit_pair_defoliation.sh --table config/pair/round2.csv \
+            --predict-args "" --no-smoke ${AFTER:+--after "$AFTER"} \
+            ${TABLE_ARGS[@]+"${TABLE_ARGS[@]}"} ${DRY[@]+"${DRY[@]}"}
+        echo
+        echo "Afterwards on the laptop: scripts/chpc/round2_pull.sh evaluate"
         ;;
     status)
         NAME="round2${WHICH:+_$WHICH}"

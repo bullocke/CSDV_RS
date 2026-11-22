@@ -1,0 +1,13 @@
+# The labels of round 2 without decision 10, for test C of the round
+# (config/pair/round2.csv). Same sample and same answers as label/round2.
+# Nothing is drawn or asked again: scripts/chpc/round2.sh evaluate copies the
+# small files of that run, links its stacks and builds.
+#
+# Without the policy and routing lines of config/label/round2/config.yaml the
+# packaged rules hold: a jointly rejected candidate of a height source is
+# unlabelled in the interval that flagged it, and a rejected alarm of the pair
+# model is background there, whether the rejection was confident or not.
+chips:
+  max_window_chips: 2
+rules:
+  never_green_ndvi: 0.05

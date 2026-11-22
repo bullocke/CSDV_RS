@@ -152,6 +152,23 @@ def pair() -> None:
     help="Share of draws for the samples without loss of a label run of a merged "
     "chip folder (`csdv pair merge-chips`), e.g. stable_forest=0.15. Repeatable.",
 )
+@click.option(
+    "--exclude-runs",
+    multiple=True,
+    metavar="RUN",
+    help="A label run of a merged chip folder that is never drawn in training. "
+    "The split, the validation samples and the band statistics stay those of "
+    "the whole folder: the control of a model trained with the run. Repeatable.",
+)
+@click.option(
+    "--hold-role",
+    "hold_roles",
+    multiple=True,
+    metavar="ROLE",
+    help="Also hold out the units with this role in the chip folder's "
+    "sites.csv, e.g. test. Units that the table ties to a held-out unit "
+    "(holdout_with) are always held out. Repeatable.",
+)
 @click.option("--patience", type=int, default=8, show_default=True)
 @click.option("--seed", type=int, default=0, show_default=True)
 @click.option("--max-val-samples", type=int, default=None)
@@ -188,6 +205,8 @@ def train_cmd(
     n_dates,
     third_drop,
     run_draws,
+    exclude_runs,
+    hold_roles,
     patience,
     seed,
     max_val_samples,
@@ -240,6 +259,8 @@ def train_cmd(
         n_dates=int(n_dates),
         third_drop=third_drop,
         run_draws=_run_draws(run_draws),
+        exclude_runs=tuple(r.strip() for r in exclude_runs if r.strip()),
+        hold_roles=tuple(r.strip() for r in hold_roles if r.strip()),
         patience=patience,
         seed=seed,
         max_val_samples=max_val_samples,
@@ -249,8 +270,11 @@ def train_cmd(
         try:
             planned = T.plan(cfg)
             click.echo(T.describe(planned))
+            draws = T.describe_draws(planned, cfg)
         except (FileNotFoundError, ValueError) as exc:
             raise click.ClickException(str(exc)) from exc
+        if draws:
+            click.echo(draws)
         missing = D.missing_files(chips_dir, sorted(planned.index["chip_id"].unique()))
         if missing:
             raise click.ClickException(
@@ -516,6 +540,80 @@ def crops_cmd(boxes: Path, out_dir: Path, data_root: Path | None) -> None:
         click.echo(f"No mosaic for: {', '.join(sorted(set(report.missing)))}")
 
 
+@pair.command("score")
+@click.option(
+    "--checkpoint",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+@click.option(
+    "--chips-dir",
+    required=True,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Chip folder that holds the chips of the units to score.",
+)
+@click.option(
+    "--out-dir",
+    required=True,
+    type=click.Path(file_okay=False, path_type=Path),
+)
+@click.option("--units", default="", help="Units to score, comma-separated.")
+@click.option(
+    "--role",
+    "roles",
+    multiple=True,
+    metavar="ROLE",
+    help="Score the units with this role in the chip folder's sites.csv, "
+    "e.g. test. Repeatable, and added to --units.",
+)
+@click.option("--batch-size", type=int, default=16, show_default=True)
+@click.option("--workers", type=int, default=4, show_default=True)
+@click.option("--device", default="auto", show_default=True)
+def score_cmd(
+    checkpoint, chips_dir, out_dir, units, roles, batch_size, workers, device
+):
+    """Score a checkpoint on the label chips of units it did not train on.
+
+    Writes one row per chip and interval with the predicted probabilities
+    of its loss and background cells (samples.parquet), scores per unit
+    (units.csv) and the pooled scores (score.json). Nothing checks that the
+    model did not train on the units: hold them out when training
+    (--holdout-units, --hold-role).
+    """
+    from csdv_core.pairmodel import data as D
+    from csdv_core.pairmodel.score import score
+
+    _setup_logging()
+    wanted = set(_units(units))
+    if roles:
+        sites = D.load_sites(chips_dir)
+        if sites is None:
+            raise click.ClickException(f"No {D.SITES_FILE} in {chips_dir}")
+        wanted |= set(D.role_units(sites, roles))
+    if not wanted:
+        raise click.UsageError("Name the units to score with --units or --role.")
+    try:
+        result = score(
+            checkpoint,
+            chips_dir,
+            out_dir,
+            sorted(wanted),
+            batch_size=batch_size,
+            workers=workers,
+            device=device,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    pooled = result.pooled
+    click.echo(
+        f"{result.samples} samples of {len(result.units)} units. Average precision "
+        f"{pooled['average_precision']:.3f}, recall {pooled['recall']:.3f} and "
+        f"precision {pooled['precision']:.3f} at {result.threshold:.2f}, "
+        f"{100 * pooled['background_flagged']:.2f}% of background cells flagged. "
+        f"Tables in {result.out_dir}"
+    )
+
+
 @pair.command("merge-chips")
 @click.option(
     "--out",
@@ -551,6 +649,11 @@ def merge_chips_cmd(out_dir: Path, runs: tuple[str, ...]) -> None:
         raise click.ClickException(str(exc)) from exc
     for name, n in result.chips.items():
         click.echo(f"{name}: {n} chips ({result.dropped[name]} left out as duplicates)")
+    if result.sites:
+        click.echo(
+            f"sites.csv: {result.sites} units with a role, a target or a tie "
+            "to another unit"
+        )
     click.echo(
         f"{result.files} files linked ({result.hard_links} hard links) in "
         f"{result.chips_dir}"

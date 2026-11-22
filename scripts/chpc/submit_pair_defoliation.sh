@@ -9,9 +9,17 @@
 # nothing. Every map is also written for the pairs that skip a date
 # (prob_skip_<unit>.tif).
 #
+# Other run tables use the same script (--table): config/pair/stable_forest.csv
+# and config/pair/round2.csv. Two more kinds of row serve tests on many small
+# places. A "score" row trains a model and scores it on the label chips of
+# the units with the role "test" in the chip folder's sites.csv, without a
+# map (`csdv pair score`). A "rescore" row scores the model of another row
+# on the chips of its own label run.
+#
 # Usage:
 #   scripts/chpc/submit_pair_defoliation.sh [--after JOBID] [--only RUN,RUN]
-#       [--optional] [--no-smoke] [--table FILE] [--dry-run]
+#       [--optional] [--no-smoke] [--table FILE] [--predict-args "ARGS"]
+#       [--dry-run]
 #
 #   --after JOBID  Start nothing before this job has ended well, for example
 #                  the label build of the variant (run_label_build.sbatch).
@@ -21,6 +29,9 @@
 #                  first run as a ten minute check (RUN_smoke), and every
 #                  other job waits for it to end well.
 #   --table FILE   Run table. Default config/pair/defoliation.csv.
+#   --predict-args "ARGS"  Options of `csdv pair predict`. Default
+#                  "--skip-pairs", which the defoliation test needs. Pass ""
+#                  for maps of consecutive dates only.
 #   --dry-run      Print the sbatch commands and submit nothing.
 #
 # The run table may end with a column train_args: further options for
@@ -43,16 +54,18 @@ ONLY=""
 OPTIONAL=0
 SMOKE=1
 TABLE=""
+PREDICT_ARGS="--skip-pairs"
 DRY=0
 while (($#)); do
     case "$1" in
+        --predict-args) PREDICT_ARGS="$2"; shift 2 ;;
         --after) AFTER="$2"; shift 2 ;;
         --only) ONLY="$2"; shift 2 ;;
         --optional) OPTIONAL=1; shift ;;
         --no-smoke) SMOKE=0; shift ;;
         --table) TABLE="$2"; shift 2 ;;
         --dry-run) DRY=1; shift ;;
-        -h | --help) sed -n '2,37p' "$0"; exit 0 ;;
+        -h | --help) sed -n '2,48p' "$0"; exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
@@ -156,19 +169,21 @@ fi
 FIRST="$(join_ids "$AFTER" "$SMOKE_JOB")"
 
 submitted=0
-for wave in train look; do
+for wave in train score look rescore; do
     for line in "${ROWS[@]}"; do
         IFS=, read -r run kind labels dates unit seed model batch notes train_args <<<"$line"
         [[ "$kind" == "$wave" ]] || continue
         wanted "$run" "$batch" || continue
-        if [[ -f "$CSDV_EXPORT_DIR/pairmodel/$run/compare/compare.json" ]]; then
+        done_file="compare/compare.json"
+        [[ "$kind" == "score" || "$kind" == "rescore" ]] && done_file="score/score.json"
+        if [[ -f "$CSDV_EXPORT_DIR/pairmodel/$run/$done_file" ]]; then
             echo "$run: done, skipped"
             continue
         fi
         settings=(CSDV_PAIR_LABEL_DIR="$CSDV_EXPORT_DIR/label/$labels"
             CSDV_PAIR_HOLDOUT="$unit" CSDV_PAIR_SPLIT=blocks
-            CSDV_PAIR_PREDICT_ARGS="--skip-pairs")
-        if [[ "$kind" == "train" ]]; then
+            CSDV_PAIR_PREDICT_ARGS="$PREDICT_ARGS")
+        if [[ "$kind" == "train" || "$kind" == "score" ]]; then
             options="--seed $seed"
             limit=02:30:00
             if [[ "$dates" == "3" ]]; then
@@ -176,6 +191,7 @@ for wave in train look; do
                 limit=03:30:00
             fi
             settings+=(CSDV_PAIR_TRAIN_ARGS="$options${train_args:+ $train_args}")
+            [[ "$kind" == "score" ]] && settings+=(CSDV_PAIR_STAGES="train score")
             job="$(submit "$FIRST" "${settings[@]}" -- --time="$limit" \
                 --job-name="pair_$run" --output="$CSDV_LOG_DIR/%x-%j.out" \
                 "$SCRIPT" "$run")"
@@ -188,7 +204,9 @@ for wave in train look; do
                     "$model in this call, skipped" >&2
                 continue
             fi
-            settings+=(CSDV_PAIR_STAGES="predict compare"
+            stages="predict compare"
+            [[ "$kind" == "rescore" ]] && stages="score"
+            settings+=(CSDV_PAIR_STAGES="$stages"
                 CSDV_PAIR_CHECKPOINT="$checkpoint")
             job="$(submit "$(join_ids "$FIRST" "$trainer")" "${settings[@]}" -- \
                 --time=01:00:00 --job-name="pair_$run" \
