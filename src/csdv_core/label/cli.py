@@ -451,6 +451,30 @@ def _quiet_listed(path: Path | None) -> dict | None:
     }
 
 
+def _sites(sites_csv: Path | None) -> tuple[list[str] | None, set[str], dict]:
+    """The units of a sites file, those set aside for testing, and the
+    priority interval of each unit that has one."""
+    import pandas as pd
+
+    if sites_csv is None:
+        return None, set(), {}
+    sites = pd.read_csv(sites_csv, dtype=str, comment="#", keep_default_na=False)
+    if "unit" not in sites:
+        raise click.ClickException(f"{sites_csv} needs the column unit")
+    listed = [u.strip() for u in sites["unit"] if u.strip()]
+    plain: set[str] = set()
+    priority: dict[str, str] = {}
+    if "role" in sites:
+        plain = set(sites.loc[sites["role"].str.strip() == "test", "unit"])
+    if "interval" in sites:
+        priority = {
+            u.strip(): i.strip()
+            for u, i in zip(sites["unit"], sites["interval"], strict=True)
+            if i.strip()
+        }
+    return listed, plain, priority
+
+
 def _sample_classes(
     run,
     units: str | None,
@@ -478,22 +502,7 @@ def _sample_classes(
         offseason_intervals,
     )
 
-    plain: set[str] = set()
-    priority: dict[str, str] = {}
-    listed: list[str] | None = None
-    if sites_csv is not None:
-        sites = pd.read_csv(sites_csv, dtype=str, comment="#", keep_default_na=False)
-        if "unit" not in sites:
-            raise click.ClickException(f"{sites_csv} needs the column unit")
-        listed = [u.strip() for u in sites["unit"] if u.strip()]
-        if "role" in sites:
-            plain = set(sites.loc[sites["role"].str.strip() == "test", "unit"])
-        if "interval" in sites:
-            priority = {
-                u.strip(): i.strip()
-                for u, i in zip(sites["unit"], sites["interval"], strict=True)
-                if i.strip()
-            }
+    listed, plain, priority = _sites(sites_csv)
     unit_ids = _units(run, units) if units or listed is None else listed
     have = set(_units(run, None))
     absent = [u for u in unit_ids if u not in have]
@@ -585,11 +594,34 @@ def _sample_classes(
     required=True,
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     help="CSV with the columns unit, sub_stratum and n: the windows a stage "
-    "adds in each stratum.",
+    "adds in each stratum. An optional column season (nov-apr or may-oct) "
+    "limits a row to seeds whose interval ends on an image of that season.",
 )
 @click.option("--stage", type=int, default=2, show_default=True)
+@click.option(
+    "--sites",
+    "sites_csv",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="The sites file the sample was drawn with. Needed when the plan "
+    "names seasons.",
+)
+@click.option(
+    "--edge-m",
+    type=float,
+    default=260.0,
+    show_default=True,
+    help="The edge the sample was drawn with. Read when the plan names seasons.",
+)
 @click.option("--dry-run", is_flag=True, help="Report the stage, write nothing.")
-def allocate_cmd(plan_csv: Path, stage: int, dry_run: bool, **where) -> None:
+def allocate_cmd(
+    plan_csv: Path,
+    stage: int,
+    sites_csv: Path | None,
+    edge_m: float,
+    dry_run: bool,
+    **where,
+) -> None:
     """Choose the windows of a later stage of a sample by class.
 
     The sample was drawn larger than any budget, in a fixed order within
@@ -598,6 +630,13 @@ def allocate_cmd(plan_csv: Path, stage: int, dry_run: bool, **where) -> None:
     Nothing is drawn again and no window ID changes. Windows that hold
     answers keep their stage. Given again for the same stage, it replaces
     the windows of that stage that are not judged yet.
+
+    A plan row with a season splits its stratum by the season of the later
+    image of the seed's interval, and the inclusion probabilities of that
+    stratum are then counted per season. The candidates of each season are
+    listed again from the run, which needs the sites file and the edge of
+    the draw. The command refuses when a stratum does not hold the number
+    of candidates it held at the draw.
     """
     import shutil
     import time
@@ -605,7 +644,12 @@ def allocate_cmd(plan_csv: Path, stage: int, dry_run: bool, **where) -> None:
     import pandas as pd
 
     from csdv_core.label import judge as J
-    from csdv_core.label.sample_classes import allocate_stage
+    from csdv_core.label.sample_classes import (
+        OFF_SEASON,
+        ClassDesign,
+        allocate_stage,
+        seed_seasons,
+    )
 
     _setup_logging()
     run = _run(**where)
@@ -618,8 +662,18 @@ def allocate_cmd(plan_csv: Path, stage: int, dry_run: bool, **where) -> None:
         )
     plan = pd.read_csv(plan_csv, comment="#", dtype={"unit": str, "sub_stratum": str})
     answered = {r["window_id"] for r in J.read_records(run.answers) if not r["error"]}
+    seeds = None
+    if "season" in plan and plan["season"].fillna("").astype(str).str.strip().any():
+        if sites_csv is None:
+            raise click.ClickException("The plan names seasons: give --sites.")
+        _, plain, priority = _sites(sites_csv)
+        design = ClassDesign(
+            edge_m=edge_m, plain_units=frozenset(plain), priority=priority
+        )
+        named = plan[plan["season"].fillna("").astype(str).str.strip() != ""]
+        seeds = seed_seasons(run, sorted(set(named["unit"])), design)
     try:
-        out = allocate_stage(table, plan, stage, judged_windows=answered)
+        out = allocate_stage(table, plan, stage, judged_windows=answered, seeds=seeds)
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
     judged = pd.read_csv(run.root / "judged.csv", dtype=str)
@@ -633,6 +687,13 @@ def allocate_cmd(plan_csv: Path, stage: int, dry_run: bool, **where) -> None:
         f"{n} judged candidates, about ${2 * n * CALL_COST:.2f} for the verdicts "
         f"and up to ${n * POLYGON_COST:.2f} for polygons."
     )
+    off = chosen[chosen["season"] == OFF_SEASON]
+    if len(off):
+        n_off = int(off["window_id"].map(per_window).fillna(0).sum())
+        click.echo(
+            f"In the strata split by season, {len(off)} of these windows and "
+            f"{n_off} of the candidates end on a November to April image."
+        )
     if dry_run:
         return
     path = run.root / "windows.csv"

@@ -41,6 +41,14 @@ Windows may overlap or coincide. The labels of a window then use every
 verdict on a candidate it holds, whichever window asked for it. The
 inclusion probability belongs to the seed and is that of the stratum:
 windows taken so far over candidates in the stratum.
+
+A later stage can also steer by season. A plan row that names a season
+(``nov-apr`` or ``may-oct``, by the month of the later image of the seed's
+interval) splits its stratum in two. The windows drawn in a stratum are its
+first candidates in key order, so those of one season are the first of that
+season, and taking them in the order of rank is still a random sample of the
+season's candidates. The inclusion probability of a split stratum is then
+windows taken in the season over candidates of the season (``season_n``).
 """
 
 from __future__ import annotations
@@ -69,6 +77,9 @@ CLASS_ORDER = ("model_only", "cand_only", "agree", "partly", "di", "chm", "weak"
 SILENT_BELOW = 0.1
 FLAGS_FROM = 0.5
 SEASON_MONTHS = range(5, 10)
+#: Seasons a plan can name, by the month of the later image of an interval.
+OFF_SEASON = "nov-apr"
+ON_SEASON = "may-oct"
 
 __all__ = [
     "ClassDesign",
@@ -76,7 +87,9 @@ __all__ = [
     "candidate_class",
     "class_counts",
     "draw_class_windows",
+    "image_season",
     "offseason_intervals",
+    "seed_seasons",
 ]
 
 
@@ -135,6 +148,12 @@ def candidate_class(source: str, model_share: float, plain: bool) -> str | None:
     return "partly"
 
 
+def image_season(date: str) -> str:
+    """``nov-apr`` or ``may-oct``, by the month of an image date."""
+    month = int(str(date)[5:7])
+    return ON_SEASON if 5 <= month <= 10 else OFF_SEASON
+
+
 def offseason_intervals(run: LabelRun, units: Sequence[str]) -> dict[str, tuple]:
     """Per unit, the intervals a quiet chip is judged in.
 
@@ -182,6 +201,11 @@ def _unit_seeds(run: LabelRun, unit_id: str, design: ClassDesign) -> pd.DataFram
     wanted = design.priority.get(unit_id)
     cands["when"] = np.where(cands["interval"] == wanted, "priority", "other")
     cands["sub"] = cands["class"] + "-" + cands["when"]
+    unit = run.unit(unit_id)
+    later = {
+        name: unit.dates[unit.years[k + 1]] for k, name in enumerate(unit.intervals)
+    }
+    cands["season"] = [image_season(later[i]) for i in cands["interval"]]
     cands["key"] = [_key(design.seed, c) for c in cands["cand_id"]]
     return cands
 
@@ -356,14 +380,84 @@ def _judged_list(
 
 
 def _set_inclusion(table: pd.DataFrame) -> None:
-    """Inclusion probability of the seeds: windows staged over the stratum."""
+    """Inclusion probability of the seeds: windows staged over the stratum.
+
+    A stratum split by season (``season_n`` is set) counts per season.
+    """
     seeded = table["stratum"] != "quiet"
-    staged = table[seeded & (table["stage"] > 0)]
-    counts = staged.groupby(["unit", "sub_stratum"]).size()
-    keys = list(zip(table["unit"], table["sub_stratum"], strict=True))
+    if "season_n" in table:
+        split = table["season_n"].notna()
+        part = table["season"].where(split, "")
+        size = table["season_n"].where(split, table["stratum_n"])
+    else:
+        part = pd.Series("", index=table.index)
+        size = table["stratum_n"]
+    keyed = table.assign(_part=part)
+    staged = keyed[seeded & (keyed["stage"] > 0)]
+    counts = staged.groupby(["unit", "sub_stratum", "_part"]).size()
+    keys = list(zip(table["unit"], table["sub_stratum"], part, strict=True))
     taken = pd.Series([counts.get(k, 0) for k in keys], index=table.index)
-    prob = (taken / table["stratum_n"]).where(table["stage"] > 0)
+    prob = (taken / size).where(table["stage"] > 0)
     table.loc[seeded, "incl_prob"] = prob[seeded]
+
+
+def seed_seasons(run: LabelRun, units: Sequence[str], design: ClassDesign):
+    """Every candidate that can seed a window, with its stratum and season.
+
+    Returns:
+        A table with the columns ``unit``, ``cand_id``, ``sub_stratum`` and
+        ``season``. :func:`allocate_stage` needs it for a plan that names
+        seasons. The design has to be that of the draw (the units sampled
+        without the model, the priority intervals, the edge).
+    """
+    rows = []
+    for unit_id in units:
+        seeds = _unit_seeds(run, unit_id, design)
+        if seeds.empty:
+            continue
+        rows.append(
+            pd.DataFrame(
+                {
+                    "unit": unit_id,
+                    "cand_id": seeds["cand_id"].to_numpy(),
+                    "sub_stratum": seeds["sub"].to_numpy(),
+                    "season": seeds["season"].to_numpy(),
+                }
+            )
+        )
+    columns = ["unit", "cand_id", "sub_stratum", "season"]
+    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=columns)
+
+
+def _split_by_season(out: pd.DataFrame, named: pd.DataFrame, seeds: pd.DataFrame):
+    """Split the strata a plan names with a season, in place.
+
+    Raises:
+        ValueError: If a stratum is not in the sample, or holds another
+            number of candidates than when the sample was drawn (the seeds
+            were then listed with another design).
+    """
+    for unit_id, sub in (
+        named[["unit", "sub_stratum"]].drop_duplicates().itertuples(index=False)
+    ):
+        rows = out[
+            (out["unit"] == unit_id)
+            & (out["sub_stratum"] == sub)
+            & (out["stratum"] != "quiet")
+        ]
+        if rows.empty:
+            raise ValueError(f"No stratum {sub} in {unit_id}")
+        pool = seeds[(seeds["unit"] == unit_id) & (seeds["sub_stratum"] == sub)]
+        drawn = int(rows["stratum_n"].iloc[0])
+        season_of = pool.set_index("cand_id")["season"]
+        if len(pool) != drawn or not rows["seed_cand"].isin(season_of.index).all():
+            raise ValueError(
+                f"{unit_id} {sub}: {len(pool)} candidates listed, {drawn} when "
+                "the sample was drawn. Give the sites file and the edge of the draw."
+            )
+        season = rows["seed_cand"].map(season_of)
+        out.loc[rows.index, "season"] = season
+        out.loc[rows.index, "season_n"] = season.map(pool["season"].value_counts())
 
 
 def allocate_stage(
@@ -371,6 +465,7 @@ def allocate_stage(
     plan: pd.DataFrame,
     stage: int,
     judged_windows: set[str] | None = None,
+    seeds: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Give the next windows of each stratum to a stage.
 
@@ -378,18 +473,25 @@ def allocate_stage(
         table: ``windows.csv`` of a sample by class.
         plan: Columns ``unit``, ``sub_stratum`` and ``n``: how many windows
             of the stratum the stage adds. Strata that are not named get
-            none.
+            none. An optional column ``season`` (``nov-apr`` or ``may-oct``)
+            limits a row to the windows whose seed ends on an image of that
+            season, and splits the stratum by season from then on.
         stage: The stage to fill (2 or more).
         judged_windows: Windows that hold answers. They keep their stage.
+        seeds: The table of :func:`seed_seasons`. Needed when the plan
+            names a season.
 
     Returns:
         The table with ``stage`` and ``incl_prob`` updated. Windows are
-        taken in the order of ``rank``, after those of earlier stages.
+        taken in the order of ``rank``, after those of earlier stages. With
+        seasons in the plan the table also has the columns ``season`` and
+        ``season_n`` (candidates of the season in the stratum), set for the
+        strata that are split.
 
     Raises:
         ValueError: If the plan asks for more windows than a stratum has
-            left, names a stratum the sample does not have, or the stage is
-            not above 1.
+            left, names a stratum or a season the sample does not have, or
+            the stage is not above 1.
     """
     if stage < 2:
         raise ValueError("Stage 1 is set when the sample is drawn")
@@ -397,6 +499,21 @@ def allocate_stage(
     if missing:
         raise ValueError(f"The plan lacks the columns {sorted(missing)}")
     out = table.copy()
+    plan = plan.copy()
+    if "season" not in plan:
+        plan["season"] = ""
+    plan["season"] = plan["season"].fillna("").astype(str).str.strip()
+    named = plan[(plan["season"] != "") & (plan["n"] > 0)]
+    unknown = sorted(set(named["season"]) - {OFF_SEASON, ON_SEASON})
+    if unknown:
+        raise ValueError(f"The plan names the seasons {unknown}")
+    if "season_n" not in out:
+        out["season"], out["season_n"] = "", np.nan
+    out["season"] = out["season"].fillna("").astype(str)
+    if len(named):
+        if seeds is None:
+            raise ValueError("The plan names seasons: the seeds are needed")
+        _split_by_season(out, named, seeds)
     held = set(judged_windows or ())
     # Windows of this stage that are not judged yet go back to the pool, so
     # that the command can be given again with another plan.
@@ -414,9 +531,13 @@ def allocate_stage(
         ]
         if group.empty:
             raise ValueError(f"No stratum {row.sub_stratum} in {row.unit}")
+        name = row.sub_stratum
+        if row.season:
+            group = group[group["season"] == row.season]
+            name = f"{name} {row.season}"
         free = group[group["stage"] == 0].sort_values("rank")
         if len(free) < n:
-            short.append(f"{row.unit} {row.sub_stratum}: {n} asked, {len(free)} left")
+            short.append(f"{row.unit} {name}: {n} asked, {len(free)} left")
             continue
         out.loc[free.index[:n], "stage"] = stage
     if short:

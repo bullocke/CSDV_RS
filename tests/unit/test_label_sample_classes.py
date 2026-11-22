@@ -21,7 +21,9 @@ from csdv_core.label.sample_classes import (
     candidate_class,
     class_counts,
     draw_class_windows,
+    image_season,
     offseason_intervals,
+    seed_seasons,
 )
 
 UNIT = "q4407159"
@@ -320,6 +322,83 @@ def test_a_stage_takes_the_next_windows_of_each_stratum(run: LabelRun) -> None:
         allocate_stage(table, plan, 2)
 
 
+def test_a_plan_can_take_the_windows_of_one_season(run: LabelRun) -> None:
+    assert image_season("2018-10-31") == "may-oct"
+    assert image_season("2018-11-01") == "nov-apr"
+    assert image_season("2019-04-30") == "nov-apr"
+    assert image_season("2019-05-01") == "may-oct"
+
+    # One stratum whose seeds end in two seasons: the seven blocks the model
+    # flags in 2018-2021 and, as a stand-in for a second interval, the same
+    # candidates listed with a season of their own.
+    table, _ = draw_class_windows(run, [UNIT], _design())
+    sub = "model_only-priority"
+    seeds = seed_seasons(run, [UNIT], _design())
+    assert set(seeds["season"]) == {"may-oct"}
+    pool = seeds[seeds["sub_stratum"] == sub]
+    assert len(pool) == 7
+    drawn = table[table["sub_stratum"] == sub].sort_values("rank")
+    # Ranks 2 and 4 of the draw, and one candidate that was not drawn, end
+    # on a winter image. The rest end in summer.
+    winter = set(drawn["seed_cand"].iloc[[1, 3]])
+    winter.add(next(c for c in pool["cand_id"] if c not in set(drawn["seed_cand"])))
+    seeds.loc[seeds["cand_id"].isin(winter), "season"] = "nov-apr"
+
+    plan = pd.DataFrame(
+        {"unit": [UNIT], "sub_stratum": [sub], "season": ["nov-apr"], "n": [2]}
+    )
+    out = allocate_stage(table, plan, 2, seeds=seeds)
+    model = out[out["sub_stratum"] == sub].sort_values("rank")
+    # Both winter windows are taken out of turn. Rank 1 was stage 1.
+    assert list(model["stage"]) == [1, 2, 0, 2, 0]
+    assert list(model["season"]) == ["may-oct", "nov-apr"] * 2 + ["may-oct"]
+    assert list(model["season_n"]) == [4, 3, 4, 3, 4]
+    # Inclusion is counted per season: 2 of 3 in winter, 1 of 4 in summer.
+    assert model["incl_prob"].tolist()[:2] == pytest.approx([1 / 4, 2 / 3])
+    assert model["incl_prob"].iloc[3] == pytest.approx(2 / 3)
+    assert model["incl_prob"].iloc[[2, 4]].isna().all()
+    # A stratum the plan does not split keeps its count over the stratum.
+    other = out[out["sub_stratum"] == "cand_only-priority"]
+    assert other["season_n"].isna().all() and (other["incl_prob"] == 1.0).all()
+    assert list(out["window_id"]) == list(table["window_id"])
+
+    # A later row without a season takes the next windows of the stratum,
+    # and the stratum stays split.
+    plan = pd.DataFrame(
+        {
+            "unit": [UNIT, UNIT],
+            "sub_stratum": [sub, sub],
+            "season": ["nov-apr", "may-oct"],
+            "n": [1, 2],
+        }
+    )
+    out = allocate_stage(table, plan, 2, seeds=seeds)
+    model = out[out["sub_stratum"] == sub].sort_values("rank")
+    assert list(model["stage"]) == [1, 2, 2, 0, 2]
+    assert model["incl_prob"].tolist()[:3] == pytest.approx([3 / 4, 1 / 3, 3 / 4])
+    again = allocate_stage(
+        out, pd.DataFrame({"unit": [UNIT], "sub_stratum": [sub], "n": [1]}), 3
+    )
+    model = again[again["sub_stratum"] == sub].sort_values("rank")
+    assert list(model["stage"]) == [1, 2, 2, 3, 2]
+    assert model["incl_prob"].iloc[3] == pytest.approx(2 / 3)
+
+    plan = pd.DataFrame(
+        {"unit": [UNIT], "sub_stratum": [sub], "season": ["nov-apr"], "n": [3]}
+    )
+    with pytest.raises(ValueError, match="nov-apr: 3 asked, 2 left"):
+        allocate_stage(table, plan, 2, seeds=seeds)
+    with pytest.raises(ValueError, match="the seeds are needed"):
+        allocate_stage(table, plan, 2)
+    plan["season"] = "winter"
+    with pytest.raises(ValueError, match="names the seasons"):
+        allocate_stage(table, plan, 2, seeds=seeds)
+    # Seeds listed with another design do not match the draw.
+    plan["season"] = "nov-apr"
+    with pytest.raises(ValueError, match="6 candidates listed, 7 when"):
+        allocate_stage(table, plan, 2, seeds=seeds.drop(pool.index[-1]))
+
+
 def test_quiet_chips_are_judged_on_off_season_intervals(run: LabelRun) -> None:
     unit = run.unit(UNIT)
     assert offseason_intervals(run, [UNIT]) == {UNIT: tuple(unit.intervals)}
@@ -371,6 +450,23 @@ def test_cli_draws_by_class_and_allocates_a_stage(
     assert result.exit_code == 0, result.output
     assert (pd.read_csv(run.root / "windows.csv")["stage"] == 2).sum() == 3
     assert len(list(run.root.glob("windows.2*.csv"))) == 1  # the copy kept
+
+    # A plan with seasons needs the sites file, and counts per season.
+    plan.write_text(
+        f"unit,sub_stratum,season,n\n{UNIT},model_only-priority,may-oct,2\n"
+    )
+    result = cli.invoke(main, [*allocate, "--dry-run"])
+    assert result.exit_code != 0 and "give --sites" in result.output
+    seasons = [*allocate, "--sites", str(sites), "--edge-m", "60"]
+    result = cli.invoke(main, seasons)
+    assert result.exit_code == 0, result.output
+    table = pd.read_csv(run.root / "windows.csv")
+    model = table[table["sub_stratum"] == "model_only-priority"]
+    assert (model["season"] == "may-oct").all() and (model["season_n"] == 7).all()
+    assert (table["stage"] == 2).sum() == 2
+    # With another edge the strata are not those of the draw.
+    result = cli.invoke(main, [*seasons, "--edge-m", "400"])
+    assert result.exit_code != 0 and "when the sample was drawn" in result.output
 
     # A priority interval the unit does not have is an error, not a silent miss.
     sites.write_text(f"unit,role,interval\n{UNIT},train,2016-2019\n")

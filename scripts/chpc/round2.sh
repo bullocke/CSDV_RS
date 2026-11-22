@@ -21,7 +21,9 @@
 # stage1  The calls, polygons, labels and sheets of stage 1.
 # stage2  Reads config/label/round2/stage2_plan.csv (written after the
 #         stage-1 check-in, pulled with git), gives those windows to stage
-#         2, then renders, calls and builds. The cap is cumulative.
+#         2, then renders, calls and builds. The cap is cumulative. Copies
+#         config/label/round2/config.yaml to the label folder when it has
+#         changed, so that the build of both stages uses it.
 # status  Where every box stands (read from disk), what is queued, what the
 #         label run has spent.
 #
@@ -156,8 +158,23 @@ MSG
         [[ -f "$PLAN" ]] || { echo "ERROR: no $PLAN. git pull after the stage-1 check-in." >&2; exit 1; }
         WHERE=(--label-dir "$LABEL" --runs-dir "$CSDV_RESULTS_ROOT/disturbance"
             --run-subdir default --run-tag default)
+        # The thresholds of the run may have changed at the stage-1 check-in
+        # (label policy and routing): the build of stages 1 and 2 reads the
+        # copy in the label folder.
+        CONFIG="config/label/round2/config.yaml"
+        if [[ -f "$CONFIG" ]] && ! cmp -s "$CONFIG" "$LABEL/config.yaml"; then
+            echo "config.yaml of the label run differs from $CONFIG:"
+            diff "$LABEL/config.yaml" "$CONFIG" || true
+            if [[ ${#DRY[@]} -eq 0 ]]; then
+                cp "$CONFIG" "$LABEL/config.yaml"
+                echo "Copied to $LABEL/config.yaml"
+            fi
+        fi
         [[ -f "$LABEL/config.yaml" ]] && WHERE+=(--config "$LABEL/config.yaml")
-        csdv label allocate "${WHERE[@]}" --plan "$PLAN" --stage 2 ${DRY[@]+"${DRY[@]}"}
+        # The plan names seasons, so the allocation lists the candidates of
+        # each season again, with the sites file of the draw.
+        csdv label allocate "${WHERE[@]}" --plan "$PLAN" --stage 2 \
+            --sites config/label/round2/sites.csv ${DRY[@]+"${DRY[@]}"}
         scripts/chpc/submit_label_chain.sh "$LABEL" --stage 2 --cap "$CAP" \
             --build-stages 1,2 --sheets "--stage 2 --max-pairs 1" ${DRY[@]+"${DRY[@]}"}
         echo
