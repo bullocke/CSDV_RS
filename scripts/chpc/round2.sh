@@ -7,7 +7,8 @@
 #   scripts/chpc/round2.sh grid              [--without-missing] [--dry-run]
 #   scripts/chpc/round2.sh stage1 [--cap 16] [--dry-run]
 #   scripts/chpc/round2.sh stage2  --cap 76  [--reallocate] [--dry-run]
-#   scripts/chpc/round2.sh evaluate [--optional] [--only RUN,RUN] [--dry-run]
+#   scripts/chpc/round2.sh evaluate [--optional] [--only RUN,RUN]
+#       [--time HH:MM:SS] [--dry-run]
 #   scripts/chpc/round2.sh status [pilot]
 #
 # pilot   The whole chain on the few boxes of config/grid/round2_pilot.csv:
@@ -36,7 +37,11 @@
 #         one CPU job), merges the chips of scale_test, round2 and
 #         stable_forest into merged_r2 and merged_r2_norej, and submits one
 #         GPU job per row of the table, each waiting for the folder it
-#         reads. Give it again to submit what is not done. --optional and
+#         reads. Give it again to submit what is not done: a run with a
+#         result or with a job in the queue is left alone, and a run that
+#         was stopped goes on from its last epoch. --time is the limit of a
+#         training job (default 06:00:00: the merged folder holds about
+#         9,000 chips, and 02:30:00 was too short for it). --optional and
 #         --only are passed to scripts/chpc/submit_pair_defoliation.sh.
 # status  Where every box stands (read from disk), what is queued, what the
 #         label run has spent.
@@ -62,12 +67,13 @@ set -euo pipefail
 
 STEP="${1:-}"
 [[ -n "$STEP" ]] && shift
-CAP="" DRY=() WHICH="" MISSING=() TABLE_ARGS=() REALLOCATE=0
+CAP="" DRY=() WHICH="" MISSING=() TABLE_ARGS=() REALLOCATE=0 TRAIN_TIME="06:00:00"
 while (($#)); do
     case "$1" in
         --reallocate) REALLOCATE=1; shift ;;
         --optional) TABLE_ARGS+=(--optional); shift ;;
         --only) TABLE_ARGS+=(--only "${2:?--only needs a list of runs}"); shift 2 ;;
+        --time) TRAIN_TIME="${2:?--time needs a limit, for example 06:00:00}"; shift 2 ;;
         --cap) CAP="${2:?--cap needs a value}"; shift 2 ;;
         --dry-run) DRY=(--dry-run); shift ;;
         --without-missing) MISSING=(--without-missing); shift ;;
@@ -307,7 +313,8 @@ PY
             [[ -n "$id" ]] && AFTER="${AFTER:+$AFTER:}$id"
         done
         scripts/chpc/submit_pair_defoliation.sh --table config/pair/round2.csv \
-            --predict-args "" --no-smoke ${AFTER:+--after "$AFTER"} \
+            --predict-args "" --no-smoke --time "$TRAIN_TIME" \
+            ${AFTER:+--after "$AFTER"} \
             ${TABLE_ARGS[@]+"${TABLE_ARGS[@]}"} ${DRY[@]+"${DRY[@]}"}
         echo
         echo "Afterwards on the laptop: scripts/chpc/round2_pull.sh evaluate"

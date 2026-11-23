@@ -19,7 +19,7 @@
 # Usage:
 #   scripts/chpc/submit_pair_defoliation.sh [--after JOBID] [--only RUN,RUN]
 #       [--optional] [--no-smoke] [--table FILE] [--predict-args "ARGS"]
-#       [--dry-run]
+#       [--time HH:MM:SS] [--dry-run]
 #
 #   --after JOBID  Start nothing before this job has ended well, for example
 #                  the label build of the variant (run_label_build.sbatch).
@@ -32,15 +32,22 @@
 #   --predict-args "ARGS"  Options of `csdv pair predict`. Default
 #                  "--skip-pairs", which the defoliation test needs. Pass ""
 #                  for maps of consecutive dates only.
+#   --time LIMIT   Time limit of a "train" or "score" row. Default 02:30:00
+#                  with two dates and 03:30:00 with three, which fits a label
+#                  run of about 2,500 chips. A merged folder of 9,000 chips
+#                  needs more (config/pair/round2.csv).
 #   --dry-run      Print the sbatch commands and submit nothing.
 #
 # The run table may end with a column train_args: further options for
 # `csdv pair train` (no commas), for example "--run-draws stable_forest=0.15"
 # in config/pair/stable_forest.csv. Tables without it work as before.
 #
-# A run that already has a comparison in the export folder is skipped. A
-# "look" row waits for the job that trains its model when that job is
-# submitted by the same call.
+# A run that already has a comparison in the export folder is skipped, and
+# so is a run with a job of its name in the queue. A "look" or "rescore" row
+# waits for the job that trains its model when that job is submitted by the
+# same call or is in the queue. A job that hit its time limit left last.pt
+# in its run folder: give the same command again (with a longer --time) and
+# training goes on from there.
 #
 # About 50 minutes of GPU for a run with two dates, 75 for one with three,
 # and 15 for a "look" row.
@@ -55,6 +62,7 @@ OPTIONAL=0
 SMOKE=1
 TABLE=""
 PREDICT_ARGS="--skip-pairs"
+TIME=""
 DRY=0
 while (($#)); do
     case "$1" in
@@ -64,8 +72,9 @@ while (($#)); do
         --optional) OPTIONAL=1; shift ;;
         --no-smoke) SMOKE=0; shift ;;
         --table) TABLE="$2"; shift 2 ;;
+        --time) TIME="$2"; shift 2 ;;
         --dry-run) DRY=1; shift ;;
-        -h | --help) sed -n '2,48p' "$0"; exit 0 ;;
+        -h | --help) sed -n '2,55p' "$0"; exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
@@ -129,6 +138,20 @@ join_ids() {
     echo "$out"
 }
 
+# Jobs of this user that are queued or running, by name. A run with such a
+# job is not submitted again: two jobs would write into one run folder.
+declare -A QUEUED=()
+if command -v squeue >/dev/null 2>&1; then
+    while read -r id name reason; do
+        [[ -n "$id" ]] || continue
+        if [[ "$reason" == "DependencyNeverSatisfied" ]]; then
+            echo "Job $id ($name) can never start, the job it waited for did" \
+                "not end well. Cancel it (scancel $id) and give this command again." >&2
+        fi
+        QUEUED["$name"]="$id"
+    done < <(squeue -h -u "$USER" -o "%i %j %r" 2>/dev/null || true)
+fi
+
 declare -A TRAIN_JOB=()
 ROWS=()
 while IFS= read -r line; do
@@ -180,6 +203,12 @@ for wave in train score look rescore; do
             echo "$run: done, skipped"
             continue
         fi
+        if [[ -n "${QUEUED[pair_$run]:-}" ]]; then
+            echo "$run: job ${QUEUED[pair_$run]} is queued or running, skipped"
+            [[ "$kind" == "train" || "$kind" == "score" ]] &&
+                TRAIN_JOB["$run"]="${QUEUED[pair_$run]}"
+            continue
+        fi
         settings=(CSDV_PAIR_LABEL_DIR="$CSDV_EXPORT_DIR/label/$labels"
             CSDV_PAIR_HOLDOUT="$unit" CSDV_PAIR_SPLIT=blocks
             CSDV_PAIR_PREDICT_ARGS="$PREDICT_ARGS")
@@ -190,6 +219,7 @@ for wave in train score look rescore; do
                 options="--dates 3 --seed $seed"
                 limit=03:30:00
             fi
+            limit="${TIME:-$limit}"
             settings+=(CSDV_PAIR_TRAIN_ARGS="$options${train_args:+ $train_args}")
             [[ "$kind" == "score" ]] && settings+=(CSDV_PAIR_STAGES="train score")
             job="$(submit "$FIRST" "${settings[@]}" -- --time="$limit" \
