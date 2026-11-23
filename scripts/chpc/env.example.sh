@@ -62,6 +62,12 @@ export CSDV_GPU_POOLS="--account=EDIT --partition=EDIT --qos=EDIT --gres=gpu:1;-
 # login environment into every job.
 export CSDV_KEYS_FILE="$HOME/.csdv_keys"
 
+# Optional: the folder CHPC serves as your web space, for pages that are
+# shared by address (scripts/chpc/round2.sh page). ~/public_html is served
+# at https://home.chpc.utah.edu/~<uNID>/ and is public. It counts against
+# the quota of the home directory.
+# export CSDV_PUBLIC_HTML="$HOME/public_html"
+
 export CSDV_ENV=csdv-gpu
 export CSDV_DATA_ROOT="$CSDV_STORE/data"
 export CSDV_RESULTS_ROOT="$CSDV_STORE/results"

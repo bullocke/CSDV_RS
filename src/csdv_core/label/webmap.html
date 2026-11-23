@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Training labels</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+<style>
+:root {
+  --ink: #1d1d1b; --ink2: #55534e; --muted: #77756f; --line: #dddbd5;
+  --panel: #fbfaf7; --chip: #efede7; --accent: #2a78d6;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); background: var(--panel); display: flex; }
+#side { width: 380px; flex: none; height: 100%; overflow-y: auto; border-right: 1px solid var(--line); padding: 14px 16px 24px; }
+#map { flex: 1; height: 100%; background: #e9e7e1; }
+h1 { font-size: 17px; margin: 0 0 2px; }
+h2 { font-size: 13px; margin: 18px 0 6px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink2); }
+p { margin: 6px 0; }
+.sub { color: var(--muted); font-size: 12.5px; }
+.tabs { display: flex; gap: 4px; margin: 12px 0 4px; border-bottom: 1px solid var(--line); }
+.tabs button { border: 0; background: none; padding: 6px 10px; font: inherit; color: var(--ink2); cursor: pointer; border-bottom: 2px solid transparent; }
+.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+.row { display: flex; gap: 6px; align-items: center; }
+select, button.btn { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--ink); }
+select { flex: 1; min-width: 0; }
+button.btn { cursor: pointer; }
+button.btn:hover { background: var(--chip); }
+button.btn[aria-pressed="true"] { background: var(--ink); color: #fff; border-color: var(--ink); }
+.wrap { display: flex; flex-wrap: wrap; gap: 5px; }
+.badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 5px; border-radius: 9px; background: var(--chip); color: var(--ink2); font-size: 11.5px; text-align: center; }
+button.btn[aria-pressed="true"] .badge { background: #fff; color: var(--ink); }
+.tag { display: inline-block; padding: 1px 7px; border-radius: 9px; background: var(--chip); font-size: 12px; color: var(--ink2); margin-right: 4px; }
+label.check { display: flex; gap: 7px; align-items: center; padding: 2px 0; cursor: pointer; }
+.swatch { width: 34px; height: 14px; flex: none; border-radius: 3px; background: #4a5a3c; position: relative; }
+.swatch i { position: absolute; left: 3px; right: 3px; top: 4px; height: 0; border-top: 6px solid #fff; }
+.swatch b { position: absolute; left: 3px; right: 3px; top: 5.5px; height: 0; border-top: 3px solid var(--c); }
+.swatch.dash b { border-top-style: dashed; }
+.swatch.dotted b { border-top-style: dotted; }
+.swatch.model { background: linear-gradient(90deg, rgba(255,43,214,.25), rgba(255,43,214,.9)), #4a5a3c; }
+.dot { width: 12px; height: 12px; border-radius: 50%; flex: none; background: var(--c); border: 1.5px solid #fff; box-shadow: 0 0 0 1px var(--line); }
+.dot.test { box-shadow: 0 0 0 2px #111; }
+.legend div { display: flex; gap: 8px; align-items: center; padding: 2px 0; }
+#type-legend { display: grid; grid-template-columns: 1fr 1fr; column-gap: 10px; }
+#type-legend div:last-child { grid-column: 1 / -1; }
+.bars { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 8px; align-items: center; }
+.bars .bar { height: 10px; border-radius: 0 4px 4px 0; background: var(--c); }
+.bars .n { font-variant-numeric: tabular-nums; color: var(--ink2); }
+.note { background: var(--chip); border-radius: 6px; padding: 8px 10px; font-size: 13px; }
+.ex { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 8px; }
+.ex button { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 4px; cursor: pointer; text-align: left; font: inherit; }
+.ex button:hover { border-color: var(--accent); }
+.ex .pair { display: flex; gap: 2px; }
+.ex img { width: 50%; aspect-ratio: 1; display: block; border-radius: 3px; background: var(--chip); }
+.ex span { display: block; font-size: 11.5px; color: var(--ink2); margin-top: 3px; line-height: 1.3; }
+.hide { display: none !important; }
+.leaflet-popup-content { font: 13px/1.4 system-ui, sans-serif; margin: 10px 12px; max-width: 300px; }
+.leaflet-popup-content b { font-weight: 600; }
+.leaflet-popup-content .q { color: var(--ink2); margin-top: 4px; }
+img.model-layer { image-rendering: pixelated; }
+kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; font: 12px ui-monospace, monospace; background: #fff; }
+@media (max-width: 760px) {
+  body { flex-direction: column-reverse; }
+  #side { width: 100%; height: 50%; border-right: 0; border-top: 1px solid var(--line); }
+  #map { height: 50%; flex: none; }
+}
+</style>
+</head>
+<body>
+<div id="side">
+  <h1 id="title"></h1>
+  <div class="sub" id="built"></div>
+  <div class="tabs" role="tablist">
+    <button role="tab" data-tab="places" aria-selected="true">Places</button>
+    <button role="tab" data-tab="examples" aria-selected="false">Examples</button>
+    <button role="tab" data-tab="about" aria-selected="false">About</button>
+  </div>
+
+  <div id="tab-places">
+    <div class="row" style="margin-top:10px">
+      <button class="btn" id="prev" title="Previous place">&#8249;</button>
+      <select id="picker" aria-label="Place"></select>
+      <button class="btn" id="next" title="Next place">&#8250;</button>
+    </div>
+
+    <div id="overview">
+      <p>Each dot is a place of 4.8 km by 4.8 km. Click one, or pick it from the list, to see its images and labels.</p>
+      <h2>Places by what they were chosen for</h2>
+      <div class="legend" id="marker-legend"></div>
+      <h2>Labelled loss events by type</h2>
+      <div class="bars" id="type-bars"></div>
+      <p class="sub" id="totals"></p>
+    </div>
+
+    <div id="place" class="hide">
+      <p style="margin-top:10px"><span id="place-tags"></span></p>
+      <p id="place-where"></p>
+      <p class="note hide" id="place-note"></p>
+      <h2>Interval</h2>
+      <p class="sub">Labels belong to an interval between two images. The number is the count of loss events in it.</p>
+      <div class="wrap" id="intervals"></div>
+      <h2>Image</h2>
+      <div class="row">
+        <button class="btn" id="show-before" aria-pressed="false"></button>
+        <button class="btn" id="show-after" aria-pressed="true"></button>
+      </div>
+      <p class="sub">Press <kbd>B</kbd> or the space bar to flip between the two images. <span id="other-dates"></span></p>
+      <h2>Layers</h2>
+      <label class="check"><input type="checkbox" id="l-loss" checked><span>Loss accepted by both vision models</span></label>
+      <div class="legend" id="type-legend" style="margin:2px 0 6px 24px"></div>
+      <label class="check"><input type="checkbox" id="l-background" checked><span class="swatch dash"><i></i><b style="--c:#111"></b></span><span>Candidate rejected with confidence, used as background</span></label>
+      <label class="check"><input type="checkbox" id="l-unlabelled"><span class="swatch dotted"><i></i><b style="--c:#111"></b></span><span>Candidate left unlabelled (weak rejection, or the models split)</span></label>
+      <label class="check"><input type="checkbox" id="l-model"><span class="swatch model"></span><span id="model-text">Round-1 pair model: probability of loss</span></label>
+      <label class="check"><input type="checkbox" id="l-all"><span>Show the labels of all intervals</span></label>
+      <label class="check"><input type="checkbox" id="l-image" checked><span>NAIP image of the place</span></label>
+      <h2>Events in this place</h2>
+      <div class="bars" id="place-bars"></div>
+      <p class="sub" id="place-counts"></p>
+      <p><button class="btn" id="to-overview">All places</button></p>
+    </div>
+  </div>
+
+  <div id="tab-examples" class="hide">
+    <p>Labelled events of each type, picked across places. Left is the image before, right the image after with the label's outline. Click one to open it on the map.</p>
+    <div id="examples"></div>
+  </div>
+
+  <div id="tab-about" class="hide">
+    <p>These are training labels for a model that maps forest canopy loss between two NAIP aerial images. Each place holds five to fifteen years of imagery at 0.6 m, shown here at a coarser resolution.</p>
+    <p>Candidate areas of loss came from four sources: the change in canopy height between years, two weaker height signals, and an earlier version of the model. Two vision models then looked at each candidate on the images, one candidate per request, and said whether canopy was lost, in which interval, and by what cause.</p>
+    <p><b>Loss</b> is a candidate that both models accepted. Its colour is the cause when both agree, and grey when they do not. A dashed coloured line means the models disagreed on the interval.</p>
+    <p><b>Background</b> is a candidate that both models rejected with confidence. The training treats it as no loss in that interval. <b>Unlabelled</b> candidates got a weak rejection or split the models, and the training ignores them.</p>
+    <p>The outline of a label can be the candidate's own envelope and is then wider than the loss itself. Click a label to see how it was read.</p>
+    <p>An event that lies in several sampling windows is counted and drawn once.</p>
+    <p class="sub">Imagery: USDA NAIP. Base maps: Esri.</p>
+  </div>
+</div>
+<div id="map"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="page.js"></script>
+<script>
+(function () {
+  "use strict";
+  const PAGE = window.CSDV_PAGE;
+  const TYPES = {
+    harvest: { name: "Harvest", color: "#d9651f" },
+    fire: { name: "Fire", color: "#a3201c" },
+    wind: { name: "Wind", color: "#1795a3" },
+    biotic_mortality: { name: "Insects and disease", color: "#b59a00" },
+    conversion: { name: "Conversion", color: "#4b55c9" },
+    other: { name: "Other loss", color: "#3d3d3a" },
+    none: { name: "Loss, cause not agreed", color: "#77756f" },
+    background: { name: "No loss expected (snow, leaf-off, low sun and others)", color: "#8d8c86" }
+  };
+  const LOSS_TYPES = ["harvest", "fire", "wind", "biotic_mortality", "conversion", "other", "none"];
+  const GROUPS = ["harvest", "fire", "wind", "biotic_mortality", "conversion", "other", "background"];
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const words = (s) => String(s || "").replace(/_/g, " ");
+
+  const places = PAGE.places.slice().sort((p, q) =>
+    GROUPS.indexOf(p.group) - GROUPS.indexOf(q.group) || p.label.localeCompare(q.label));
+  const byUnit = Object.fromEntries(places.map((p) => [p.unit, p]));
+  const state = { place: null, interval: 0, side: "after" };
+
+  document.title = PAGE.title;
+  $("title").textContent = PAGE.title;
+  $("built").textContent = places.length + " places, built " + PAGE.built;
+  $("model-text").textContent = "Round-1 pair model: probability of loss, from " + PAGE.model_floor + "% (faint) to 100%";
+
+  // ---- map ---------------------------------------------------------------
+  const map = L.map("map", { maxZoom: 20, zoomSnap: 0.25 });
+  // A light map for the overview and aerial imagery around an open place.
+  // Each layer draws only in its own zoom range, so nothing is swapped.
+  const esri = "https://server.arcgisonline.com/ArcGIS/rest/services/";
+  L.tileLayer(esri + "Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}", {
+    maxZoom: 10, attribution: "Base map &copy; Esri and its sources" }).addTo(map);
+  L.tileLayer(esri + "World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+    minZoom: 10.25, maxZoom: 20, maxNativeZoom: 18, attribution: "Imagery &copy; Esri and its sources" }).addTo(map);
+  map.createPane("naip").style.zIndex = 300;
+  map.createPane("model").style.zIndex = 350;
+  L.control.scale({ imperial: false }).addTo(map);
+
+  const all = L.latLngBounds(places.map((p) => [p.lat, p.lon]));
+  const markers = L.layerGroup().addTo(map);
+  places.forEach((p) => {
+    const test = p.role === "test";
+    const m = L.circleMarker([p.lat, p.lon], {
+      radius: 7, fillColor: TYPES[p.group].color, fillOpacity: 1,
+      color: test ? "#111" : "#fff", weight: test ? 2.5 : 1.5 });
+    m.bindTooltip("<b>" + esc(p.label) + "</b><br>" + esc(p.location));
+    m.on("click", () => openPlace(p.unit));
+    m.addTo(markers);
+  });
+
+  // ---- overview ----------------------------------------------------------
+  function bars(el, counts) {
+    const max = Math.max(1, ...LOSS_TYPES.map((t) => counts[t] || 0));
+    el.innerHTML = LOSS_TYPES.filter((t) => counts[t]).map((t) =>
+      "<span>" + TYPES[t].name + "</span><span><span class='bar' style='display:block;--c:" + TYPES[t].color +
+      ";width:" + Math.max(2, 100 * counts[t] / max) + "%'></span></span><span class='n'>" +
+      counts[t].toLocaleString("en-US") + "</span>").join("") || "<span class='sub'>None</span>";
+  }
+  const totals = {};
+  places.forEach((p) => Object.entries(p.counts).forEach(([t, n]) => { totals[t] = (totals[t] || 0) + n; }));
+  bars($("type-bars"), totals);
+  const nEvents = Object.values(totals).reduce((a, b) => a + b, 0);
+  const nBack = places.reduce((a, p) => a + p.background, 0);
+  $("totals").textContent = nEvents.toLocaleString("en-US") + " loss events and " + nBack.toLocaleString("en-US") +
+    " rejected candidates used as background, in " + places.length + " places.";
+  $("marker-legend").innerHTML = GROUPS.map((g) => {
+    const n = places.filter((p) => p.group === g).length;
+    return n ? "<div><span class='dot' style='--c:" + TYPES[g].color + "'></span><span>" +
+      (g === "background" ? TYPES[g].name : TYPES[g].name.replace("Other loss", "Other loss or mixed")) +
+      " <span class='sub'>(" + n + ")</span></span></div>" : "";
+  }).join("") + "<div><span class='dot test' style='--c:#fff'></span><span>Black ring: reserved for testing, never trained on <span class='sub'>(" +
+    places.filter((p) => p.role === "test").length + ")</span></span></div>";
+  $("type-legend").innerHTML = LOSS_TYPES.map((t) =>
+    "<div><span class='swatch'><i></i><b style='--c:" + TYPES[t].color + "'></b></span><span>" + TYPES[t].name + "</span></div>").join("") +
+    "<div><span class='swatch dash'><i></i><b style='--c:" + TYPES.harvest.color + "'></b></span><span>Dashed: the models disagreed on the interval</span></div>";
+
+  const picker = $("picker");
+  picker.innerHTML = "<option value=''>All places (overview)</option>" + GROUPS.map((g) => {
+    const of = places.filter((p) => p.group === g);
+    return of.length ? "<optgroup label='" + esc(g === "background" ? "No loss expected" : TYPES[g].name) + "'>" +
+      of.map((p) => "<option value='" + esc(p.unit) + "'>" + esc(p.label.replace(/^r2_/, "")) + (p.state ? ", " + esc(p.state) : "") +
+        (p.role === "test" ? " (test)" : "") + "</option>").join("") + "</optgroup>" : "";
+  }).join("");
+  picker.onchange = () => (picker.value ? openPlace(picker.value) : overview());
+  function step(d) {
+    const i = state.place ? places.indexOf(state.place) : (d > 0 ? -1 : places.length);
+    openPlace(places[(i + d + places.length) % places.length].unit);
+  }
+  $("prev").onclick = () => step(-1);
+  $("next").onclick = () => step(1);
+  $("to-overview").onclick = overview;
+
+  // ---- one place ---------------------------------------------------------
+  let layers = { before: null, after: null, model: null, labels: null };
+  function clearPlace() {
+    Object.values(layers).forEach((l) => l && map.removeLayer(l));
+    layers = { before: null, after: null, model: null, labels: null };
+  }
+  function overview() {
+    clearPlace();
+    state.place = null;
+    picker.value = "";
+    markers.addTo(map);
+    $("overview").classList.remove("hide");
+    $("place").classList.add("hide");
+    map.fitBounds(all.pad(0.08));
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+  function loadLabels(unit, then) {
+    window.CSDV_LABELS = window.CSDV_LABELS || {};
+    if (window.CSDV_LABELS[unit]) return then();
+    const s = document.createElement("script");
+    s.src = "p/" + unit + "/labels.js";
+    s.onload = then;
+    s.onerror = () => { window.CSDV_LABELS[unit] = { features: [] }; then(); };
+    document.head.appendChild(s);
+  }
+  function openPlace(unit, key, at) {
+    const p = byUnit[unit];
+    if (!p) return overview();
+    state.place = p;
+    picker.value = unit;
+    map.removeLayer(markers);
+    selectTab("places");
+    $("overview").classList.add("hide");
+    $("place").classList.remove("hide");
+    $("place-tags").innerHTML = "<span class='tag'>" + esc(words(p.target)) + "</span>" +
+      "<span class='tag'>" + (p.role === "test" ? "reserved for testing" : "used for training") + "</span>" +
+      "<span class='tag'>" + p.resolution + " m shown</span>";
+    $("place-where").textContent = p.location ? p.location.charAt(0).toUpperCase() + p.location.slice(1) + "." : "";
+    $("place-note").textContent = p.note ? "Why this place: " + p.note : "";
+    $("place-note").classList.toggle("hide", !p.note);
+    bars($("place-bars"), p.counts);
+    $("place-counts").textContent = p.background + " rejected candidates used as background, " + p.unlabelled + " left unlabelled.";
+    let i = p.intervals.findIndex((v) => v.a + "-" + v.b === key);
+    if (i < 0) i = p.intervals.reduce((best, v, k) => (v.loss > p.intervals[best].loss ? k : best), 0);
+    $("intervals").innerHTML = p.intervals.map((v, k) =>
+      "<button class='btn' data-k='" + k + "'>" + v.a + " &rarr; " + v.b + "<span class='badge'>" + v.loss + "</span></button>").join("");
+    $("intervals").querySelectorAll("button").forEach((b) => (b.onclick = () => showInterval(+b.dataset.k)));
+    if (at) map.setView([at.lat, at.lon], 16.5); else map.fitBounds(p.bounds);
+    loadLabels(unit, () => { if (state.place === p) showInterval(i); });
+  }
+  function overlay(url, bounds, pane, cls) {
+    return L.imageOverlay(url, bounds, { pane: pane, className: cls || "", interactive: false });
+  }
+  function showInterval(i) {
+    const p = state.place;
+    const v = p.intervals[i];
+    if (!v) return;
+    state.interval = i;
+    clearPlace();
+    const ya = p.years.find((y) => y.year === v.a), yb = p.years.find((y) => y.year === v.b);
+    layers.before = overlay(ya.image, p.bounds, "naip").addTo(map);
+    layers.after = overlay(yb.image, p.bounds, "naip").addTo(map);
+    if (v.model) layers.model = overlay(v.model, p.bounds, "model", "model-layer");
+    $("show-before").textContent = "Before: " + ya.date;
+    $("show-after").textContent = "After: " + yb.date;
+    const others = [].concat(ya.other_dates, yb.other_dates);
+    $("other-dates").textContent = others.length ? "Parts of the place were flown on other dates (" + others.join(", ") + ")." : "";
+    $("intervals").querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", +b.dataset.k === i));
+    $("l-model").disabled = !v.model;
+    history.replaceState(null, "", "#" + p.unit + "/" + v.a + "-" + v.b);
+    setSide(state.side);
+    drawLabels();
+    drawModel();
+  }
+  function setSide(side) {
+    state.side = side;
+    const on = $("l-image").checked ? 1 : 0;
+    if (layers.before) layers.before.setOpacity(side === "before" ? on : 0);
+    if (layers.after) layers.after.setOpacity(side === "after" ? on : 0);
+    $("show-before").setAttribute("aria-pressed", side === "before");
+    $("show-after").setAttribute("aria-pressed", side === "after");
+  }
+  function drawModel() {
+    if (!layers.model) return;
+    if ($("l-model").checked) layers.model.addTo(map); else map.removeLayer(layers.model);
+  }
+  function lineStyle(f, casing) {
+    const q = f.properties;
+    if (casing) return { color: "#fff", weight: q.layer === "loss" ? 5.5 : 4, opacity: 0.95, fill: false, interactive: false };
+    if (q.layer === "loss") {
+      return { color: TYPES[q.agent] ? TYPES[q.agent].color : TYPES.none.color, weight: 2.6, opacity: 1,
+        dashArray: q.disputed ? "7 5" : null, fill: true, fillOpacity: 0 };
+    }
+    return { color: "#111", weight: 1.6, opacity: 1, dashArray: q.layer === "background" ? "7 5" : "1 5", fill: true, fillOpacity: 0 };
+  }
+  function popup(q) {
+    const span = q.a + " to " + q.b;
+    if (q.layer === "loss") {
+      const type = TYPES[q.agent] ? TYPES[q.agent].name : words(q.agent);
+      return "<b>" + esc(type) + "</b>, " + esc(words(q.severity)) + " loss, " + q.ha + " ha<br>" +
+        "Interval: " + esc(q.dates || span) + (q.disputed ? " (the models disagreed on the interval)" : "") + "<br>" +
+        "Proposed by: " + esc(sourceName(q.source)) + ". Outline: " + esc(q.outline === "precise" ? "drawn by a model" : "the candidate's envelope") + ".<br>" +
+        "Cause named: " + esc(words(q.type_gem37) || "none") + " (model 1), " + esc(words(q.type_terra) || "none") + " (model 2)" +
+        reasons(q) + "<div class='sub'>" + esc(q.id) + "</div>";
+    }
+    const what = q.layer === "background" ? "Rejected with confidence by both models. Used as background (no loss) in " + span + "."
+      : (q.status === "disagree" ? "The two models split. Left unlabelled." : "Rejected, but without confidence. Left unlabelled.");
+    return "<b>Candidate, " + span + "</b>, " + q.ha + " ha<br>" + what + "<br>Proposed by: " + esc(sourceName(q.source)) + "." +
+      reasons(q) + "<div class='sub'>" + esc(q.id) + "</div>";
+  }
+  function sourceName(s) {
+    return { di: "height change (Disturbance Index)", chm: "canopy height drop", weak: "weak height signal", model: "the round-1 pair model" }[s] || words(s);
+  }
+  function reasons(q) {
+    return (q.reason_gem37 ? "<div class='q'>Model 1: " + esc(q.reason_gem37) + "</div>" : "") +
+      (q.reason_terra ? "<div class='q'>Model 2: " + esc(q.reason_terra) + "</div>" : "");
+  }
+  function drawLabels() {
+    if (layers.labels) map.removeLayer(layers.labels);
+    const p = state.place, v = p.intervals[state.interval];
+    const data = (window.CSDV_LABELS || {})[p.unit] || { features: [] };
+    const on = { loss: $("l-loss").checked, background: $("l-background").checked, unlabelled: $("l-unlabelled").checked };
+    const every = $("l-all").checked;
+    const shown = data.features.filter((f) => on[f.properties.layer] && (every || (f.properties.a === v.a && f.properties.b === v.b)));
+    // Rejected candidates below the loss labels.
+    shown.sort((f, g) => (f.properties.layer === "loss") - (g.properties.layer === "loss"));
+    const group = L.featureGroup();
+    L.geoJSON(shown, { style: (f) => lineStyle(f, true) }).addTo(group);
+    L.geoJSON(shown, {
+      style: (f) => lineStyle(f, false),
+      onEachFeature: (f, layer) => {
+        layer.bindPopup(() => popup(f.properties), { maxWidth: 320 });
+        const q = f.properties;
+        layer.bindTooltip(q.layer === "loss" ? (TYPES[q.agent] || TYPES.none).name + ", " + q.a + " to " + q.b
+          : (q.layer === "background" ? "Background, " : "Unlabelled, ") + q.a + " to " + q.b, { sticky: true });
+      }
+    }).addTo(group);
+    layers.labels = group.addTo(map);
+  }
+  ["l-loss", "l-background", "l-unlabelled", "l-all"].forEach((id) => ($(id).onchange = () => state.place && drawLabels()));
+  $("l-model").onchange = drawModel;
+  $("l-image").onchange = () => setSide(state.side);
+  $("show-before").onclick = () => setSide("before");
+  $("show-after").onclick = () => setSide("after");
+  document.addEventListener("keydown", (e) => {
+    if (!state.place || /^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(e.target.tagName) && e.key === " ") return;
+    if (e.key === "b" || e.key === "B" || e.key === " ") { e.preventDefault(); setSide(state.side === "after" ? "before" : "after"); }
+    if (e.key === "ArrowRight" && e.shiftKey) showInterval(Math.min(state.interval + 1, state.place.intervals.length - 1));
+    if (e.key === "ArrowLeft" && e.shiftKey) showInterval(Math.max(state.interval - 1, 0));
+  });
+
+  // ---- examples ----------------------------------------------------------
+  $("examples").innerHTML = LOSS_TYPES.map((t) => {
+    const of = PAGE.examples.filter((x) => x.agent === t);
+    if (!of.length) return "";
+    return "<h2>" + TYPES[t].name + "</h2><div class='ex'>" + of.map((x) => {
+      const k = PAGE.examples.indexOf(x), p = byUnit[x.unit];
+      return "<button data-k='" + k + "'><span class='pair'><img loading='lazy' alt='before' src='" + x.before +
+        "'><img loading='lazy' alt='after' src='" + x.after + "'></span><span>" + esc(p.label.replace(/^r2_/, "")) +
+        (p.state ? ", " + esc(p.state) : "") + "<br>" + x.a + " to " + x.b + ", " + x.ha + " ha</span></button>";
+    }).join("") + "</div>";
+  }).join("") || "<p class='sub'>No examples in this build.</p>";
+  $("examples").querySelectorAll("button").forEach((b) => (b.onclick = () => {
+    const x = PAGE.examples[+b.dataset.k];
+    state.side = "after";
+    openPlace(x.unit, x.a + "-" + x.b, x);
+  }));
+
+  // ---- tabs --------------------------------------------------------------
+  function selectTab(name) {
+    document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.tab === name));
+    ["places", "examples", "about"].forEach((t) => $("tab-" + t).classList.toggle("hide", t !== name));
+  }
+  document.querySelectorAll(".tabs button").forEach((b) => (b.onclick = () => selectTab(b.dataset.tab)));
+
+  // ---- start -------------------------------------------------------------
+  const hash = decodeURIComponent(location.hash.slice(1)).split("/");
+  if (byUnit[hash[0]]) openPlace(hash[0], hash[1]); else overview();
+  if (hash[0] === "examples" || hash[0] === "about") selectTab(hash[0]);
+})();
+</script>
+</body>
+</html>

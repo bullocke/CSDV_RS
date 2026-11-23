@@ -297,6 +297,19 @@ Windows can overlap, and a chip that lies in two windows is written once, with t
 
 `build` writes three tables. `intervals.csv` has one row per window and interval with the share of each reason group, the class shares after pooling to each cell size, and where cells with a strong greenness loss ended up. `events_kept.csv` says how many output cells each accepted candidate keeps as loss after the band. `suspects.csv` lists clusters of forest-background cells with a strong greenness loss, which are the places to look for a disturbance that no candidate source flagged. The greenness score (`csdv_core.label.screen`) standardises the later date's NDVI given the earlier date's, against forest background of the same window. It is a diagnostic and a guard, not a label, and it has no value where the whole window changed.
 
+## A map page to share
+
+`csdv label webmap` writes a folder with one static page for a label run. An overview map shows every place by what it was chosen for. A place opens with the image before and after each interval (one key flips between them), the loss labels by cause, the candidates that were rejected, and the probability map of the pair model that proposed candidates. A second tab holds example events of each cause, picked across places.
+
+```
+csdv label webmap --label-dir "$CSDV_EXPORT_DIR/label/round2" --out ~/public_html/csdv_round2 \
+    --export-dir "$CSDV_EXPORT_DIR" --data-root "$CSDV_DATA_ROOT" --workers 7
+```
+
+The folder holds plain files only, so any web server can serve it, and `index.html` also opens from disk. On CHPC a folder under `~/public_html` is served at `https://home.chpc.utah.edu/~<uNID>/` and is public. Images come from the NAIP mosaics under `--data-root` and are drawn at `--resolution` metres (1.2 by default). Without mosaics the 3 m quicklooks of the exports are used, which is enough to test the page on a laptop. The first place is drawn alone, and the build stops when the whole page is projected to pass `--budget-gb`. A second build keeps the images that exist.
+
+An event is stored once for every window that covers it. The page counts and draws it once.
+
 ## Notes
 
 The label of an interval describes live trees that were removed or died in it. Ground that was cleared earlier, or dead trees that are removed later, counts as background when both models report no new loss, even though the two images differ. The classifier may still respond to a defoliated canopy or to the removal of dead trees, because both change the image strongly. The labels leave the first unlabelled and call the second background where the models are sure.

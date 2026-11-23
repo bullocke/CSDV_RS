@@ -1347,3 +1347,115 @@ def compare_renders(first: Path, second: Path) -> None:
         )
         for name, _, gap in partial[:5]:
             click.echo(f"  {gap:6.0%}  {name}")
+
+
+@label.command("webmap")
+@click.option(
+    "--label-dir",
+    required=True,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Folder of the label run (labels/labels.gpkg, sites.csv).",
+)
+@click.option(
+    "--out",
+    "out_dir",
+    required=True,
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Folder of the page, for example a folder under ~/public_html.",
+)
+@click.option(
+    "--export-dir",
+    default=None,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Export folder with quicklooks/ and run_layers/. Default: "
+    "$CSDV_EXPORT_DIR, else results/chpc_exports.",
+)
+@click.option(
+    "--data-root",
+    default=None,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Data folder with naip/<unit>/<year>/ mosaics. Without it, or for "
+    "a year without a mosaic, the 3 m quicklooks of the exports are drawn.",
+)
+@click.option(
+    "--sites",
+    "sites_csv",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Site table. Default: sites.csv of the label run.",
+)
+@click.option("--title", default="Training labels", show_default=True)
+@click.option(
+    "--resolution",
+    type=float,
+    default=1.2,
+    show_default=True,
+    help="Ground resolution of the images in metres. A 4.8 km place with "
+    "eight years is about 15 MB at 1.2 m and four times that at 0.6 m.",
+)
+@click.option("--units", default=None, help="Comma-separated unit IDs. Default: all.")
+@click.option(
+    "--examples",
+    type=int,
+    default=12,
+    show_default=True,
+    help="Example events per loss type.",
+)
+@click.option("--run-tag", default="default", show_default=True)
+@click.option("--workers", type=int, default=1, show_default=True)
+@click.option("--overwrite", is_flag=True, help="Draw existing images again.")
+@click.option(
+    "--budget-gb",
+    type=float,
+    default=6.0,
+    show_default=True,
+    help="Stop after the first place when the whole page is projected to be "
+    "larger than this. 0 for no limit.",
+)
+def webmap_cmd(
+    label_dir,
+    out_dir,
+    export_dir,
+    data_root,
+    sites_csv,
+    title,
+    resolution,
+    units,
+    examples,
+    run_tag,
+    workers,
+    overwrite,
+    budget_gb,
+) -> None:
+    """Write a static map page of the label run: images, labels, model map."""
+    from csdv_core.label.webmap import WebmapConfig, build_webmap
+    from csdv_core.review.config import default_export_dir
+
+    _setup_logging()
+    try:
+        result = build_webmap(
+            WebmapConfig(
+                label_dir=label_dir,
+                out_dir=out_dir,
+                export_dir=export_dir or default_export_dir(),
+                data_root=data_root,
+                sites_csv=sites_csv,
+                title=title,
+                resolution=resolution,
+                units=tuple(u.strip() for u in units.split(",")) if units else None,
+                examples=examples,
+                run_tag=run_tag,
+                workers=workers,
+                overwrite=overwrite,
+                budget_gb=budget_gb or None,
+            )
+        )
+    except ValueError as error:
+        raise click.ClickException(str(error)) from error
+    for unit in result.skipped:
+        click.echo(f"{unit}: no image, left out", err=True)
+    click.echo(
+        f"{result.places} places, {result.events} events, {result.images} images "
+        f"drawn, {result.megabytes:.0f} MB in {out_dir}"
+    )
+    click.echo(f"Open {out_dir / 'index.html'}, or serve the folder.")

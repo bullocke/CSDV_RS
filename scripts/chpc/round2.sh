@@ -9,6 +9,7 @@
 #   scripts/chpc/round2.sh stage2  --cap 76  [--reallocate] [--dry-run]
 #   scripts/chpc/round2.sh evaluate [--optional] [--only RUN,RUN]
 #       [--time HH:MM:SS] [--dry-run]
+#   scripts/chpc/round2.sh page [--resolution 1.2] [--units A,B] [--dry-run]
 #   scripts/chpc/round2.sh status [pilot]
 #
 # pilot   The whole chain on the few boxes of config/grid/round2_pilot.csv:
@@ -43,6 +44,17 @@
 #         training job (default 06:00:00: the merged folder holds about
 #         9,000 chips, and 02:30:00 was too short for it). --optional and
 #         --only are passed to scripts/chpc/submit_pair_defoliation.sh.
+# page    A static map page of the labels (`csdv label webmap`): every
+#         place with the images of each year, the labels by type, the
+#         rejected candidates and the map of the round-1 model. One CPU job
+#         writes it to $CSDV_PUBLIC_HTML/csdv_round2, which CHPC serves at
+#         https://home.chpc.utah.edu/~<uNID>/csdv_round2/ when
+#         CSDV_PUBLIC_HTML is ~/public_html. Anyone with the address can
+#         open it. Images are drawn at --resolution metres (default 1.2,
+#         about 20 MB a place; the size goes with the inverse square). The
+#         job draws one place first and stops when the whole page would
+#         pass CSDV_ROUND2_PAGE_GB (default 6). Given again, it keeps the
+#         images that exist and writes the labels anew.
 # status  Where every box stands (read from disk), what is queued, what the
 #         label run has spent.
 #
@@ -68,6 +80,7 @@ set -euo pipefail
 STEP="${1:-}"
 [[ -n "$STEP" ]] && shift
 CAP="" DRY=() WHICH="" MISSING=() TABLE_ARGS=() REALLOCATE=0 TRAIN_TIME="06:00:00"
+PAGE_RES="1.2" PAGE_UNITS=""
 while (($#)); do
     case "$1" in
         --reallocate) REALLOCATE=1; shift ;;
@@ -75,6 +88,8 @@ while (($#)); do
         --only) TABLE_ARGS+=(--only "${2:?--only needs a list of runs}"); shift 2 ;;
         --time) TRAIN_TIME="${2:?--time needs a limit, for example 06:00:00}"; shift 2 ;;
         --cap) CAP="${2:?--cap needs a value}"; shift 2 ;;
+        --resolution) PAGE_RES="${2:?--resolution needs metres, for example 1.2}"; shift 2 ;;
+        --units) PAGE_UNITS="${2:?--units needs a list of units}"; shift 2 ;;
         --dry-run) DRY=(--dry-run); shift ;;
         --without-missing) MISSING=(--without-missing); shift ;;
         pilot) WHICH="pilot"; shift ;;
@@ -318,6 +333,35 @@ PY
             ${TABLE_ARGS[@]+"${TABLE_ARGS[@]}"} ${DRY[@]+"${DRY[@]}"}
         echo
         echo "Afterwards on the laptop: scripts/chpc/round2_pull.sh evaluate"
+        ;;
+    page)
+        : "${CSDV_PUBLIC_HTML:?set CSDV_PUBLIC_HTML in scripts/chpc/env.sh, for example \$HOME/public_html}"
+        LABEL="$CSDV_EXPORT_DIR/label/round2"
+        [[ -f "$LABEL/labels/labels.gpkg" ]] || {
+            echo "ERROR: no labels/labels.gpkg in $LABEL" >&2
+            exit 1
+        }
+        OUT="$CSDV_PUBLIC_HTML/${CSDV_ROUND2_PAGE:-csdv_round2}"
+        read -r -a CPU <<<"$CSDV_SBATCH_CPU"
+        CMD=(sbatch --parsable "${CPU[@]}" --job-name=csdv_round2_page
+            --cpus-per-task=8 --mem=32G --time=04:00:00
+            --output="$CSDV_LOG_DIR/%x-%j.out"
+            "$SLURM/run_csdv_cpu.sbatch" label webmap
+            --label-dir "$LABEL" --out "$OUT"
+            --export-dir "$CSDV_EXPORT_DIR" --data-root "$CSDV_DATA_ROOT"
+            --title "CSDV training labels, round 2"
+            --resolution "$PAGE_RES" --workers 7
+            --budget-gb "${CSDV_ROUND2_PAGE_GB:-6}")
+        [[ -n "$PAGE_UNITS" ]] && CMD+=(--units "$PAGE_UNITS")
+        if ((${#DRY[@]})); then
+            printf 'would submit:'; printf ' %q' "${CMD[@]}"; echo
+        else
+            mkdir -p "$OUT"
+            echo "page job: $("${CMD[@]}")"
+        fi
+        echo "The page goes to $OUT."
+        echo "The last lines of the log give its size:" \
+            "tail -n 3 $CSDV_LOG_DIR/csdv_round2_page-*.out"
         ;;
     status)
         NAME="round2${WHICH:+_$WHICH}"
