@@ -31,6 +31,11 @@
 # draws without loss from the stable-forest chips, the model one would use.
 # Seeds 2 and 3 of test B are optional as well. They were added on 2026-11-23,
 # after the gain of round 2 was +0.18 in seed 0 and +0.02 in seed 1.
+# reserved_r2sf_s0 is the model of test B with those stable-forest draws,
+# scored on the same test places: the candidate for the working model.
+# look_r2_q3908654 maps Southern Indiana, the centre of the first block of
+# adjoining quads (config/grid/indiana_block.csv), with the model of test B.
+# That model trained on the unit's labels, so its comparison is no test.
 #
 # Submit with scripts/chpc/round2.sh evaluate (which builds the variant and
 # the merged folders first), pull with scripts/chpc/round2_pull.sh evaluate.
@@ -71,3 +76,5 @@ reserved_r2_s2,score,merged_r2,2,q4412328,2,,optional,Test B with round 2 and a 
 reserved_r2_s3,score,merged_r2,2,q4412328,3,,optional,Test B with round 2 and a fourth seed,--hold-role test --exclude-runs stable_forest
 reserved_r1_s2,score,merged_r2,2,q4412328,2,,optional,Test B the control and a third seed,--hold-role test --exclude-runs round2 --exclude-runs stable_forest
 reserved_r1_s3,score,merged_r2,2,q4412328,3,,optional,Test B the control and a fourth seed,--hold-role test --exclude-runs round2 --exclude-runs stable_forest
+reserved_r2sf_s0,score,merged_r2,2,q4412328,0,,optional,Test places and Oregon held out with round 2 and stable-forest draws,--hold-role test --run-draws stable_forest=0.15
+look_r2_q3908654,look,merged_r2,2,q3908654,0,reserved_r2_s0,optional,Southern Indiana mapped with the round-2 model of test B,

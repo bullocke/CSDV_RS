@@ -97,6 +97,10 @@ Job IDs belong to one cluster, so no job can wait for a job of another one. The 
 
 Which pools are worth naming changes by the day. `sbatch --test-only <pool options> scripts/slurm/run_chm_worker.sbatch x` prints when a worker would start and submits nothing. On 2026-11-20 the general GPU partitions of lonepeak and kingspeak would have started within minutes, notchpeak-gpu within 13 hours, and the preemptable routes (notchpeak-gpu-guest, granite-gpu freecycle) only after 2 and 16 days. The GTX 1080 Ti cards of lonepeak run the model: a 4.8 km box-year took about 4.4 minutes (263 s, of which about one minute was inference). The cards of kingspeak have not been tried.
 
+### A block of adjoining quads
+
+`scripts/chpc/region.sh block` sends the quads of `config/grid/indiana_block.csv` through the same queue, as the rehearsal of a regional map: the eight quads around q3908654 in Southern Indiana, each mapped by the pair model at the end of its finish task. It prints the free space of the data root and the size of a finished quad before it submits, and gives the workers 48 GB, because the height model of a whole quad needs 21 to 34 GB. `scripts/chpc/region.sh status` lists the quads that are not exported, the disk use per quad and the run times of the finish tasks. Whole quads went through the queue for the first time with this block (2026-11-23), so the run times above for boxes do not carry over.
+
 ## Run tags and reruns
 
 Every detection run of a unit has a tag, `default` unless `--run-tag` says otherwise, and lives in `$CSDV_RESULTS_ROOT/disturbance/<unit>/<run_tag>/`. A tag that already exists is refused, as is a tag whose detection job is still queued. To try other parameters, submit again with a new tag and put the `detect-disturbance` options after `--`:

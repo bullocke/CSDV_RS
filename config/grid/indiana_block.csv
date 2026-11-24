@@ -1,0 +1,21 @@
+# The first block of adjoining quads: the eight 7.5' quads around q3908654
+# (Southern Indiana, Brown County: Hoosier National Forest, Yellowwood State
+# Forest, Brown County State Park, Monroe Lake). A rehearsal of a regional
+# map: run time and storage per quad, and whether the maps of adjoining quads
+# join. The centre quad is the site of the stand polygons with stage and
+# trajectory tables, so the map can be laid over them.
+#
+# The centre quad q3908654 is left out on purpose. It has a finished run that
+# the labels of the scale test rest on, and it is mapped from that run by the
+# row look_r2_q3908654 of config/pair/round2.csv.
+#
+# Submit with scripts/chpc/region.sh block. Columns as in conus_pilot.csv.
+label,lon,lat,buffer_km,cell,notes
+IN_block_NW,,,,q3908645,North-west of the centre quad
+IN_block_N,,,,q3908646,North
+IN_block_NE,,,,q3908647,North-east
+IN_block_W,,,,q3908653,West
+IN_block_E,,,,q3908655,East
+IN_block_SW,,,,q3908661,South-west
+IN_block_S,,,,q3908662,South
+IN_block_SE,,,,q3908663,South-east
