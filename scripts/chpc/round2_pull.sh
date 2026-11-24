@@ -10,6 +10,7 @@
 #   scripts/chpc/round2_pull.sh sheets LIST [--dry-run]
 #   scripts/chpc/round2_pull.sh chips  [--dry-run]
 #   scripts/chpc/round2_pull.sh evaluate [--optional] [--dry-run]
+#   scripts/chpc/round2_pull.sh blind  [--dry-run]
 #
 # pilot   The label folder round2_pilot (tables, answers, ledger, labels,
 #         sheets), the exported runs, cell layers, model maps and quicklooks
@@ -35,6 +36,10 @@
 #         scripts/chpc/pull_pair_defoliation.sh --table does (maps, scores,
 #         comparisons, no checkpoint), and the chip table and sites table of
 #         the merged folders and of round2_norej.
+# blind   The images of the blind check: the request images of the windows
+#         of its candidates, the whole stacks of its quiet windows and the
+#         label rasters of their chips, as listed by the draw (by default in
+#         results/vlm_labeling/3_round2/blind_check). Under 1 GB.
 #
 # Settings (environment, as for pull_exports.sh): CSDV_CHPC_HOST,
 # CSDV_CHPC_EXPORTS, and optionally CSDV_LOCAL_EXPORTS.
@@ -44,7 +49,7 @@
 
 set -euo pipefail
 
-USAGE="usage: $0 pilot|grid|stage1|final|chips|evaluate [--dry-run], or sheets LIST [--dry-run]"
+USAGE="usage: $0 pilot|grid|stage1|final|chips|evaluate|blind [--dry-run], or sheets LIST [--dry-run]"
 STEP="${1:?$USAGE}"
 shift
 DRY=()
@@ -141,6 +146,27 @@ case "$STEP" in
             RULES+=("--include=sheets/${window}_*")
         done
         echo "Sheets of ${#WINDOWS[@]} windows"
+        tree label/round2 "${RULES[@]}" --exclude='*'
+        ;;
+    blind)
+        DIR="${ARGS[0]:-$REPO/results/vlm_labeling/3_round2/blind_check}"
+        for list in windows_requests.txt windows_stacks.txt chips.txt; do
+            [[ -f "$DIR/$list" ]] || { echo "ERROR: no $DIR/$list. Draw the sample first." >&2; exit 1; }
+        done
+        names() { sed -e 's/#.*//' -e 's/[[:space:]]//g' -e '/^$/d' "$1"; }
+        RULES=(--include='requests/' --include='stacks/' --include='chips/')
+        while read -r window; do
+            RULES+=("--include=requests/$window/***")
+        done < <(names "$DIR/windows_requests.txt")
+        while read -r window; do
+            RULES+=("--include=stacks/$window/***")
+        done < <(names "$DIR/windows_stacks.txt")
+        while read -r chip; do
+            RULES+=("--include=chips/${chip}_change.tif")
+        done < <(names "$DIR/chips.txt")
+        echo "Blind check: requests of $(names "$DIR/windows_requests.txt" | wc -l) windows," \
+            "stacks of $(names "$DIR/windows_stacks.txt" | wc -l)," \
+            "label rasters of $(names "$DIR/chips.txt" | wc -l) chips"
         tree label/round2 "${RULES[@]}" --exclude='*'
         ;;
     *)
