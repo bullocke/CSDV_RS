@@ -29,6 +29,8 @@
 #
 # Optional rows: West Virginia and the Smokies with round 2 and 15% of the
 # draws without loss from the stable-forest chips, the model one would use.
+# Seeds 2 and 3 of test B are optional as well. They were added on 2026-11-23,
+# after the gain of round 2 was +0.18 in seed 0 and +0.02 in seed 1.
 #
 # Submit with scripts/chpc/round2.sh evaluate (which builds the variant and
 # the merged folders first), pull with scripts/chpc/round2_pull.sh evaluate.
@@ -65,3 +67,7 @@ reserved_norej_s0_on_r2,rescore,merged_r2,2,q4412328,0,reserved_norej_s0,yes,The
 reserved_norej_s1_on_r2,rescore,merged_r2,2,q4412328,1,reserved_norej_s1,yes,The same with another seed,
 holdout_r2sf_q3708104,train,merged_r2,2,q3708104,0,,optional,West Virginia held out with round 2 and stable-forest draws,--run-draws stable_forest=0.15
 holdout_r2sf_q3508321,train,merged_r2,2,q3508321,0,,optional,Smokies held out with round 2 and stable-forest draws,--run-draws stable_forest=0.15
+reserved_r2_s2,score,merged_r2,2,q4412328,2,,optional,Test B with round 2 and a third seed,--hold-role test --exclude-runs stable_forest
+reserved_r2_s3,score,merged_r2,2,q4412328,3,,optional,Test B with round 2 and a fourth seed,--hold-role test --exclude-runs stable_forest
+reserved_r1_s2,score,merged_r2,2,q4412328,2,,optional,Test B the control and a third seed,--hold-role test --exclude-runs round2 --exclude-runs stable_forest
+reserved_r1_s3,score,merged_r2,2,q4412328,3,,optional,Test B the control and a fourth seed,--hold-role test --exclude-runs round2 --exclude-runs stable_forest
