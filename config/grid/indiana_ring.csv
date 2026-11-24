@@ -1,0 +1,25 @@
+# The ring of sixteen 7.5' quads around the first Indiana block
+# (config/grid/indiana_block.csv). With the block and its centre quad it
+# makes five by five quads, 25 in all. Its southern row lies in the next
+# one-degree cell (q38086), so the join of maps across that line is read
+# here for the first time.
+#
+# Submit with scripts/chpc/region.sh block indiana_ring. About 13 GB of
+# mosaics and height models per quad stay on disk (measured on the block).
+label,lon,lat,buffer_km,cell,notes
+IN_ring_N1,,,,q3908636,North row
+IN_ring_N2,,,,q3908637,North row
+IN_ring_N3,,,,q3908638,North row
+IN_ring_N4,,,,q3908639,North row
+IN_ring_N5,,,,q3908640,North row
+IN_ring_W1,,,,q3908644,West column
+IN_ring_E1,,,,q3908648,East column
+IN_ring_W2,,,,q3908652,West column
+IN_ring_E2,,,,q3908656,East column
+IN_ring_W3,,,,q3908660,West column
+IN_ring_E3,,,,q3908664,East column
+IN_ring_S1,,,,q3808604,South row
+IN_ring_S2,,,,q3808605,South row
+IN_ring_S3,,,,q3808606,South row
+IN_ring_S4,,,,q3808607,South row
+IN_ring_S5,,,,q3808608,South row
