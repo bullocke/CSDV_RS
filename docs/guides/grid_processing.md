@@ -115,6 +115,8 @@ scripts/chpc/region.sh remap blue_ridge --checkpoint RUN   # map the finished qu
 - **Another model.** `region.sh remap` runs the finish task with `--remap`: detection is kept, the map is made again and the quad is exported again. The run folder keeps the old map as `model.prev.<job>`. The map's folder names the training run of its model in `checkpoint.txt`, and `export.json` repeats it as `model`.
 - **Workers.** The block step gives the workers 48 GB and 8 hours (`CSDV_REGION_QUEUE_ARGS` replaces these options): the height model of a whole quad needs 21 to 34 GB, more than the 24 GB the queue gives a small box.
 
+- **A page of the block.** `scripts/chpc/region.sh page NAME... --page FOLDER` runs `csdv grid webmap` in one CPU job and writes a static page to `$CSDV_PUBLIC_HTML/csdv_blocks/FOLDER` (or under `CSDV_REGION_PAGE_DIR`). The page shows the block as one map: NAIP of every year, and per interval the model's probability of loss and the cause it names from 90% on, with the outlines and image dates of the quads. Each layer is one Web Mercator mosaic (`gdalwarp`, so quads of two UTM zones join) cut into tiles of 512 pixels (`gdal2tiles.py`). The image tiles end at zoom 14, about 3.7 m at 39 degrees north, and sharper online imagery shows when the reader zooms further. Notes placed on the map stay in the browser and download as GeoJSON. A box of 4.8 km with eight image years came to 9 MB, which projects to about 6 MB per quad and image year. The job stops when the page is projected above `CSDV_REGION_PAGE_GB` (default 6): `--naip-zoom 13` is a quarter of the size.
+
 `scripts/chpc/region_pull.sh` brings the cell layers and model maps of a block to the laptop, about 25 MB per quad.
 
 ## Run tags and reruns

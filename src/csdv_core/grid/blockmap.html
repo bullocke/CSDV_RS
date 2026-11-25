@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Disturbance map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root { --ink: #1c2126; --muted: #5d6770; --line: #d5dade; --panel: #ffffff;
+          --accent: #0b6e99; --on: #0b6e99; --on-ink: #ffffff; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+         color: var(--ink); background: #e9ecef; display: flex; }
+  #side { width: 300px; flex: none; background: var(--panel); overflow-y: auto;
+          border-right: 1px solid var(--line); padding: 14px 14px 24px; }
+  #map { flex: 1; min-width: 0; background: #20262b; }
+  h1 { font-size: 17px; margin: 0 0 2px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
+       color: var(--muted); margin: 18px 0 6px; }
+  p { margin: 4px 0; }
+  .muted { color: var(--muted); font-size: 12.5px; }
+  .row { display: flex; flex-wrap: wrap; gap: 4px; }
+  button { font: inherit; padding: 4px 8px; border: 1px solid var(--line);
+           background: #f6f7f8; border-radius: 4px; cursor: pointer; color: var(--ink); }
+  button:hover { border-color: var(--accent); }
+  button.on { background: var(--on); border-color: var(--on); color: var(--on-ink); }
+  button.pair { outline: 2px solid #f0a500; outline-offset: -1px; }
+  input[type=range] { width: 100%; }
+  .key { display: flex; align-items: center; gap: 6px; margin: 2px 0; font-size: 13px; }
+  .swatch { width: 14px; height: 14px; border-radius: 3px; flex: none;
+            border: 1px solid rgba(0,0,0,.25); }
+  .ramp { height: 12px; border-radius: 3px; border: 1px solid rgba(0,0,0,.25); }
+  kbd { font: 12px ui-monospace, monospace; border: 1px solid var(--line);
+        border-radius: 3px; padding: 0 4px; background: #f6f7f8; }
+  #notes li { margin: 3px 0; font-size: 12.5px; cursor: pointer; }
+  #notes { padding-left: 18px; margin: 6px 0; max-height: 180px; overflow-y: auto; }
+  .model-pane img { image-rendering: pixelated; }
+  .leaflet-container.noting { cursor: crosshair; }
+  .noteform select, .noteform textarea { width: 220px; font: inherit; margin: 3px 0; }
+  @media (max-width: 720px) {
+    body { flex-direction: column; }
+    #side { width: auto; max-height: 45%; border-right: 0; border-bottom: 1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+<div id="side">
+  <h1 id="title"></h1>
+  <p class="muted" id="summary"></p>
+
+  <h2>Image</h2>
+  <div class="row" id="years"></div>
+  <p class="muted" id="imagenote"></p>
+
+  <h2>Model, by interval</h2>
+  <div class="row" id="intervals"></div>
+  <div class="row" style="margin-top:6px" id="kinds"></div>
+  <p class="muted">Opacity</p>
+  <input type="range" id="opacity" min="0" max="100" value="85">
+
+  <h2>Legend</h2>
+  <div id="legend"></div>
+
+  <h2>Keys</h2>
+  <p class="muted"><kbd>F</kbd> flips the image between the two dates of the interval.
+  <kbd>M</kbd> hides and shows the model. <kbd>←</kbd> <kbd>→</kbd> change the interval.
+  <kbd>Q</kbd> shows the quad outlines. Click an outline for the image dates of that quad.</p>
+
+  <h2>Notes</h2>
+  <div class="row">
+    <button id="noting">Add a note</button>
+    <button id="download">Download</button>
+    <button id="clear">Clear</button>
+  </div>
+  <p class="muted" id="notehelp">Notes stay in this browser. Download them as GeoJSON to keep or send them.</p>
+  <ol id="notes"></ol>
+</div>
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="page.js"></script>
+<script src="quads.js"></script>
+<script>
+(function () {
+  const P = window.CSDV_BLOCK, Q = window.CSDV_QUADS;
+  const $ = (id) => document.getElementById(id);
+  const TAGS = [["false_alarm", "False alarm"], ["missed", "Missed loss"],
+    ["wrong_cause", "Wrong cause"], ["wrong_date", "Wrong interval"],
+    ["seam", "Seam between quads"], ["good", "Good"], ["other", "Other"]];
+  const KIND_NAMES = { cause: "Cause", prob: "Probability" };
+
+  document.title = P.title;
+  $("title").textContent = P.title;
+  $("summary").textContent = P.quads + " quads, " + P.years.length + " image years, " +
+    P.intervals.length + " intervals" +
+    (P.models.length ? ". Model: " + P.models.join(", ") : "") +
+    (P.without_map.length ? ". " + P.without_map.length + " quads have no model map yet" : "") + ".";
+  $("imagenote").textContent = "NAIP at about " + P.naip_m +
+    " m. Zoom in further for sharper online imagery of an unknown date.";
+
+  const map = L.map("map", { zoomSnap: 0.5, maxZoom: 19 });
+  map.fitBounds(P.bounds);
+  map.createPane("naip").style.zIndex = 250;
+  map.createPane("model").style.zIndex = 300;
+  map.getPane("model").classList.add("model-pane");
+  const online = L.tileLayer(
+    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    { maxZoom: 19, attribution: "Imagery: Esri and its providers" }).addTo(map);
+  L.control.scale({ imperial: false }).addTo(map);
+
+  // A tile of 512 pixels at file zoom z covers the map's tile of zoom z + 1.
+  function tiles(name, ext, deepest, pane, maxZoom) {
+    return L.tileLayer("t/" + name + "/{z}/{x}/{y}." + ext, {
+      tileSize: P.tile_px, zoomOffset: -1, pane: pane,
+      minNativeZoom: P.min_zoom + 1, maxNativeZoom: deepest + 1, maxZoom: maxZoom || 19,
+      bounds: P.bounds, attribution: "NAIP (USDA), CSDV" });
+  }
+
+  const state = { year: null, interval: P.intervals[P.intervals.length - 1] || null,
+    kind: P.kinds.includes("cause") ? "cause" : (P.kinds[0] || null), shown: true,
+    quads: true, noting: false };
+  let naipLayer = null, modelLayer = null;
+
+  function pairYears() {
+    return state.interval ? state.interval.split("_").map(Number) : [];
+  }
+  function draw() {
+    if (naipLayer) map.removeLayer(naipLayer);
+    naipLayer = null;
+    if (state.year !== null) {
+      // Two zoom steps beyond its deepest tiles the online imagery shows.
+      naipLayer = tiles("naip_" + state.year, "webp", P.naip_zoom, "naip", P.naip_zoom + 3).addTo(map);
+    }
+    if (modelLayer) map.removeLayer(modelLayer);
+    modelLayer = null;
+    if (state.shown && state.interval && state.kind) {
+      modelLayer = tiles(state.kind + "_" + state.interval, "png", P.model_zoom, "model");
+      modelLayer.setOpacity($("opacity").value / 100).addTo(map);
+    }
+    const pair = pairYears();
+    for (const b of $("years").children) {
+      b.classList.toggle("on", String(state.year) === b.dataset.year);
+      b.classList.toggle("pair", pair.includes(Number(b.dataset.year)));
+    }
+    for (const b of $("intervals").children)
+      b.classList.toggle("on", state.interval === b.dataset.interval);
+    for (const b of $("kinds").children)
+      b.classList.toggle("on", state.shown ? state.kind === b.dataset.kind : b.dataset.kind === "off");
+  }
+
+  function button(parent, text, data, onclick) {
+    const b = document.createElement("button");
+    b.textContent = text;
+    Object.assign(b.dataset, data);
+    b.onclick = onclick;
+    parent.appendChild(b);
+    return b;
+  }
+  for (const y of P.years)
+    button($("years"), y, { year: y }, () => { state.year = y; draw(); });
+  button($("years"), "Online", { year: "null" }, () => { state.year = null; draw(); });
+  for (const key of P.intervals)
+    button($("intervals"), key.replace("_", " to "), { interval: key }, () => {
+      state.interval = key; state.shown = true;
+      const pair = pairYears();
+      if (P.years.includes(pair[1])) state.year = pair[1];
+      draw();
+    });
+  for (const kind of P.kinds)
+    button($("kinds"), KIND_NAMES[kind] || kind, { kind: kind }, () => {
+      state.kind = kind; state.shown = true; draw();
+    });
+  button($("kinds"), "Off", { kind: "off" }, () => { state.shown = false; draw(); });
+  $("opacity").oninput = () => { if (modelLayer) modelLayer.setOpacity($("opacity").value / 100); };
+
+  // Legend.
+  const legend = $("legend");
+  function key(colour, text) {
+    const row = document.createElement("div");
+    row.className = "key";
+    row.innerHTML = '<span class="swatch" style="background:' + colour + '"></span>';
+    row.appendChild(document.createTextNode(text));
+    legend.appendChild(row);
+  }
+  if (P.kinds.includes("cause")) {
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.textContent = "Cause: the cause the model names where its probability of canopy loss is " +
+      P.threshold + "% or more. Forest only.";
+    legend.appendChild(p);
+    for (const c of P.causes)
+      key("rgb(" + c.rgb.join(",") + ")", c.name.replace(/_/g, " "));
+  }
+  if (P.kinds.includes("prob")) {
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.style.marginTop = "8px";
+    p.textContent = "Probability of canopy loss in the interval, from " + P.prob_floor +
+      "% (faint) to 100% (solid).";
+    legend.appendChild(p);
+    const ramp = document.createElement("div");
+    ramp.className = "ramp";
+    const c = P.prob_rgb.join(",");
+    ramp.style.background = "linear-gradient(to right, rgba(" + c + ",.25), rgba(" + c + ",.95))";
+    legend.appendChild(ramp);
+  }
+
+  // Quad outlines with dates.
+  function unitAt(latlng) {
+    for (const f of Q.features) {
+      const r = f.geometry.coordinates[0];
+      if (latlng.lng >= r[0][0] && latlng.lng < r[1][0] && latlng.lat >= r[0][1] && latlng.lat < r[2][1])
+        return f.properties.unit;
+    }
+    return null;
+  }
+  const quads = L.geoJSON(Q, {
+    style: { color: "#ffe14d", weight: 1, fill: true, fillOpacity: 0, opacity: 0.7 },
+    onEachFeature: (f, layer) => {
+      const d = f.properties.dates || {};
+      const rows = Object.keys(d).sort().map((y) => d[y]).join("<br>");
+      layer.bindPopup("<b>" + f.properties.unit + "</b><br>" +
+        (rows ? "Image dates:<br>" + rows : "No model map yet") +
+        (f.properties.model ? "<br>Model: " + f.properties.model : ""));
+    }
+  }).addTo(map);
+
+  // Notes, kept in the browser.
+  const STORE = "csdv_block_notes:" + P.title;
+  let notes = [];
+  try { notes = JSON.parse(localStorage.getItem(STORE) || "[]"); } catch (e) { notes = []; }
+  const noteLayer = L.layerGroup().addTo(map);
+  function save() {
+    try { localStorage.setItem(STORE, JSON.stringify(notes)); } catch (e) { /* private window */ }
+  }
+  function tagName(tag) { return (TAGS.find((t) => t[0] === tag) || [tag, tag])[1]; }
+  function listNotes() {
+    noteLayer.clearLayers();
+    $("notes").innerHTML = "";
+    notes.forEach((n, i) => {
+      const m = L.circleMarker([n.lat, n.lon], { radius: 7, color: "#fff", weight: 2,
+        fillColor: "#e8590c", fillOpacity: 1 }).addTo(noteLayer);
+      const box = document.createElement("div");
+      box.appendChild(document.createTextNode(tagName(n.tag) + (n.comment ? ": " + n.comment : "")));
+      box.appendChild(document.createElement("br"));
+      const del = document.createElement("button");
+      del.textContent = "Delete";
+      del.onclick = () => { notes.splice(i, 1); save(); listNotes(); };
+      box.appendChild(del);
+      m.bindPopup(box);
+      const li = document.createElement("li");
+      li.textContent = tagName(n.tag) + (n.comment ? ": " + n.comment : "");
+      li.onclick = () => { map.setView([n.lat, n.lon], Math.max(map.getZoom(), 15)); m.openPopup(); };
+      $("notes").appendChild(li);
+    });
+    $("download").textContent = "Download (" + notes.length + ")";
+  }
+  function setNoting(on) {
+    state.noting = on;
+    $("noting").classList.toggle("on", on);
+    map.getContainer().classList.toggle("noting", on);
+    // An outline would take the click that places a note.
+    if (on) map.removeLayer(quads); else if (state.quads) quads.addTo(map);
+  }
+  $("noting").onclick = () => setNoting(!state.noting);
+  map.on("click", (e) => {
+    if (!state.noting) return;
+    const form = document.createElement("div");
+    form.className = "noteform";
+    const select = document.createElement("select");
+    for (const t of TAGS) select.add(new Option(t[1], t[0]));
+    const text = document.createElement("textarea");
+    text.rows = 3;
+    text.placeholder = "Comment (optional)";
+    const ok = document.createElement("button");
+    ok.textContent = "Save note";
+    form.append(select, document.createElement("br"), text, document.createElement("br"), ok);
+    const popup = L.popup().setLatLng(e.latlng).setContent(form).openOn(map);
+    ok.onclick = () => {
+      notes.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+        created: new Date().toISOString(), lon: +e.latlng.lng.toFixed(7), lat: +e.latlng.lat.toFixed(7),
+        unit: unitAt(e.latlng), tag: select.value, comment: text.value.trim(),
+        layer: state.shown ? state.kind : "off", interval: state.interval,
+        naip_year: state.year, background: state.year === null ? "online" : "naip",
+        zoom: map.getZoom(), block: P.title });
+      save(); listNotes(); map.closePopup(popup);
+    };
+  });
+  $("download").onclick = () => {
+    const fc = { type: "FeatureCollection", name: "block_notes", features: notes.map((n) => ({
+      type: "Feature", geometry: { type: "Point", coordinates: [n.lon, n.lat] }, properties: n })) };
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(fc, null, 1)], { type: "application/geo+json" }));
+    a.download = "notes_" + P.title.toLowerCase().replace(/[^a-z0-9]+/g, "_") + ".geojson";
+    a.click();
+  };
+  $("clear").onclick = () => {
+    if (notes.length && !window.confirm("Delete all " + notes.length + " notes in this browser?")) return;
+    notes = []; save(); listNotes();
+  };
+
+  document.addEventListener("keydown", (e) => {
+    if (e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
+    const k = e.key.toLowerCase();
+    if (k === "f") {
+      const pair = pairYears().filter((y) => P.years.includes(y));
+      if (pair.length) { state.year = state.year === pair[pair.length - 1] ? pair[0] : pair[pair.length - 1]; draw(); }
+    } else if (k === "m") { state.shown = !state.shown; draw(); }
+    else if (k === "q") { state.quads = !state.quads; if (state.quads && !state.noting) quads.addTo(map); else map.removeLayer(quads); }
+    else if (k === "arrowleft" || k === "arrowright") {
+      const i = P.intervals.indexOf(state.interval) + (k === "arrowleft" ? -1 : 1);
+      if (i >= 0 && i < P.intervals.length) $("intervals").children[i].click();
+    }
+  });
+
+  const pair = pairYears();
+  state.year = P.years.includes(pair[1]) ? pair[1] : (P.years[P.years.length - 1] || null);
+  draw();
+  listNotes();
+})();
+</script>
+</body>
+</html>

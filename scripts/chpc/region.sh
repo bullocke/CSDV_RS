@@ -16,6 +16,13 @@
 #       a training run under $CSDV_RESULTS_ROOT/pairmodel or a path to a
 #       best.pt (default: CSDV_REGION_CHECKPOINT). The old map of a quad
 #       stays in its run folder as model.prev.<job>.
+#   scripts/chpc/region.sh page   NAME... [--page FOLDER] [--title TEXT] [--dry-run]
+#       One web page for the quads of all the names: NAIP per year and the
+#       model's loss and cause per interval, as map tiles (`csdv grid
+#       webmap`, one CPU job). It goes to CSDV_REGION_PAGE_DIR/FOLDER (the
+#       first NAME when --page is not given),
+#       by default under $CSDV_PUBLIC_HTML/csdv_blocks. The job stops when
+#       the page is projected above CSDV_REGION_PAGE_GB (default 6).
 #   scripts/chpc/region.sh status NAME...
 #       Quads that are not exported yet, your jobs, the disk use and the
 #       years of every quad, and the model that mapped it.
@@ -44,12 +51,14 @@ set -euo pipefail
 
 STEP="${1:-}"
 [[ -n "$STEP" ]] && shift
-NAMES=() DRY=() CKPT_ARG=""
+NAMES=() DRY=() CKPT_ARG="" TITLE="" PAGE=""
 while (($#)); do
     case "$1" in
         --dry-run) DRY=(--dry-run); shift ;;
         --checkpoint) CKPT_ARG="${2:?--checkpoint needs a run or a path}"; shift 2 ;;
-        -h | --help) sed -n '2,41p' "$0"; exit 0 ;;
+        --page) PAGE="${2:?--page needs a folder name}"; shift 2 ;;
+        --title) TITLE="${2:?--title needs a text}"; shift 2 ;;
+        -h | --help) sed -n '2,48p' "$0"; exit 0 ;;
         -*) echo "Unknown option: $1" >&2; exit 2 ;;
         *) NAMES+=("$1"); shift ;;
     esac
@@ -157,6 +166,30 @@ MSG
                 --checkpoint "$CKPT" --remap --no-quicklooks
         done
         ;;
+    page)
+        ROOT="${CSDV_REGION_PAGE_DIR:-${CSDV_PUBLIC_HTML:?set CSDV_PUBLIC_HTML or CSDV_REGION_PAGE_DIR in scripts/chpc/env.sh}/csdv_blocks}"
+        PAGE="${PAGE:-${NAMES[0]}}"
+        OUT="$ROOT/$PAGE"
+        read -r -a CPU <<<"$CSDV_SBATCH_CPU"
+        CMD=(sbatch --parsable "${CPU[@]}" --job-name="csdv_page_$PAGE"
+            --cpus-per-task=8 --mem=32G --time=08:00:00
+            --output="$CSDV_LOG_DIR/%x-%j.out"
+            scripts/slurm/run_csdv_cpu.sbatch grid webmap --out "$OUT"
+            --export-dir "$CSDV_EXPORT_DIR" --data-root "$CSDV_DATA_ROOT"
+            --title "${TITLE:-CSDV disturbance map: $PAGE}" --workers 8
+            --budget-gb "${CSDV_REGION_PAGE_GB:-6}"
+            --tmp-dir "$CSDV_EXPORT_DIR/checks/blockmap_tmp/$PAGE")
+        for name in "${BATCHES[@]}"; do CMD+=(--batch "config/grid/$name.csv"); done
+        if ((${#DRY[@]})); then
+            printf 'would submit:'; printf ' %q' "${CMD[@]}"; echo
+        else
+            mkdir -p "$OUT"
+            echo "page job: $("${CMD[@]}")"
+        fi
+        echo "The page goes to $OUT."
+        echo "The last lines of the log give its size:" \
+            "tail -n 3 $CSDV_LOG_DIR/csdv_page_$PAGE-*.out"
+        ;;
     status)
         for name in "${BATCHES[@]}"; do
             echo "== Quads of $name that are not exported yet"
@@ -188,7 +221,7 @@ MSG
             uniq -c -f1 | head -20 || true
         ;;
     *)
-        echo "usage: $0 block|remap|status NAME... [--checkpoint RUN] [--dry-run]" >&2
+        echo "usage: $0 block|remap|page|status NAME... [--checkpoint RUN] [--page FOLDER] [--title TEXT] [--dry-run]" >&2
         exit 2
         ;;
 esac

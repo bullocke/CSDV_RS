@@ -632,3 +632,104 @@ def check(
             failed.append(f"{unit} {tag}")
     if failed:
         raise click.ClickException(f"Checks failed: {', '.join(failed)}")
+
+
+@grid.command("webmap")
+@click.option(
+    "--batch",
+    "batches",
+    required=True,
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Batch file of the block. Give it once per file.",
+)
+@click.option("--out", "out_dir", required=True, type=click.Path(path_type=Path))
+@click.option(
+    "--export-dir",
+    default=None,
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Exports folder (run_layers, quicklooks). Default: $CSDV_EXPORT_DIR.",
+)
+@click.option(
+    "--data-root",
+    default=None,
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Data folder with naip/<unit>/<year> mosaics. Without it the 3 m "
+    "quicklooks of the exports are drawn.",
+)
+@click.option("--title", default="Disturbance map", show_default=True)
+@click.option("--run-tag", default="default", show_default=True)
+@click.option(
+    "--naip-zoom",
+    default=14,
+    show_default=True,
+    type=int,
+    help="Deepest zoom of the image tiles. 14 is about 3.7 m at 39 degrees "
+    "north. One less is a quarter of the size.",
+)
+@click.option("--model-zoom", default=13, show_default=True, type=int)
+@click.option(
+    "--threshold",
+    default=90,
+    show_default=True,
+    type=int,
+    help="Probability in percent from which a cause is drawn.",
+)
+@click.option("--years", default=None, help="Only these image years, e.g. 2018,2022.")
+@click.option("--workers", default=4, show_default=True, type=int)
+@click.option("--budget-gb", default=None, type=float, help="Stop above this size.")
+@click.option("--tmp-dir", default=None, type=click.Path(path_type=Path))
+@click.option("--overwrite", is_flag=True, help="Cut layers again that exist.")
+def webmap_cmd(
+    batches: tuple[Path, ...],
+    out_dir: Path,
+    export_dir: Path | None,
+    data_root: Path | None,
+    title: str,
+    run_tag: str,
+    naip_zoom: int,
+    model_zoom: int,
+    threshold: int,
+    years: str | None,
+    workers: int,
+    budget_gb: float | None,
+    tmp_dir: Path | None,
+    overwrite: bool,
+) -> None:
+    """One web page for a block of quads: images, loss and cause as tiles.
+
+    The folder it writes is static and can be served as it is.
+    """
+    from csdv_core.grid.blockmap import BlockmapConfig, build_blockmap
+    from csdv_core.grid.units import grid_paths
+
+    try:
+        result = build_blockmap(
+            BlockmapConfig(
+                batches=batches,
+                out_dir=out_dir,
+                export_dir=export_dir or grid_paths().export_dir,
+                data_root=data_root,
+                title=title,
+                run_tag=run_tag,
+                naip_zoom=naip_zoom,
+                model_zoom=model_zoom,
+                threshold=threshold,
+                years=tuple(int(y) for y in years.split(",")) if years else None,
+                workers=workers,
+                budget_gb=budget_gb,
+                tmp_dir=tmp_dir,
+                overwrite=overwrite,
+            )
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(
+        f"{result.quads} quads, image years {result.years}, "
+        f"{len(result.intervals)} intervals, {result.megabytes:.0f} MB in {out_dir}"
+    )
+    if result.without_map:
+        click.echo(
+            f"{len(result.without_map)} quads have no model map: "
+            f"{', '.join(result.without_map[:8])}"
+        )
