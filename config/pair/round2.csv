@@ -79,3 +79,4 @@ reserved_r1_s3,score,merged_r2,2,q4412328,3,,optional,Test B the control and a f
 reserved_r2sf_s0,score,merged_r2,2,q4412328,0,,optional,Test places and Oregon held out with round 2 and stable-forest draws,--hold-role test --run-draws stable_forest=0.15
 look_r2_q3908654,look,merged_r2,2,q3908654,0,reserved_r2_s0,optional,Southern Indiana mapped with the round-2 model of test B,
 reserved_norejsf_s0,score,merged_r2_norej,2,q4412328,0,,optional,Working model 1: round 2 without decision 10 and with stable-forest draws,--hold-role test --run-draws stable_forest=0.15
+reserved_r2_s3_cause,rescore,merged_r2,2,q4412328,3,reserved_r2_s3,optional,Seed 3 of test B scored again for the cause head (agent_confusion.csv),

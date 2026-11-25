@@ -12,6 +12,9 @@ folder:
 - ``units.csv``: scores per unit at the checkpoint's threshold.
 - ``score.json``: the pooled scores, and those of the intervals that end on
   an image from November to April and of the others.
+- ``agent_confusion.csv``: for a model with an agent head, the agent the
+  model names on the loss cells whose label has one (rows the label, columns
+  the model), as ``agent_confusion_val.csv`` of a training run.
 
 ``csdv pair predict`` and ``compare`` map and score one whole unit. This
 module scores label chips only, which is what a test on many small places
@@ -31,7 +34,7 @@ import numpy as np
 import pandas as pd
 
 from csdv_core.pairmodel import data as D
-from csdv_core.pairmodel.metrics import CellCounts, to_percent
+from csdv_core.pairmodel.metrics import AgentCounts, CellCounts, to_percent
 
 logger = logging.getLogger(__name__)
 
@@ -196,13 +199,16 @@ def score(
     )
     pos: list[np.ndarray] = []
     neg: list[np.ndarray] = []
+    agents = AgentCounts(D.AGENT_NAMES)
     amp = dev.type == "cuda"
     with torch.no_grad():
-        for a, b, target, _agent, _unit, *third in loader:
+        for a, b, target, agent, _unit, *third in loader:
             a, b = a.to(dev, non_blocking=True), b.to(dev, non_blocking=True)
             c, has_c = _third(third, dev)
             with torch.autocast(dev.type, enabled=amp):
-                logits, _ = model.forward_agents(a, b, c, has_c)
+                logits, agent_logits = model.forward_agents(a, b, c, has_c)
+            if agent_logits is not None:
+                agents.update(agent_logits.argmax(dim=1).cpu().numpy(), agent.numpy())
             percent = to_percent(torch.sigmoid(logits.float()).squeeze(1).cpu().numpy())
             labels = target.numpy()
             for i in range(len(percent)):
@@ -219,6 +225,16 @@ def score(
         out_dir,
         {"checkpoint": str(checkpoint), "chips_dir": str(chips_dir)},
     )
+    if agents.n:
+        pd.DataFrame(agents.rows()).to_csv(
+            Path(out_dir) / "agent_confusion.csv", index=False
+        )
+        logger.info(
+            "Agent head: %d cells with an agent, accuracy %.3f, balanced %.3f",
+            agents.n,
+            agents.accuracy(),
+            agents.balanced_accuracy(),
+        )
     logger.info(
         "%d samples of %d units: average precision %.3f, recall %.3f, "
         "background flagged %.4f at %.2f",
