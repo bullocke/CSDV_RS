@@ -1,0 +1,6 @@
+# The centre quad of the Southern Indiana block. It was processed before the
+# block (the labels of the scale test rest on its run), so no queue ever
+# submits it. This file exists for `scripts/chpc/region.sh remap` and for
+# the block's page, which take their quads from batch files.
+label,lon,lat,buffer_km,cell,notes
+IN_centre,,,,q3908654,Centre of the block

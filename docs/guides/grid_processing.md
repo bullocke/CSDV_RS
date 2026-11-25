@@ -97,9 +97,25 @@ Job IDs belong to one cluster, so no job can wait for a job of another one. The 
 
 Which pools are worth naming changes by the day. `sbatch --test-only <pool options> scripts/slurm/run_chm_worker.sbatch x` prints when a worker would start and submits nothing. On 2026-11-20 the general GPU partitions of lonepeak and kingspeak would have started within minutes, notchpeak-gpu within 13 hours, and the preemptable routes (notchpeak-gpu-guest, granite-gpu freecycle) only after 2 and 16 days. The GTX 1080 Ti cards of lonepeak run the model: a 4.8 km box-year took about 4.4 minutes (263 s, of which about one minute was inference). The cards of kingspeak have not been tried.
 
-### A block of adjoining quads
+### Blocks of adjoining quads
 
-`scripts/chpc/region.sh block` sends the quads of `config/grid/indiana_block.csv` through the same queue, as the rehearsal of a regional map: the eight quads around q3908654 in Southern Indiana, each mapped by the pair model at the end of its finish task. It prints the free space of the data root and the size of a finished quad before it submits, and gives the workers 48 GB, because the height model of a whole quad needs 21 to 34 GB. `scripts/chpc/region.sh status` lists the quads that are not exported, the disk use per quad and the run times of the finish tasks. Whole quads went through the queue for the first time with this block (2026-11-23), so the run times above for boxes do not carry over.
+A block is a set of adjoining quads mapped wall to wall, the unit of a regional map. `scripts/chpc/region.sh` sends blocks through the same queue, with each quad mapped by the pair model at the end of its finish task. The first block was Southern Indiana: eight quads around q3908654 (`indiana_block`), a ring of 16 (`indiana_ring`) and 55 more (`indiana_south`), 80 quads with the centre. All 24 quads of the first two went through on the first try. A quad takes about 12 GB on disk (7.5 to 8.1 GB of mosaics and 2.5 to 4.9 GB of height models), about 40 GPU minutes for the height models of eight years and 36 to 51 minutes for its finish task.
+
+```bash
+python scripts/grid/block_csv.py blue_ridge --state NC --bbox -84.375 35.0 -81.25 36.625   # laptop: writes the batch files
+scripts/chpc/region.sh block blue_ridge --dry-run     # CHPC: free space, links, the jobs
+scripts/chpc/region.sh block blue_ridge               # submit, and again the next evening for what is left
+scripts/chpc/region.sh status blue_ridge              # quads not exported, disk use, years and model per quad
+scripts/chpc/region.sh remap blue_ridge --checkpoint RUN   # map the finished quads again with another model
+```
+
+- **One state per block.** `scripts/grid/block_csv.py` keeps the quads of a bounding box that lie wholly inside one state. A quad on a state line loses the years of the neighbouring state (see "NAIP years and sources") and is left for later.
+- **Parts.** A block is written as parts of at most 40 quads (`blue_ridge_1.csv`, `blue_ridge_2.csv`, ...), and `region.sh` takes the block's name for all of them. Each part is a queue of its own, because the finish tasks of a queue wait for every height model of that queue.
+- **Storage.** With `CSDV_REGION_STORE` set in `scripts/chpc/env.sh`, the mosaics and height models of new quads are kept in that folder, and `$CSDV_DATA_ROOT/naip/<unit>` and `naip_chm/<unit>` are links to them. Nothing else moves. The mosaics stay on disk, because a remap reads them.
+- **Another model.** `region.sh remap` runs the finish task with `--remap`: detection is kept, the map is made again and the quad is exported again. The run folder keeps the old map as `model.prev.<job>`. The map's folder names the training run of its model in `checkpoint.txt`, and `export.json` repeats it as `model`.
+- **Workers.** The block step gives the workers 48 GB and 8 hours (`CSDV_REGION_QUEUE_ARGS` replaces these options): the height model of a whole quad needs 21 to 34 GB, more than the 24 GB the queue gives a small box.
+
+`scripts/chpc/region_pull.sh` brings the cell layers and model maps of a block to the laptop, about 25 MB per quad.
 
 ## Run tags and reruns
 

@@ -331,8 +331,12 @@ def export_layers(paths: GridPaths, unit_id: str, run_tag: str) -> list[Path]:
             dst.parent.mkdir(parents=True, exist_ok=True)
             written.append(Path(shutil.copy2(src, dst)))
     model = run_dir / "model"
+    # A map made again with another model must not leave files of the old one.
+    shutil.rmtree(out_dir / "model", ignore_errors=True)
     if model.is_dir():
-        for src in sorted(model.glob("*.tif")):
+        for src in [*sorted(model.glob("*.tif")), model / "checkpoint.txt"]:
+            if not src.is_file():
+                continue
             # The type rasters are drawings of the agent raster.
             if src.name.startswith("type_"):
                 continue
@@ -340,6 +344,12 @@ def export_layers(paths: GridPaths, unit_id: str, run_tag: str) -> list[Path]:
             dst.parent.mkdir(parents=True, exist_ok=True)
             written.append(Path(shutil.copy2(src, dst)))
     return written
+
+
+def _model_name(run_dir: Path) -> str | None:
+    """The training run of the pair model that mapped a run, when recorded."""
+    note = run_dir / "model" / "checkpoint.txt"
+    return note.read_text(encoding="utf-8").strip() if note.is_file() else None
 
 
 def export_run(
@@ -413,7 +423,13 @@ def export_run(
     result.files.extend(export_layers(paths, unit_id, run_tag))
     (out_dir / "export.json").write_text(
         json.dumps(
-            {"unit": unit_id, "run_tag": run_tag, "run_dir": str(run_dir)}, indent=2
+            {
+                "unit": unit_id,
+                "run_tag": run_tag,
+                "run_dir": str(run_dir),
+                "model": _model_name(run_dir),
+            },
+            indent=2,
         ),
         encoding="utf-8",
     )

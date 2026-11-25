@@ -16,7 +16,7 @@
 #   sbatch $CSDV_SBATCH_CPU --array=1-N --output="$CSDV_LOG_DIR/%x-%A_%a.out" \
 #       scripts/slurm/run_grid_finish.sbatch QUEUE_DIR ROWS.csv RUN_TAG \
 #       [--min-years N] [--checkpoint best.pt] [--priority-intervals FILE] \
-#       [--no-quicklooks] [-- detect-disturbance options...]
+#       [--remap] [--no-quicklooks] [-- detect-disturbance options...]
 #
 # Steps, each skipped when its output exists:
 #   1. `csdv grid sync-unit`: the years that have a mosaic and a CHM. The
@@ -26,7 +26,10 @@
 #   2. Detection into $CSDV_RESULTS_ROOT/disturbance/<unit>/<tag>/, through
 #      scripts/slurm/run_detect_disturbance.sbatch on those years.
 #   3. With --checkpoint: `csdv pair predict --device cpu` into <run>/model/.
-#      The mosaics are read where they are.
+#      The mosaics are read where they are. The folder names its model in
+#      checkpoint.txt. With --remap an existing map is made again, with
+#      this checkpoint, and the old folder is kept as model.prev.<job>:
+#      the way to map finished units with a newer model.
 #   4. `csdv grid export`, which also copies the cell layers and the model
 #      map that the label steps read.
 #
@@ -44,6 +47,7 @@ shift 3
 
 MIN_YEARS=2
 CHECKPOINT=""
+REMAP=0
 PRIORITY=()
 EXPORT_ARGS=()
 DETECT_ARGS=()
@@ -52,6 +56,7 @@ while (($#)); do
         --min-years) MIN_YEARS="${2:?}"; shift 2 ;;
         --checkpoint) CHECKPOINT="${2:?}"; shift 2 ;;
         --priority-intervals) PRIORITY=(--priority-intervals "${2:?}"); shift 2 ;;
+        --remap) REMAP=1; shift ;;
         --no-quicklooks) EXPORT_ARGS+=(--no-quicklooks); shift ;;
         --) shift; DETECT_ARGS=("$@"); break ;;
         *) echo "ERROR: unknown option $1" >&2; exit 2 ;;
@@ -96,7 +101,7 @@ fi
 
 # 3. The pair model's map, on CPU.
 if [[ -n "$CHECKPOINT" ]]; then
-    if [[ -f "$RUN_DIR/model/prob_$UNIT.tif" ]]; then
+    if ((!REMAP)) && [[ -f "$RUN_DIR/model/prob_$UNIT.tif" ]]; then
         echo "model map: exists"
     elif [[ ! -f "$CHECKPOINT" ]]; then
         echo "ERROR: no checkpoint at $CHECKPOINT" >&2
@@ -109,6 +114,11 @@ if [[ -n "$CHECKPOINT" ]]; then
             csdv pair predict --checkpoint "$CHECKPOINT" --unit "$UNIT" \
             --runs-dir "$CSDV_RESULTS_ROOT/disturbance" --run-subdir "$RUN_TAG" \
             --data-root "$CSDV_DATA_ROOT" --out-dir "$TMP" --device cpu --workers 2
+        # The run that trained the model: the folder above best.pt.
+        basename "$(dirname "$CHECKPOINT")" >"$TMP/checkpoint.txt"
+        if ((REMAP)) && [[ -d "$RUN_DIR/model" ]]; then
+            mv "$RUN_DIR/model" "$RUN_DIR/model.prev.${SLURM_JOB_ID:-$$}"
+        fi
         rm -rf "$RUN_DIR/model"
         mv "$TMP" "$RUN_DIR/model"
         echo "model map: $((SECONDS - STARTED)) s on $THREADS threads"
