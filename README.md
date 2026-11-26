@@ -1,16 +1,35 @@
 # CSDV: Eastern US Forest Disturbance and Recovery Mapping
 
-This repository develops a method for mapping forest disturbance and post-disturbance recovery across the eastern United States. The approach extracts stand-level structural metrics from multi-temporal NAIP aerial imagery (0.6 m, four-band RGBN) and NAIP-derived canopy height models, then applies a rule-based classifier that assigns each stand an Oliver-Larson developmental stage at every imagery date and tracks how those stages change through time. The work is carried out by a university remote sensing group as a sub-contract to a forest disturbance mapping project funded by the USDA Natural Resources Conservation Service through Pheasants Forever.
+This repository develops a method for mapping forest disturbance and post-disturbance recovery across the eastern United States from multi-temporal NAIP aerial imagery (0.6 m, four-band RGBN). The work is carried out by a university remote sensing group as a sub-contract to a forest disturbance mapping project funded by the USDA Natural Resources Conservation Service through Pheasants Forever.
+
+The method has two parts. The first maps where and when canopy was lost, at the scale of single stands, and names the cause. The second describes what the stand does afterwards: it extracts stand-level structural metrics from NAIP and NAIP-derived canopy height models, assigns each stand an Oliver-Larson developmental stage at every imagery date, and tracks how those stages change through time.
 
 The central idea is that 0.6 m imagery resolves individual tree crowns and canopy gaps, which connects directly to decades of stand development theory. Crown width distributions, gap fraction, and texture measured from NAIP can be compared against established expectations for how forest structure changes through development. Departures from those expectations become diagnostic of specific disturbance types, management histories, and recovery outcomes.
 
 ## Status
 
-This is a proof-of-concept and is very much in development. The code in this repository is essentially a test of the project's classification system. iIt checks whether the structural metrics the classifier needs can be reliably extracted from NAIP and whether they separate developmental stages cleanly. The metrics are evaluated against airborne lidar benchmarks at NEON sites (SCBI in Virginia, Harvard Forest in Massachusetts, Talladega in Alabama).
+Updated November 2026. The project is in development, and everything here is preliminary and unpublished.
 
-Everything here is preliminary and unpublished. The classification thresholds and rule logic have not been calibrated, so all stage and trajectory assignments shown below are tentative illustrations of the workflow rather than validated results.
+**Disturbance mapping is the active work.** A model that reads two NAIP dates and marks canopy loss is trained on labels produced without a photo interpreter, and it now maps blocks of adjoining 7.5 minute quads on a cluster. The first regional maps (Southern Indiana, western North Carolina, south Georgia, Vermont) are being produced and have not been assessed for accuracy yet.
 
-## How the classification system works
+**The recovery classification is a paused proof of concept.** The code checks whether the structural metrics the classifier needs can be extracted from NAIP and whether they separate developmental stages. The metrics are evaluated against airborne lidar benchmarks at NEON sites (SCBI in Virginia, Harvard Forest in Massachusetts, Talladega in Alabama). The classification thresholds and rule logic have not been calibrated, so all stage and trajectory assignments shown below are tentative illustrations of the workflow and not validated results.
+
+## How disturbance is mapped
+
+The map is built in four steps. Each has a command group in the `csdv` command line tool and a guide under `docs/guides/`.
+
+| Step | What it does | Command | Guide |
+|---|---|---|---|
+| 1. Candidates | A NAIP-derived canopy height model is made for every NAIP year of a quad. A Disturbance Index on the heights of consecutive dates proposes where canopy was lost | `csdv grid`, `csdv detect-disturbance` | [Grid processing](docs/guides/grid_processing.md), [Disturbance detection](docs/guides/disturbance_detection.md) |
+| 2. Labels | Two vision-language models look at each candidate on every image date and say whether canopy was lost, when, and from what cause. Where they agree, the answer becomes a training label. A person reads a blind sample to measure the label error | `csdv label`, `csdv audit` | [Disturbance labels](docs/guides/disturbance_labels.md), [Label audit](docs/guides/label_audit.md) |
+| 3. Pair model | A Siamese network reads the four NAIP bands of two dates and returns the probability of canopy loss and its cause for every 9.6 m cell. The height model proposes and constrains the labels and is never an input | `csdv pair` | [Pair model](docs/guides/pair_model.md) |
+| 4. Maps and review | The pair model maps every pair of consecutive dates of a quad. The maps are read in a browser, over the imagery, with notes | `csdv grid queue`, `csdv grid webmap`, `csdv view`, `csdv review` | [Map viewer](docs/guides/map_viewer.md), [Disturbance review](docs/guides/disturbance_review.md) |
+
+Preliminary results, November 2026. Two label rounds produced about 4,200 loss events in 124 places across the contiguous United States. On 20 places held back from training, labels spread over many small places raised the average precision of the pair model from 0.66 to 0.80 (mean of four training seeds). In a blind reading of 25 loss labels, one was wrong. Known weaknesses are false alarms on leaf-off and snow-covered images, recovered defoliation read as loss, and the cause of wind and insect damage, which the model does not yet name on places it has not seen.
+
+A mapped loss patch is meant to carry its date interval, cause and severity to the recovery classification described next. That link is not built yet.
+
+## How the recovery classification works
 
 ### Layer 1: Ecological stratification
 
@@ -122,26 +141,43 @@ pytest
 csdv --help
 ```
 
+Crown segmentation needs the sibling repository [naip-crowns](https://github.com/bullocke/naip-crowns), installed with `pip install --no-deps --no-build-isolation -e ../naip-crowns`. Batch runs on the University of Utah cluster are described in [docs/workflow_chpc.md](docs/workflow_chpc.md).
+
 ## Documentation
 
-For detailed guides, API references, and data structures, please refer to the following documentation files (in development):
+Guides and references, all in development.
 
-* [**Architecture**](docs/architecture.md) — describes the library's structure, including the main modules and their responsibilities.
-* [**Metrics**](docs/metrics.md) — describes the structural metrics extracted from NAIP and NAIP-CHM rasters, including their definitions, units, examples, and how they are computed.
-* [**Data layout**](docs/data_layout.md) — describes the expected layout of the `data/` and `results/` directories, including the purpose of each subdirectory and how to configure the environment variables that control their locations.
+General:
+
+* [**Architecture**](docs/architecture.md): the library's structure, its modules and their responsibilities, and the command line surface.
+* [**Data layout**](docs/data_layout.md): the expected layout of the `data/` and `results/` directories and the environment variables that control their locations.
+* [**CHPC workflow**](docs/workflow_chpc.md): running the pipeline on the University of Utah cluster with node-local scratch, including the Slurm scripts.
+
+Disturbance mapping:
+
 * [**Disturbance detection guide**](docs/guides/disturbance_detection.md): how `csdv detect-disturbance` maps forest canopy loss and its onset from NAIP-CHM years, how to run it locally and on CHPC, how to change its parameters and how to sample its output for interpretation.
 * [**Disturbance detection API**](docs/disturbance_api.md): the modules, parameters and output files of the disturbance pipeline.
+* [**Grid processing**](docs/guides/grid_processing.md): one command per 7.5 minute quad or small box anywhere in the contiguous United States, the work queue for many units, and blocks of adjoining quads.
+* [**Disturbance labels**](docs/guides/disturbance_labels.md): how `csdv label` turns candidates into training labels with two vision-language models, what counts as loss, the label rules, and the cost controls.
+* [**Label audit**](docs/guides/label_audit.md): the blind reading of a label sample by human interpreters and its scores.
+* [**Pair model**](docs/guides/pair_model.md): training, holdouts, mapping and scoring of the model that reads two NAIP dates.
+* [**Map viewer**](docs/guides/map_viewer.md): browsing the pair model's maps over NAIP and leaving notes.
+* [**Disturbance review**](docs/guides/disturbance_review.md): interpreting a sample of detected disturbances in a browser app.
+
+Recovery classification:
+
+* [**Metrics**](docs/metrics.md): the structural metrics extracted from NAIP and NAIP-CHM rasters, with definitions, units, examples, and how they are computed.
 * [**Crown segmentation**](docs/guides/crown_segmentation/README.md): the engine now lives in the sibling repository [naip-crowns](https://github.com/bullocke/naip-crowns). This folder keeps the Indiana study that tuned its parameters for CSDV's stand metrics.
-* [**CHPC workflow**](docs/workflow_chpc.md): running the pipeline on the University of Utah cluster with node-local scratch, including the Slurm scripts.
 
 ## Repository layout
 
 ```
 src/csdv_core/    # the library
-scripts/          # batch entry points for cluster and Colab runs
+config/           # grid batches, label run settings, model run tables
+scripts/          # batch entry points (scripts/chpc and scripts/slurm for the cluster)
 notebooks/        # exploration
 tests/            # pytest
-docs/             # workflow and data layout notes
+docs/             # architecture, guides, data layout
 ```
 
 ## References
