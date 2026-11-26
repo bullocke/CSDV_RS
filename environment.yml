@@ -95,6 +95,11 @@ dependencies:
   # src/csdv_core/review). Installed locally with pip because the micromamba
   # solver ran out of memory; the wheels touch no compiled geospatial library.
   - solara
+  # Map viewer of the pair-model maps (csdv view, src/csdv_core/view), and the
+  # tile routes of the review app. All three came in with solara and leafmap.
+  - starlette
+  - uvicorn
+  - rio-tiler
 
   # Nice extras for this kind of project
   - requests

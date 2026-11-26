@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CSDV map viewer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/vendor/leaflet.css">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header id="top">
+  <select id="site" title="Site ( , and . step through the sites)"></select>
+  <div class="seg" id="layer" title="Layer (D, T, P)">
+    <button data-layer="date">Date</button>
+    <button data-layer="type">Type</button>
+    <button data-layer="prob">Probability</button>
+  </div>
+  <div class="seg" id="intervals" title="Interval ( [ and ] step through them)"></div>
+  <label title="Count loss only on cells that were forest before the interval">
+    <input type="checkbox" id="forest"> Forest only</label>
+  <label title="Opacity of the map layer (O turns it off, hold Space to peek)">
+    Opacity <input type="range" id="opacity" min="0" max="100" step="5"></label>
+  <label title="Outlines of the labelled events and reviewed areas (L)">
+    <input type="checkbox" id="labels"> Labels</label>
+  <span class="grow"></span>
+  <button id="dual" title="One or two panels (S)">Two panels</button>
+  <button id="help" title="Keys">?</button>
+</header>
+
+<main>
+  <section id="maps">
+    <div class="panel" id="panelA">
+      <div class="phead">
+        <b>A</b>
+        <select class="run"></select>
+        <span class="thr">
+          <input type="range" min="5" max="99" step="1" title="Threshold">
+          <output></output>
+          <button class="reset" title="Back to the threshold of the run">reset</button>
+        </span>
+        <span class="scores"></span>
+      </div>
+      <div class="map" id="mapA"></div>
+    </div>
+    <div class="panel" id="panelB">
+      <div class="phead">
+        <b>B</b>
+        <select class="run"></select>
+        <span class="thr">
+          <input type="range" min="5" max="99" step="1" title="Threshold">
+          <output></output>
+          <button class="reset" title="Back to the threshold of the run">reset</button>
+        </span>
+        <span class="scores"></span>
+      </div>
+      <div class="map" id="mapB"></div>
+    </div>
+  </section>
+
+  <aside id="side">
+    <section id="inspector">
+      <h2>At the clicked cell</h2>
+      <div id="inspect-body" class="muted">Click the map to read every model at a cell and to leave a note there.</div>
+    </section>
+    <section id="note" hidden>
+      <h2>Note <span id="note-state" class="muted"></span></h2>
+      <div id="tags"></div>
+      <textarea id="comment" rows="4" placeholder="What do you see here? Saves as you type."></textarea>
+      <div class="row">
+        <button id="note-close" title="Esc">Close</button>
+        <button id="note-delete">Delete</button>
+      </div>
+    </section>
+    <section id="notes">
+      <h2>Notes <span id="notes-count" class="muted"></span></h2>
+      <div class="row">
+        <label><input type="checkbox" id="notes-all"> All sites</label>
+      </div>
+      <div id="tag-counts"></div>
+      <ul id="notes-list"></ul>
+      <div id="notes-path" class="muted"></div>
+    </section>
+  </aside>
+</main>
+
+<footer id="bottom">
+  <select id="bg" title="Background">
+    <option value="naip">NAIP</option>
+    <option value="chm">Canopy height</option>
+    <option value="dchm">Height change</option>
+  </select>
+  <div class="seg" id="years" title="Image year (Left and Right arrows)"></div>
+  <label title="Load the 0.6 m imagery when zoomed in (needs the internet)">
+    <input type="checkbox" id="hires"> 0.6 m</label>
+  <span id="status" class="muted"></span>
+  <span class="grow"></span>
+  <div id="legend"></div>
+</footer>
+
+<div id="help-box" hidden>
+  <h2>Keys</h2>
+  <table>
+    <tr><td><kbd>,</kbd> <kbd>.</kbd></td><td>previous and next site</td></tr>
+    <tr><td><kbd>&larr;</kbd> <kbd>&rarr;</kbd></td><td>image year</td></tr>
+    <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>interval</td></tr>
+    <tr><td><kbd>B</kbd> <kbd>A</kbd></td><td>image before and after the chosen interval</td></tr>
+    <tr><td><kbd>D</kbd> <kbd>T</kbd> <kbd>P</kbd></td><td>date, type, probability</td></tr>
+    <tr><td><kbd>Space</kbd></td><td>hold to hide the map layer</td></tr>
+    <tr><td><kbd>O</kbd></td><td>map layer on or off</td></tr>
+    <tr><td><kbd>L</kbd></td><td>label outlines</td></tr>
+    <tr><td><kbd>S</kbd></td><td>one or two panels</td></tr>
+    <tr><td><kbd>N</kbd></td><td>note at the cursor</td></tr>
+    <tr><td><kbd>1</kbd> to <kbd>6</kbd></td><td>tag of the open note</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>close the note</td></tr>
+  </table>
+  <p class="muted">Click the map to read the models at a cell. Type or pick a tag to keep a note there. Notes save by themselves.</p>
+</div>
+
+<script src="/static/vendor/leaflet.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

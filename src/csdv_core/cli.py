@@ -158,6 +158,12 @@ def _attach_review() -> None:
     main.add_command(_review_cli, name="review")
 
 
+def _attach_view() -> None:
+    from csdv_core.view.cli import view as _view_cli
+
+    main.add_command(_view_cli, name="view")
+
+
 def _attach_audit() -> None:
     from csdv_core.audit.cli import audit as _audit_cli
 
@@ -191,6 +197,7 @@ _attach_check()
 _attach_disturbance()
 _attach_grid()
 _attach_review()
+_attach_view()
 _attach_label()
 _attach_audit()
 _attach_pairmodel()

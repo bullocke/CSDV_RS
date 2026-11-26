@@ -114,7 +114,7 @@ scripts/chpc/pull_pair_defoliation.sh --table config/pair/stable_forest.csv
 
 `csdv pair merge-chips` also writes `chips/sites.csv`, from the `sites.csv` of every label run that has one (a run by places, such as round 2). Training reads two of its columns. A unit whose `holdout_with` names a held-out unit saw the same event or flight and is held out with it, always. `--hold-role test` holds out the units with that role as well. The dry run names the units held out this way.
 
-`csdv pair score` scores a checkpoint on the label chips of units it did not train on, without a map. It reads each chip whole, as validation does, and writes `samples.parquet` (one row per chip and interval with the counts of loss and background cells by predicted percent, from which any grouping can be pooled later), `units.csv` and `score.json` (pooled scores, and those of the intervals that end on an image from November to April). `--role test` takes the units from `chips/sites.csv`. It does not check that the model did not train on them.
+`csdv pair score` scores a checkpoint on the label chips of units it did not train on, without a map. It reads each chip whole, as validation does, and writes `samples.parquet` (one row per chip and interval with the counts of loss and background cells by predicted percent, from which any grouping can be pooled later), `units.csv` and `score.json` (pooled scores, and those of the intervals that end on an image from November to April). For a model with an agent head it also writes `agent_confusion.csv`: the agent the model names on the loss cells whose label has one. `--role test` takes the units from `chips/sites.csv`. It does not check that the model did not train on them.
 
 ```bash
 csdv pair train --chips-dir $CHIPS --holdout-units q4709438 --hold-role test \
@@ -146,6 +146,8 @@ After every epoch the validation units are scored on whole chips without any ran
 For a model with an agent head it also writes `type_<unit>_<dateA>_<dateB>.tif`, one file per interval. Each holds the agent code of the cells whose loss probability is at or above a threshold and 0 on every other cell. The file has a single band, a colour table and 0 as its nodata value, so it opens in QGIS with one colour per agent and nothing drawn where the model sees no loss. The threshold is the one with the best F1 on the validation units, stored in the checkpoint, or `--threshold` (0.5 if the checkpoint holds none). The log and the last lines of the command name the threshold used. A different threshold needs no new run of the model: `flagged_agents` in `csdv_core.pairmodel.predict` cuts the same rasters from `agent_<unit>.tif` and `prob_<unit>.tif`.
 
 A model with three dates (section "A third date") also writes `prob_pair_<unit>.tif`, its map from two dates alone, and `--skip-pairs` adds `prob_skip_<unit>.tif` for any model. Both have the bands of `prob_<unit>.tif`. The agent and type rasters follow `prob_<unit>.tif`.
+
+`csdv view` shows these maps in a browser over NAIP, two runs side by side, with the date and type of loss derived from the probability and agent rasters at a threshold (see [map_viewer.md](map_viewer.md)).
 
 The cells of the map lie on the global 0.6 m lattice of the UTM zone at multiples of the cell size, which is where the label chips pool to cells. The grid of a unit starts anywhere on the 0.6 m lattice, so the map covers the unit's extent snapped outward, and the 19.2 m layers of the disturbance run are sampled at the centre of each map cell.
 
