@@ -5,14 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 import rasterio
 from rasterio.transform import from_origin
 
+from csdv_core.grid import blockmap
 from csdv_core.grid.blockmap import (
     PROB_FLOOR,
     BlockmapConfig,
     _interval_key,
     _render_model,
+    _tiles,
     tile_resolution,
 )
 
@@ -56,3 +59,37 @@ def test_render_model_colours_by_threshold(tmp_path: Path) -> None:
     assert (cause[3] > 0).tolist() == [[False, False, True], [False, False, True]]
     assert cause[:3, 0, 2].tolist() == [227, 73, 72]  # fire
     assert cause[:3, 1, 2].tolist() == [237, 161, 0]  # harvest
+
+
+def test_a_layer_that_was_not_finished_is_cut_again(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Tiles land under the layer's name only when the cut has ended."""
+    out = tmp_path / "t" / "naip_2016"
+    calls: list[str] = []
+
+    def stopped(command: list[str]) -> None:
+        folder = Path(command[-1])
+        calls.append(folder.name)
+        (folder / "8").mkdir(parents=True)
+        (folder / "8" / "stale.webp").write_bytes(b"x")
+        raise RuntimeError("the job ran out of time")
+
+    def finished(command: list[str]) -> None:
+        folder = Path(command[-1])
+        calls.append(folder.name)
+        assert not folder.exists()  # the half-cut folder was removed first
+        (folder / "8").mkdir(parents=True)
+        (folder / "8" / "0.webp").write_bytes(b"x")
+
+    monkeypatch.setattr(blockmap, "_tool", lambda name: name)
+    kwargs = dict(resampling="average", driver="WEBP", quality=80, workers=1)
+    monkeypatch.setattr(blockmap, "_run", stopped)
+    with pytest.raises(RuntimeError):
+        _tiles(tmp_path / "m.tif", out, (8, 14), **kwargs)
+    assert not out.exists() and (tmp_path / "t" / "naip_2016.part").is_dir()
+    monkeypatch.setattr(blockmap, "_run", finished)
+    _tiles(tmp_path / "m.tif", out, (8, 14), **kwargs)
+    assert calls == ["naip_2016.part", "naip_2016.part"]
+    assert [p.name for p in out.rglob("*.webp")] == ["0.webp"]
+    assert not (tmp_path / "t" / "naip_2016.part").exists()

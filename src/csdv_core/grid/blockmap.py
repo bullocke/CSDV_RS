@@ -32,6 +32,7 @@ import math
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -164,16 +165,25 @@ def _tiles(
     quality: int,
     workers: int,
 ) -> None:
-    """Cut a Web Mercator raster with alpha into XYZ tiles."""
+    """Cut a Web Mercator raster with alpha into XYZ tiles.
+
+    The tiles are cut into ``<out>.part`` and the folder is renamed when all
+    are written, so a folder with the name of a layer is a finished layer. A
+    job that ran out of time leaves a ``.part`` folder, which the next run
+    cuts again.
+    """
+    part = out.with_name(out.name + ".part")
     command = [sys.executable, _tool("gdal2tiles.py"), "--xyz", "-q", "-x"]
     command += ["-z", f"{zooms[0]}-{zooms[1]}", f"--tilesize={TILE_PX}"]
     command += ["-r", resampling, "-w", "none", f"--processes={max(1, workers)}"]
     command += [f"--tiledriver={driver}"]
     if driver == "WEBP":
         command.append(f"--webp-quality={quality}")
-    shutil.rmtree(out, ignore_errors=True)
+    shutil.rmtree(part, ignore_errors=True)
     out.parent.mkdir(parents=True, exist_ok=True)
-    _run([*command, str(mosaic), str(out)])
+    _run([*command, str(mosaic), str(part)])
+    shutil.rmtree(out, ignore_errors=True)
+    part.rename(out)
 
 
 def _naip_source(cfg: BlockmapConfig, unit: str, year: int) -> Path | None:
@@ -356,6 +366,7 @@ def build_blockmap(cfg: BlockmapConfig) -> BlockmapResult:
             if target.is_dir() and not cfg.overwrite:
                 continue
             mosaic = tmp / f"{kind}_{key}.tif"
+            started = time.monotonic()
             _mosaic(
                 sources,
                 mosaic,
@@ -374,7 +385,12 @@ def build_blockmap(cfg: BlockmapConfig) -> BlockmapResult:
                 workers=cfg.workers,
             )
             mosaic.unlink()
-        logger.info("Model layers of %s cut", key)
+            logger.info(
+                "Model layer %s of %s cut in %.0f s",
+                kind,
+                key,
+                time.monotonic() - started,
+            )
 
     drawn_years: list[int] = []
     for n, year in enumerate(years):
@@ -386,6 +402,7 @@ def build_blockmap(cfg: BlockmapConfig) -> BlockmapResult:
         if target.is_dir() and not cfg.overwrite:
             continue
         mosaic = tmp / f"naip_{year}.tif"
+        started = time.monotonic()
         _mosaic(
             sources,
             mosaic,
@@ -394,6 +411,7 @@ def build_blockmap(cfg: BlockmapConfig) -> BlockmapResult:
             bands=(1, 2, 3),
             threads=cfg.workers,
         )
+        warped = time.monotonic()
         _tiles(
             mosaic,
             target,
@@ -406,7 +424,12 @@ def build_blockmap(cfg: BlockmapConfig) -> BlockmapResult:
         mosaic.unlink()
         size = _folder_bytes(target)
         logger.info(
-            "NAIP %d: %d quads, %.0f MB of tiles", year, len(sources), size / 1e6
+            "NAIP %d: %d quads, %.0f MB of tiles, mosaic %.0f s, tiles %.0f s",
+            year,
+            len(sources),
+            size / 1e6,
+            warped - started,
+            time.monotonic() - warped,
         )
         if n == 0 and cfg.budget_gb is not None:
             projected = (size * len(years) + _folder_bytes(tiles) - size) / 1e9
