@@ -658,3 +658,113 @@ def merge_chips_cmd(out_dir: Path, runs: tuple[str, ...]) -> None:
         f"{result.files} files linked ({result.hard_links} hard links) in "
         f"{result.chips_dir}"
     )
+
+
+@pair.command("patches")
+@click.option(
+    "--batch",
+    "batches",
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Batch file of a block. Give it once per file.",
+)
+@click.option(
+    "--unit",
+    "unit_ids",
+    multiple=True,
+    help="A unit, in place of or beside the batch files. Repeatable.",
+)
+@click.option("--out", "out_dir", required=True, type=click.Path(path_type=Path))
+@click.option(
+    "--export-dir",
+    default=None,
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Exports folder (run_layers). Default: $CSDV_EXPORT_DIR.",
+)
+@click.option("--run-tag", default="default", show_default=True)
+@click.option(
+    "--threshold",
+    type=click.IntRange(1, 100),
+    default=90,
+    show_default=True,
+    help="Percent from which a cell is the core of a patch.",
+)
+@click.option(
+    "--grow",
+    type=click.IntRange(1, 100),
+    default=50,
+    show_default=True,
+    help="Percent down to which a patch grows from its core. Give the "
+    "threshold for a plain cut.",
+)
+@click.option("--min-ha", type=float, default=0.3, show_default=True)
+@click.option(
+    "--model-dir",
+    default=None,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Folder of the map, in place of the export's. For one unit.",
+)
+@click.option(
+    "--layers-dir",
+    default=None,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Folder of chm_cover.tif and chm_height.tif, in place of the "
+    "export's. For one unit.",
+)
+def patches_cmd(
+    batches: tuple[Path, ...],
+    unit_ids: tuple[str, ...],
+    out_dir: Path,
+    export_dir: Path | None,
+    run_tag: str,
+    threshold: int,
+    grow: int,
+    min_ha: float,
+    model_dir: Path | None,
+    layers_dir: Path | None,
+) -> None:
+    """The maps of a block of units as one layer of patches.
+
+    Writes patches.gpkg and patches.csv (one row per patch and interval:
+    dates, area, probability, cause, change in canopy cover and height),
+    summary.json and seams.csv (the maps of adjoining units compared where
+    they overlap).
+    """
+    from csdv_core.grid.units import Unit, grid_paths, read_batch
+    from csdv_core.pairmodel.patches import PatchSettings, write_block
+
+    _setup_logging()
+    units: dict[str, tuple[float, float, float, float] | None] = {}
+    for batch in batches:
+        for unit in read_batch(batch):
+            # Only a quad has neighbours whose maps reach into it.
+            units[unit.unit_id] = unit.bbox_4326 if unit.kind == "cell" else None
+    for unit_id in unit_ids:
+        units.setdefault(
+            unit_id,
+            Unit.cell(unit_id).bbox_4326 if unit_id.startswith("q") else None,
+        )
+    if not units:
+        raise click.UsageError("Name the units with --batch or --unit.")
+    try:
+        result = write_block(
+            list(units.items()),
+            export_dir or grid_paths().export_dir,
+            out_dir,
+            PatchSettings(threshold=threshold, grow=grow, min_ha=min_ha),
+            run_tag=run_tag,
+            model_dir=model_dir,
+            layers_dir=layers_dir,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(
+        f"{result.patches} patches, {result.area_ha:.0f} ha, in {len(result.units)} "
+        f"units ({result.joined} joined across a quad edge). {result.seams} rows "
+        f"in seams.csv. Files in {result.out_dir}"
+    )
+    if result.without_map:
+        click.echo(
+            f"{len(result.without_map)} units have no model map: "
+            f"{', '.join(result.without_map[:8])}"
+        )

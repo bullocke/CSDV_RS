@@ -22,7 +22,16 @@
 #       webmap`, one CPU job). It goes to CSDV_REGION_PAGE_DIR/FOLDER (the
 #       first NAME when --page is not given),
 #       by default under $CSDV_PUBLIC_HTML/csdv_blocks. The job stops when
-#       the page is projected above CSDV_REGION_PAGE_GB (default 6).
+#       the page is projected above CSDV_REGION_PAGE_GB (default 6). Its
+#       time limit is CSDV_REGION_PAGE_HOURS (default 24). A job that ran
+#       out of time is given again: finished layers are kept.
+#   scripts/chpc/region.sh patches NAME... [--page FOLDER] [--dry-run]
+#       The maps of all the names as one layer of patches (`csdv pair
+#       patches`, one CPU job of minutes): patches.gpkg and patches.csv with
+#       dates, area, probability, cause and the change in canopy cover and
+#       height, and seams.csv, the maps of adjoining quads compared where
+#       they overlap. It goes to $CSDV_EXPORT_DIR/blocks/FOLDER, which
+#       scripts/chpc/region_pull.sh --blocks FOLDER copies to a laptop.
 #   scripts/chpc/region.sh status NAME...
 #       Quads that are not exported yet, your jobs, the disk use and the
 #       years of every quad, and the model that mapped it.
@@ -59,7 +68,7 @@ while (($#)); do
         --checkpoint) CKPT_ARG="${2:?--checkpoint needs a run or a path}"; shift 2 ;;
         --page) PAGE="${2:?--page needs a folder name}"; shift 2 ;;
         --title) TITLE="${2:?--title needs a text}"; shift 2 ;;
-        -h | --help) sed -n '2,48p' "$0"; exit 0 ;;
+        -h | --help) sed -n '2,58p' "$0"; exit 0 ;;
         -*) echo "Unknown option: $1" >&2; exit 2 ;;
         *) NAMES+=("$1"); shift ;;
     esac
@@ -177,7 +186,7 @@ MSG
         OUT="$ROOT/$PAGE"
         read -r -a CPU <<<"$CSDV_SBATCH_CPU"
         CMD=(sbatch --parsable "${CPU[@]}" --job-name="csdv_page_$PAGE"
-            --cpus-per-task=8 --mem=32G --time=08:00:00
+            --cpus-per-task=8 --mem=32G --time="${CSDV_REGION_PAGE_HOURS:-24}:00:00"
             --output="$CSDV_LOG_DIR/%x-%j.out"
             scripts/slurm/run_csdv_cpu.sbatch grid webmap --out "$OUT"
             --export-dir "$CSDV_EXPORT_DIR" --data-root "$CSDV_DATA_ROOT"
@@ -194,6 +203,24 @@ MSG
         echo "The page goes to $OUT."
         echo "The last lines of the log give its size:" \
             "tail -n 3 $CSDV_LOG_DIR/csdv_page_$PAGE-*.out"
+        ;;
+    patches)
+        PAGE="${PAGE:-${NAMES[0]}}"
+        OUT="$CSDV_EXPORT_DIR/blocks/$PAGE"
+        read -r -a CPU <<<"$CSDV_SBATCH_CPU"
+        CMD=(sbatch --parsable "${CPU[@]}" --job-name="csdv_patches_$PAGE"
+            --mem=24G --output="$CSDV_LOG_DIR/%x-%j.out"
+            scripts/slurm/run_csdv_cpu.sbatch pair patches --out "$OUT"
+            --export-dir "$CSDV_EXPORT_DIR")
+        for name in "${BATCHES[@]}"; do CMD+=(--batch "config/grid/$name.csv"); done
+        if ((${#DRY[@]})); then
+            printf 'would submit:'; printf ' %q' "${CMD[@]}"; echo
+        else
+            echo "patches job: $("${CMD[@]}")"
+        fi
+        echo "The layer goes to $OUT."
+        echo "The last line of the log counts the patches:" \
+            "tail -n 2 $CSDV_LOG_DIR/csdv_patches_$PAGE-*.out"
         ;;
     status)
         for name in "${BATCHES[@]}"; do
@@ -226,7 +253,7 @@ MSG
             uniq -c -f1 | head -20 || true
         ;;
     *)
-        echo "usage: $0 block|remap|page|status NAME... [--checkpoint RUN] [--page FOLDER] [--title TEXT] [--dry-run]" >&2
+        echo "usage: $0 block|remap|page|patches|status NAME... [--checkpoint RUN] [--page FOLDER] [--title TEXT] [--dry-run]" >&2
         exit 2
         ;;
 esac
