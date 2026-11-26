@@ -36,7 +36,8 @@
 # Settings, all in scripts/chpc/env.sh: CSDV_SBATCH_CPU and CSDV_GPU_POOLS,
 # as for scripts/chpc/round2.sh.
 #   CSDV_REGION_CHECKPOINT  the pair model that maps every quad (default:
-#       reserved_r2_s0, the model of test B of round 2 with seed 0).
+#       reserved_norejsf_s0, working model 1: both label rounds, stable-forest
+#       draws, accepted on 2026-11-25).
 #   CSDV_REGION_STORE  a folder on a larger volume. When set, the mosaics and
 #       height models of quads that are not on disk yet are kept there, and
 #       $CSDV_DATA_ROOT/naip/<unit> and naip_chm/<unit> are links to them.
@@ -82,7 +83,7 @@ for name in "${NAMES[@]}"; do
     fi
 done
 
-CKPT="${CKPT_ARG:-${CSDV_REGION_CHECKPOINT:-reserved_r2_s0}}"
+CKPT="${CKPT_ARG:-${CSDV_REGION_CHECKPOINT:-reserved_norejsf_s0}}"
 [[ "$CKPT" == */* ]] || CKPT="$CSDV_RESULTS_ROOT/pairmodel/$CKPT/best.pt"
 read -r -a QUEUE_ARGS <<<"${CSDV_REGION_QUEUE_ARGS---worker-mem 48G --worker-hours 8}"
 
@@ -157,7 +158,11 @@ MSG
                 printf '  %s\n' "${READY[@]}" | head -5
                 continue
             fi
-            mkdir -p "$QUEUE"
+            # A quad with a finished detection has its mosaics. One that was
+            # processed outside this queue has no marker of it here, and the
+            # finish task would stop at "the download has not finished".
+            mkdir -p "$QUEUE/downloaded"
+            for unit in "${READY[@]}"; do touch "$QUEUE/downloaded/$unit"; done
             { echo unit; printf '%s\n' "${READY[@]}"; } >"$ROWS"
             # shellcheck disable=SC2086
             sbatch --parsable $CSDV_SBATCH_CPU --job-name="csdv_remap_$name" \
