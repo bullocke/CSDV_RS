@@ -64,6 +64,12 @@ _EIGHT = np.ones((3, 3), dtype=bool)
 #: Relative change in the canopy cover of unflagged forest between two dates
 #: from which the height model of one of them is reported as off.
 COVER_SHIFT = 0.2
+#: Relative loss of canopy cover beyond that of the quad's unflagged forest
+#: from which a patch is ``clear`` loss. Below it the patch is ``slight``:
+#: on the Elkinsville reference (Southern Indiana, one site, chosen on the
+#: same data) that class holds most partial harvests and 95% of the patch
+#: area on ground with no change.
+CLEAR_COVER_LOSS = 0.08
 _COUNTS = [f"n_{name}" for name in AGENT_NAMES]
 _SUMS = ["s_percent", "s_cover_a", "s_cover_b", "s_height_a", "s_height_b"]
 _WEIGHTS = ["w_cover", "w_height"]
@@ -92,6 +98,7 @@ COLUMNS = [
     "height_loss",
     "bg_cover_loss",
     "bg_height_loss",
+    "change_class",
     "on_edge",
     "model",
     "threshold",
@@ -409,6 +416,14 @@ def _finish(frame: Any, settings: PatchSettings) -> Any:
         frame[f"{kind}_before"] = before.round(3)
         frame[f"{kind}_after"] = after.round(3)
         frame[f"{kind}_loss"] = _loss(before, after).round(3)
+    beyond = frame["cover_loss"].to_numpy(dtype=float) - frame[
+        "bg_cover_loss"
+    ].to_numpy(dtype=float)
+    frame["change_class"] = np.where(
+        np.isnan(beyond),
+        "unknown",
+        np.where(beyond >= CLEAR_COVER_LOSS, "clear", "slight"),
+    )
     frame["threshold"] = settings.threshold
     frame["grow"] = settings.grow
     return frame

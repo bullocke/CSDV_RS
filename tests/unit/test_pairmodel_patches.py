@@ -148,6 +148,7 @@ def test_patch_is_joined_across_the_edge(block: Path) -> None:
     assert row["cover_loss"] == pytest.approx(0.5, abs=1e-3)
     assert row["height_loss"] == pytest.approx(0.5, abs=1e-3)
     assert abs(row["bg_cover_loss"]) < 0.05
+    assert row["change_class"] == "clear"
     assert layer.crs.to_epsg() == 5070
     assert layer.geometry.iloc[0].area == pytest.approx(91 * CELL * CELL, rel=0.01)
 
@@ -221,3 +222,27 @@ def test_command_writes_the_block(block: Path, tmp_path: Path) -> None:
     assert (background["bg_cover_loss"].abs() < 0.05).all()
     assert (background["flagged_pct"] > 0).all()
     assert summary["cover_shifts"] == 0
+
+
+def test_change_class_from_the_loss_of_cover_beyond_the_background() -> None:
+    import pandas as pd
+
+    frame = pd.DataFrame(
+        {
+            "cells": [10, 10, 10, 10],
+            "core_cells": [5, 5, 5, 5],
+            "s_percent": [900, 900, 900, 900],
+            **{name: [1, 1, 1, 1] for name in P._COUNTS},
+            "w_cover": [10, 10, 10, 0],
+            "s_cover_a": [8.0, 8.0, 8.0, 0.0],
+            # Losses of 50%, 12.5% and 5% of the cover, and no height layer.
+            "s_cover_b": [4.0, 7.0, 7.6, 0.0],
+            "w_height": [0, 0, 0, 0],
+            "s_height_a": [0.0] * 4,
+            "s_height_b": [0.0] * 4,
+            # The quad's unflagged forest lost 6% in the second row's interval.
+            "bg_cover_loss": [0.0, 0.06, 0.0, 0.0],
+        }
+    )
+    out = P._finish(frame, P.PatchSettings())
+    assert out["change_class"].tolist() == ["clear", "slight", "slight", "unknown"]

@@ -67,6 +67,13 @@
   <kbd>M</kbd> hides and shows the model. <kbd>←</kbd> <kbd>→</kbd> change the interval.
   <kbd>Q</kbd> shows the quad outlines. Click an outline for the image dates of that quad.</p>
 
+  <h2>Place</h2>
+  <div class="row">
+    <input type="text" id="goto" placeholder="39.1095, 86.2920" size="18">
+    <button id="go">Go</button>
+  </div>
+  <p class="muted" id="cursor">Type latitude and longitude, then Enter. The address bar holds the place and the interval, so a copied link opens the same view.</p>
+
   <h2>Notes</h2>
   <div class="row">
     <button id="noting">Add a note</button>
@@ -147,6 +154,7 @@
       b.classList.toggle("on", state.interval === b.dataset.interval);
     for (const b of $("kinds").children)
       b.classList.toggle("on", state.shown ? state.kind === b.dataset.kind : b.dataset.kind === "off");
+    writeHash();
   }
 
   function button(parent, text, data, onclick) {
@@ -300,8 +308,56 @@
     notes = []; save(); listNotes();
   };
 
+  // Place: a box for coordinates, the cursor's position, and the view in the
+  // address bar as #lat,lon,zoom,interval.
+  const west = P.bounds[0][1] < 0 && P.bounds[1][1] < 0;
+  let pin = null;
+  function goTo(lat, lon, zoom) {
+    // A longitude given without a sign is taken as west in a western block.
+    if (west && lon > 0) lon = -lon;
+    if (!(Math.abs(lat) <= 90 && Math.abs(lon) <= 180)) return false;
+    map.setView([lat, lon], zoom || Math.max(map.getZoom(), 15));
+    if (pin) map.removeLayer(pin);
+    pin = L.circleMarker([lat, lon], { radius: 9, color: "#ffffff", weight: 2,
+      fill: false, interactive: false }).addTo(map);
+    return true;
+  }
+  function goFromBox() {
+    const n = ($("goto").value.match(/-?\d+(\.\d+)?/g) || []).map(Number);
+    if (n.length < 2 || !goTo(n[0], n[1])) $("goto").select();
+    else $("goto").blur();
+  }
+  $("go").onclick = goFromBox;
+  $("goto").addEventListener("keydown", (e) => { if (e.key === "Enter") goFromBox(); });
+  map.on("mousemove", (e) => {
+    $("cursor").textContent = "Cursor: " + e.latlng.lat.toFixed(4) + ", " + e.latlng.lng.toFixed(4);
+  });
+  function writeHash() {
+    const c = map.getCenter();
+    const hash = "#" + [c.lat.toFixed(4), c.lng.toFixed(4), map.getZoom(), state.interval || ""].join(",");
+    try { history.replaceState(null, "", hash); } catch (e) { /* file page */ }
+  }
+  function readHash() {
+    const parts = location.hash.replace("#", "").split(",");
+    if (parts.length < 2 || isNaN(parseFloat(parts[0])) || isNaN(parseFloat(parts[1]))) return;
+    if (parts[3] && P.intervals.includes(parts[3])) state.interval = parts[3];
+    goTo(parseFloat(parts[0]), parseFloat(parts[1]), parseFloat(parts[2]) || 15);
+  }
+  readHash();
+  map.on("moveend", writeHash);
+  window.addEventListener("hashchange", () => {
+    const before = state.interval;
+    readHash();
+    if (state.interval !== before) {
+      const years = pairYears();
+      if (P.years.includes(years[1])) state.year = years[1];
+      draw();
+    }
+  });
+
   document.addEventListener("keydown", (e) => {
-    if (e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
+    if (e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT" ||
+        (e.target.tagName === "INPUT" && e.target.type === "text")) return;
     const k = e.key.toLowerCase();
     if (k === "f") {
       const pair = pairYears().filter((y) => P.years.includes(y));
@@ -318,6 +374,7 @@
   state.year = P.years.includes(pair[1]) ? pair[1] : (P.years[P.years.length - 1] || null);
   draw();
   listNotes();
+  writeHash();
 })();
 </script>
 </body>

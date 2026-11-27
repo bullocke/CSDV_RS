@@ -227,6 +227,7 @@ Columns of a patch:
 | `cover_before`, `cover_after`, `cover_loss` | Canopy cover (share of 0.6 m pixels above 5 m) at the two dates, from the 19.2 m layer of the run, and the relative loss `1 - after / before` |
 | `height_before`, `height_after`, `height_loss` | The same for mean canopy height in metres |
 | `bg_cover_loss`, `bg_height_loss` | The same two changes over the forest of the quad that the model does not flag in that interval |
+| `change_class` | `clear` when the loss of cover exceeds that of the unflagged forest by 8% or more, `slight` below that, `unknown` without a height layer. On the one reference site so far (Elkinsville, Southern Indiana) the slight class holds most partial harvests and nearly all patches on ground with no change, so it is to be read as possible change. It rests on the height model and is wrong on flights that `background.csv` reports as off |
 | `on_edge` | The patch touches the edge of its quad or of the map |
 | `model`, `threshold`, `grow` | The training run of the map, and the settings |
 
