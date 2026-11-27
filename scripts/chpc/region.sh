@@ -16,7 +16,7 @@
 #       a training run under $CSDV_RESULTS_ROOT/pairmodel or a path to a
 #       best.pt (default: CSDV_REGION_CHECKPOINT). The old map of a quad
 #       stays in its run folder as model.prev.<job>.
-#   scripts/chpc/region.sh page   NAME... [--page FOLDER] [--title TEXT] [--dry-run]
+#   scripts/chpc/region.sh page   NAME... [--page FOLDER] [--title TEXT] [--model-only] [--dry-run]
 #       One web page for the quads of all the names: NAIP per year and the
 #       model's loss and cause per interval, as map tiles (`csdv grid
 #       webmap`, one CPU job). It goes to CSDV_REGION_PAGE_DIR/FOLDER (the
@@ -25,6 +25,8 @@
 #       the page is projected above CSDV_REGION_PAGE_GB (default 6). Its
 #       time limit is CSDV_REGION_PAGE_HOURS (default 24). A job that ran
 #       out of time is given again: finished layers are kept.
+#       --model-only cuts the model's layers again and keeps the images,
+#       after a remap or a change of how the model is drawn (minutes).
 #   scripts/chpc/region.sh patches NAME... [--page FOLDER] [--previous] [--dry-run]
 #       The maps of all the names as one layer of patches (`csdv pair
 #       patches`, one CPU job of minutes): patches.gpkg and patches.csv with
@@ -64,15 +66,16 @@ set -euo pipefail
 
 STEP="${1:-}"
 [[ -n "$STEP" ]] && shift
-NAMES=() DRY=() CKPT_ARG="" TITLE="" PAGE="" PREVIOUS=0
+NAMES=() DRY=() CKPT_ARG="" TITLE="" PAGE="" PREVIOUS=0 MODEL_ONLY=0
 while (($#)); do
     case "$1" in
         --dry-run) DRY=(--dry-run); shift ;;
         --previous) PREVIOUS=1; shift ;;
+        --model-only) MODEL_ONLY=1; shift ;;
         --checkpoint) CKPT_ARG="${2:?--checkpoint needs a run or a path}"; shift 2 ;;
         --page) PAGE="${2:?--page needs a folder name}"; shift 2 ;;
         --title) TITLE="${2:?--title needs a text}"; shift 2 ;;
-        -h | --help) sed -n '2,61p' "$0"; exit 0 ;;
+        -h | --help) sed -n '2,63p' "$0"; exit 0 ;;
         -*) echo "Unknown option: $1" >&2; exit 2 ;;
         *) NAMES+=("$1"); shift ;;
     esac
@@ -198,6 +201,7 @@ MSG
             --budget-gb "${CSDV_REGION_PAGE_GB:-6}"
             --tmp-dir "$CSDV_EXPORT_DIR/checks/blockmap_tmp/$PAGE")
         for name in "${BATCHES[@]}"; do CMD+=(--batch "config/grid/$name.csv"); done
+        ((MODEL_ONLY)) && CMD+=(--overwrite-model)
         if ((${#DRY[@]})); then
             printf 'would submit:'; printf ' %q' "${CMD[@]}"; echo
         else
@@ -239,6 +243,7 @@ MSG
             scripts/slurm/run_csdv_cpu.sbatch pair patches --out "$OUT"
             --export-dir "$EXPORTS")
         for name in "${BATCHES[@]}"; do CMD+=(--batch "config/grid/$name.csv"); done
+        ((MODEL_ONLY)) && CMD+=(--overwrite-model)
         if ((${#DRY[@]})); then
             printf 'would submit:'; printf ' %q' "${CMD[@]}"; echo
         else

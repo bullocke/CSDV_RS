@@ -93,3 +93,30 @@ def test_a_layer_that_was_not_finished_is_cut_again(
     assert calls == ["naip_2016.part", "naip_2016.part"]
     assert [p.name for p in out.rglob("*.webp")] == ["0.webp"]
     assert not (tmp_path / "t" / "naip_2016.part").exists()
+
+
+def test_render_model_draws_only_the_cells_of_the_units_box(tmp_path: Path) -> None:
+    from pyproj import Transformer
+
+    unit = "q0000002"
+    folder = tmp_path / "exports/run_layers" / unit / "default/model"
+    folder.mkdir(parents=True)
+    transform = from_origin(500000, 4300000, 9.6, 9.6)
+    profile = {
+        "driver": "GTiff", "height": 4, "width": 6, "count": 1, "dtype": "uint8",
+        "crs": "EPSG:26916", "transform": transform, "nodata": 255,
+    }  # fmt: skip
+    with rasterio.open(folder / f"prob_forest_{unit}.tif", "w", **profile) as dst:
+        dst.write(np.full((1, 4, 6), 95, dtype=np.uint8))
+        dst.set_band_description(1, "2018-08-12_2020-06-12")
+    # A box that holds the centres of the three western columns only.
+    to_degrees = Transformer.from_crs(26916, 4326, always_xy=True)
+    west, south = to_degrees.transform(500000 - 50, 4300000 - 100)
+    east, north = to_degrees.transform(500000 + 3 * 9.6, 4300000 + 50)
+    cfg = BlockmapConfig((), tmp_path / "site", tmp_path / "exports", threshold=90)
+    out = tmp_path / "tmp"
+    out.mkdir()
+    rendered, _ = _render_model(cfg, unit, out, (west, south, east, north))
+    with rasterio.open(rendered["2018_2020"]["prob"]) as src:
+        alpha = src.read(4)
+    assert (alpha[:, :3] > 0).all() and (alpha[:, 3:] == 0).all()

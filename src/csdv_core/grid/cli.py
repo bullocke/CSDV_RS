@@ -680,6 +680,11 @@ def check(
 @click.option("--budget-gb", default=None, type=float, help="Stop above this size.")
 @click.option("--tmp-dir", default=None, type=click.Path(path_type=Path))
 @click.option("--overwrite", is_flag=True, help="Cut layers again that exist.")
+@click.option(
+    "--overwrite-model",
+    is_flag=True,
+    help="Cut the model's layers again and keep the images.",
+)
 def webmap_cmd(
     batches: tuple[Path, ...],
     out_dir: Path,
@@ -695,6 +700,7 @@ def webmap_cmd(
     budget_gb: float | None,
     tmp_dir: Path | None,
     overwrite: bool,
+    overwrite_model: bool,
 ) -> None:
     """One web page for a block of quads: images, loss and cause as tiles.
 
@@ -720,6 +726,7 @@ def webmap_cmd(
                 budget_gb=budget_gb,
                 tmp_dir=tmp_dir,
                 overwrite=overwrite,
+                overwrite_model=overwrite_model,
             )
         )
     except (ValueError, RuntimeError) as exc:

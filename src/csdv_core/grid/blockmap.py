@@ -79,6 +79,8 @@ class BlockmapConfig:
         tmp_dir: Folder for the mosaics, removed at the end. Default
             ``_tmp`` in the page folder.
         overwrite: Cut layers again whose tiles exist.
+        overwrite_model: Cut the layers of the model again and keep the
+            images, for a block that was mapped again.
     """
 
     batches: tuple[Path, ...]
@@ -97,6 +99,7 @@ class BlockmapConfig:
     budget_gb: float | None = None
     tmp_dir: Path | None = None
     overwrite: bool = False
+    overwrite_model: bool = False
 
 
 @dataclass
@@ -218,9 +221,18 @@ def _interval_key(description: str) -> str:
 
 
 def _render_model(
-    cfg: BlockmapConfig, unit: str, tmp: Path
+    cfg: BlockmapConfig,
+    unit: str,
+    tmp: Path,
+    bbox_4326: tuple[float, float, float, float] | None = None,
 ) -> tuple[dict[str, dict[str, Path]], dict[str, str]]:
     """RGBA rasters of one unit's map: per interval a probability and a cause.
+
+    With ``bbox_4326`` only the cells whose centre lies in that box are
+    drawn. The maps of adjoining quads overlap by a few hundred metres, and
+    in the outer 50 m of a mosaic the model flags about twice as much as the
+    neighbour's map does on the same ground. The patch layer makes the same
+    cut (:func:`csdv_core.pairmodel.patches.owned_cells`).
 
     Returns:
         ``{interval key: {"prob": path, "cause": path}}`` and the image date
@@ -252,6 +264,16 @@ def _render_model(
         }
         names = list(src.descriptions)
         prob = src.read()
+        if bbox_4326 is not None:
+            from csdv_core.pairmodel.patches import UnitMap, owned_cells
+
+            own = owned_cells(
+                UnitMap(
+                    unit, None, None, src.transform, src.crs.to_epsg(), [],
+                    bbox_4326=bbox_4326, shape=(src.height, src.width),
+                )
+            )  # fmt: skip
+            prob[:, ~own] = 255
     agent = None
     if agent_path.is_file():
         with rasterio.open(agent_path) as src:
@@ -347,7 +369,8 @@ def build_blockmap(cfg: BlockmapConfig) -> BlockmapResult:
     by_interval: dict[str, dict[str, list[Path]]] = {}
     without_map: list[str] = []
     for unit in units:
-        rendered, dates = _render_model(cfg, unit.unit_id, tmp)
+        box = unit.bbox_4326 if unit.kind == "cell" else None
+        rendered, dates = _render_model(cfg, unit.unit_id, tmp, box)
         note = _model_dir(cfg, unit.unit_id) / "checkpoint.txt"
         info[unit.unit_id] = {
             "dates": dates,
@@ -363,7 +386,8 @@ def build_blockmap(cfg: BlockmapConfig) -> BlockmapResult:
     for key in intervals:
         for kind, sources in by_interval[key].items():
             target = tiles / f"{kind}_{key}"
-            if target.is_dir() and not cfg.overwrite:
+            again = cfg.overwrite or cfg.overwrite_model
+            if target.is_dir() and not again:
                 continue
             mosaic = tmp / f"{kind}_{key}.tif"
             started = time.monotonic()
