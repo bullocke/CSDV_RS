@@ -2,8 +2,9 @@
 # (Southern Indiana, Brown County: Hoosier National Forest, Yellowwood State
 # Forest, Brown County State Park, Monroe Lake). A rehearsal of a regional
 # map: run time and storage per quad, and whether the maps of adjoining quads
-# join. The centre quad is the site of the stand polygons with stage and
-# trajectory tables, so the map can be laid over them.
+# join. The stand polygons with stage and trajectory tables (ElkinsvilleNE)
+# lie in the south quad q3908662 and reach about 230 m into the centre quad,
+# so the map can be laid over them.
 #
 # The centre quad q3908654 is left out on purpose. It has a finished run that
 # the labels of the scale test rest on, and it is mapped from that run by the
