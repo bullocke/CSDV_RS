@@ -25,13 +25,16 @@
 #       the page is projected above CSDV_REGION_PAGE_GB (default 6). Its
 #       time limit is CSDV_REGION_PAGE_HOURS (default 24). A job that ran
 #       out of time is given again: finished layers are kept.
-#   scripts/chpc/region.sh patches NAME... [--page FOLDER] [--dry-run]
+#   scripts/chpc/region.sh patches NAME... [--page FOLDER] [--previous] [--dry-run]
 #       The maps of all the names as one layer of patches (`csdv pair
 #       patches`, one CPU job of minutes): patches.gpkg and patches.csv with
 #       dates, area, probability, cause and the change in canopy cover and
 #       height, and seams.csv, the maps of adjoining quads compared where
 #       they overlap. It goes to $CSDV_EXPORT_DIR/blocks/FOLDER, which
 #       scripts/chpc/region_pull.sh --blocks FOLDER copies to a laptop.
+#       --previous takes the map each quad had before its last remap
+#       (model.prev.<job> of its run) and writes to FOLDER_previous: two
+#       models on the same ground.
 #   scripts/chpc/region.sh status NAME...
 #       Quads that are not exported yet, your jobs, the disk use and the
 #       years of every quad, and the model that mapped it.
@@ -61,14 +64,15 @@ set -euo pipefail
 
 STEP="${1:-}"
 [[ -n "$STEP" ]] && shift
-NAMES=() DRY=() CKPT_ARG="" TITLE="" PAGE=""
+NAMES=() DRY=() CKPT_ARG="" TITLE="" PAGE="" PREVIOUS=0
 while (($#)); do
     case "$1" in
         --dry-run) DRY=(--dry-run); shift ;;
+        --previous) PREVIOUS=1; shift ;;
         --checkpoint) CKPT_ARG="${2:?--checkpoint needs a run or a path}"; shift 2 ;;
         --page) PAGE="${2:?--page needs a folder name}"; shift 2 ;;
         --title) TITLE="${2:?--title needs a text}"; shift 2 ;;
-        -h | --help) sed -n '2,58p' "$0"; exit 0 ;;
+        -h | --help) sed -n '2,61p' "$0"; exit 0 ;;
         -*) echo "Unknown option: $1" >&2; exit 2 ;;
         *) NAMES+=("$1"); shift ;;
     esac
@@ -206,12 +210,34 @@ MSG
         ;;
     patches)
         PAGE="${PAGE:-${NAMES[0]}}"
+        EXPORTS="$CSDV_EXPORT_DIR"
+        if ((PREVIOUS)); then
+            # A folder laid out as the exports, with links: the map each quad
+            # had before its last remap, and the quad's cell layers.
+            EXPORTS="$CSDV_EXPORT_DIR/checks/previous_model/$PAGE"
+            FOUND=0
+            for name in "${BATCHES[@]}"; do
+                for unit in $(units "$name"); do
+                    PREV="$(ls -d "$CSDV_RESULTS_ROOT/disturbance/$unit/default"/model.prev.* 2>/dev/null | sort -V | tail -n 1 || true)"
+                    [[ -n "$PREV" ]] || continue
+                    FOUND=$((FOUND + 1))
+                    ((${#DRY[@]})) && continue
+                    mkdir -p "$EXPORTS/run_layers/$unit/default"
+                    ln -sfn "$PREV" "$EXPORTS/run_layers/$unit/default/model"
+                    ln -sfn "$CSDV_EXPORT_DIR/run_layers/$unit/default/layers" \
+                        "$EXPORTS/run_layers/$unit/default/layers"
+                done
+            done
+            echo "$FOUND quads have a map from before their last remap."
+            ((FOUND)) || exit 1
+            PAGE="${PAGE}_previous"
+        fi
         OUT="$CSDV_EXPORT_DIR/blocks/$PAGE"
         read -r -a CPU <<<"$CSDV_SBATCH_CPU"
         CMD=(sbatch --parsable "${CPU[@]}" --job-name="csdv_patches_$PAGE"
             --mem=24G --output="$CSDV_LOG_DIR/%x-%j.out"
             scripts/slurm/run_csdv_cpu.sbatch pair patches --out "$OUT"
-            --export-dir "$CSDV_EXPORT_DIR")
+            --export-dir "$EXPORTS")
         for name in "${BATCHES[@]}"; do CMD+=(--batch "config/grid/$name.csv"); done
         if ((${#DRY[@]})); then
             printf 'would submit:'; printf ' %q' "${CMD[@]}"; echo

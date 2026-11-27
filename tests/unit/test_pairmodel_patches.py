@@ -215,3 +215,9 @@ def test_command_writes_the_block(block: Path, tmp_path: Path) -> None:
     seams = pd.read_csv(out / "seams.csv")
     assert len(seams) == 1 and seams["agreement"].iloc[0] == 1.0
     assert (out / "patches.gpkg").is_file()
+    background = pd.read_csv(out / "background.csv")
+    assert background["unit"].tolist() == [NORTH, SOUTH]
+    assert (background["bg_cover_before"] == 0.8).all()
+    assert (background["bg_cover_loss"].abs() < 0.05).all()
+    assert (background["flagged_pct"] > 0).all()
+    assert summary["cover_shifts"] == 0

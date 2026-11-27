@@ -211,6 +211,7 @@ Files in the output folder:
 | `patches.gpkg` | The layer, in EPSG:5070 |
 | `patches.csv` | The same rows without geometry, with `lon` and `lat` of a point inside each patch |
 | `summary.json` | Settings, units, models, and count and area of patches by interval and cause |
+| `background.csv` | Per unit and interval: the percent of the unit in patches, and the canopy cover and height of its unflagged forest at the two dates with their relative change. A change in cover of 20% or more means the height model of one of the two dates is off, and the command says how many unit intervals show it |
 | `seams.csv` | Per pair of adjoining quads and interval, over the cells both maps cover: the image dates of each side, the percent of cells flagged in each map and in both, their agreement (flagged in both over flagged in either) and the mean absolute difference in percent points |
 
 Columns of a patch:
@@ -229,7 +230,7 @@ Columns of a patch:
 | `on_edge` | The patch touches the edge of its quad or of the map |
 | `model`, `threshold`, `grow` | The training run of the map, and the settings |
 
-Three points on reading the layer. The layer keeps the share of every cause and names no rule for the causes the model confuses (wind is read as harvest on new places, see "Reading the scores"), so such a rule is a filter on the table. The change in cover and height is a number without a severity class. And the height model shifts between image dates: on the Indiana quad the apparent loss of height over unflagged forest ran from -18% (a gain) to +14% from one interval to the next, and that of cover from -5% to +6%. `height_loss` should be read against `bg_height_loss`, and `cover_loss` is the steadier of the two.
+Three points on reading the layer. The layer keeps the share of every cause and names no rule for the causes the model confuses (wind is read as harvest on new places, see "Reading the scores"), so such a rule is a filter on the table. The change in cover and height is a number without a severity class. And the height model shifts between image dates: on the Indiana quad the apparent loss of height over unflagged forest ran from -18% (a gain) to +14% from one interval to the next, and that of cover from -5% to +6%. `height_loss` should be read against `bg_height_loss`, and `cover_loss` is the steadier of the two. On some flight dates the height model fails outright: in the Southern Indiana block the cover of unflagged forest about halves on the images of June 2016 (37 of 80 quads) and of 8 September 2025 (21 quads). `background.csv` lists such unit intervals, and the change in cover and height of their patches cannot be used.
 
 ## Comparison
 

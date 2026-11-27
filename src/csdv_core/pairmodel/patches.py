@@ -61,6 +61,9 @@ BLOCK_CRS = "EPSG:5070"
 MIN_PATCH_HA = 0.3
 NODATA = 255
 _EIGHT = np.ones((3, 3), dtype=bool)
+#: Relative change in the canopy cover of unflagged forest between two dates
+#: from which the height model of one of them is reported as off.
+COVER_SHIFT = 0.2
 _COUNTS = [f"n_{name}" for name in AGENT_NAMES]
 _SUMS = ["s_percent", "s_cover_a", "s_cover_b", "s_height_a", "s_height_b"]
 _WEIGHTS = ["w_cover", "w_height"]
@@ -136,6 +139,9 @@ class UnitMap:
         path: The probability raster, read again by :meth:`window` once
             the arrays were let go.
         shape: ``(rows, cols)`` of the map.
+        background: Filled by :func:`unit_patches`, one row per interval
+            with patches: the share of the unit that is flagged, and canopy
+            cover and height of its unflagged forest at the two dates.
     """
 
     unit: str
@@ -148,6 +154,7 @@ class UnitMap:
     bbox_4326: tuple[float, float, float, float] | None = None
     path: Path | None = None
     shape: tuple[int, int] = (0, 0)
+    background: list[dict] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.prob is not None:
@@ -502,6 +509,25 @@ def unit_patches(
                 if quiet.any()
                 else float("nan")
             )
+            if quiet.any():
+                bg[f"{kind}_a"] = float(before[quiet].mean())
+                bg[f"{kind}_b"] = float(after[quiet].mean())
+        mapped = int((own & (band != NODATA)).sum())
+        unit_map.background.append(
+            {
+                "unit": unit_map.unit,
+                "interval": interval_key(name),
+                "date_a": date_a,
+                "date_b": date_b,
+                "flagged_pct": round(100 * int(cells[keep].sum()) / max(mapped, 1), 3),
+                "bg_cover_before": round(bg.get("cover_a", float("nan")), 3),
+                "bg_cover_after": round(bg.get("cover_b", float("nan")), 3),
+                "bg_cover_loss": round(bg["cover"], 3),
+                "bg_height_before": round(bg.get("height_a", float("nan")), 2),
+                "bg_height_after": round(bg.get("height_b", float("nan")), 2),
+                "bg_height_loss": round(bg["height"], 3),
+            }
+        )
         kept = np.flatnonzero(keep)
         if not len(kept):
             continue
@@ -772,6 +798,22 @@ def write_block(
         table["lat"] = centres.y.round(5).to_numpy()
     table.to_csv(out_dir / "patches.csv", index=False)
     pd.DataFrame(seams).to_csv(out_dir / "seams.csv", index=False)
+    background = pd.DataFrame([row for m in maps for row in m.background])
+    background.to_csv(out_dir / "background.csv", index=False)
+    shifted = (
+        background[background["bg_cover_loss"].abs() >= COVER_SHIFT]
+        if len(background)
+        else background
+    )
+    if len(shifted):
+        logger.warning(
+            "%d of %d unit intervals: the canopy cover of unflagged forest "
+            "changes by %.0f%% or more between the two dates (background.csv). "
+            "The height model of one of the dates is off.",
+            len(shifted),
+            len(background),
+            100 * COVER_SHIFT,
+        )
     by = (
         table.groupby(["interval", "cause"])["area_ha"].agg(["count", "sum"])
         if len(table)
@@ -803,6 +845,7 @@ def write_block(
             else []
         ),
         "seam_pairs": len({(r["unit_a"], r["unit_b"]) for r in seams}),
+        "cover_shifts": int(len(shifted)),
     }
     (out_dir / "summary.json").write_text(
         json.dumps(summary, indent=2), encoding="utf-8"
