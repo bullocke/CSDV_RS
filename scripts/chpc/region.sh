@@ -15,7 +15,9 @@
 #       them again. Downloads, height models and detection are kept. RUN is
 #       a training run under $CSDV_RESULTS_ROOT/pairmodel or a path to a
 #       best.pt (default: CSDV_REGION_CHECKPOINT). The old map of a quad
-#       stays in its run folder as model.prev.<job>.
+#       stays in its run folder as model.prev.<job>. A quad that RUN has
+#       mapped already is skipped. Name only parts whose finish tasks have
+#       ended: a quad that is being finished must not be mapped twice.
 #   scripts/chpc/region.sh page   NAME... [--page FOLDER] [--title TEXT] [--model-only] [--dry-run]
 #       One web page for the quads of all the names: NAIP per year and the
 #       model's loss and cause per interval, as map tiles (`csdv grid
@@ -163,12 +165,20 @@ MSG
             QUEUE="$CSDV_GRID_DIR/queues/$name"
             ROWS="$QUEUE/remap_$(date +%Y%m%dT%H%M%S).csv"
             # Only quads with a finished detection: the rest belong to `block`.
-            READY=()
+            # A quad that this model has mapped already is left as it is, so
+            # the command can be given again for what is left.
+            WANT="$(basename "$(dirname "$CKPT")")"
+            READY=() SAME=0
             for unit in $(units "$name"); do
-                [[ -f "$CSDV_RESULTS_ROOT/disturbance/$unit/default/summary.json" ]] &&
-                    READY+=("$unit")
+                RUN="$CSDV_RESULTS_ROOT/disturbance/$unit/default"
+                [[ -f "$RUN/summary.json" ]] || continue
+                if [[ "$(cat "$RUN/model/checkpoint.txt" 2>/dev/null || true)" == "$WANT" ]]; then
+                    SAME=$((SAME + 1))
+                    continue
+                fi
+                READY+=("$unit")
             done
-            echo "== $name: ${#READY[@]} quads to map again"
+            echo "== $name: ${#READY[@]} quads to map with $WANT, $SAME have its map already"
             ((${#READY[@]})) || continue
             if ((${#DRY[@]})); then
                 printf '  %s\n' "${READY[@]}" | head -5
