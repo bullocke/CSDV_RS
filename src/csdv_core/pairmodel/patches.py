@@ -13,7 +13,8 @@ the change in canopy cover and height between the two dates.
 
 A patch is a set of connected map cells (8 neighbours) at or above ``grow``
 percent that holds at least one cell at or above ``threshold`` percent, the
-core. The cause is counted over the core cells. Adjoining quad maps overlap
+core. Holes under the smallest patch size are filled. The cause is counted
+over the core cells. Adjoining quad maps overlap
 by a strip, so a cell belongs to the quad that holds its centre. A patch that
 is cut by a quad edge is joined to its other part when a block of quads is
 processed (:func:`block_patches`), and the strip that two maps share is
@@ -300,7 +301,32 @@ def grow_patches(
     keep[0] = False
     renumber = np.zeros(n + 1, dtype=np.int32)
     renumber[keep] = np.arange(1, int(keep.sum()) + 1)
-    return renumber[labels], int(keep.sum())
+    return _fill_holes(renumber[labels], min_cells), int(keep.sum())
+
+
+def _fill_holes(labels: np.ndarray, min_cells: int) -> np.ndarray:
+    """Give the holes of a patch that are under the smallest size to it.
+
+    A hole is ground outside every patch that one patch encloses (it does
+    not reach the edge of the map). The rule for the smallest patch applies
+    to holes as well: single cells that were not forest, or that the model
+    scored low, do not perforate a patch.
+    """
+    holes, n = ndi.label(labels == 0)
+    if n == 0:
+        return labels
+    sizes = np.bincount(holes.ravel(), minlength=n + 1)
+    rim = np.concatenate([holes[0], holes[-1], holes[:, 0], holes[:, -1]])
+    small = sizes < min_cells
+    small[np.unique(rim)] = False
+    small[0] = False
+    if not small.any():
+        return labels
+    # The patch around a hole: the label of the cells beside it.
+    beside = ndi.grey_dilation(labels, footprint=_EIGHT)
+    owner = ndi.maximum(beside, holes, index=np.arange(n + 1)).astype(np.int32)
+    owner[~small] = 0
+    return np.where(labels == 0, owner[holes], labels).astype(np.int32)
 
 
 def _at_centres(layer: np.ndarray, layer_transform: Any, unit_map: UnitMap):
@@ -432,7 +458,8 @@ def unit_patches(
         on_edge = np.bincount(labels[edge], minlength=size) > 0
         keep = (cells >= min_cells) | on_edge
         keep[0] = False
-        values = band.astype(np.float64).ravel()
+        # A filled hole may hold cells without a value: they count as 0.
+        values = np.where(band == NODATA, 0, band).astype(np.float64).ravel()
         core = (band >= settings.threshold) & (band != NODATA) & (labels > 0)
         date_a, date_b = name.split("_")
         table: dict[str, Any] = {

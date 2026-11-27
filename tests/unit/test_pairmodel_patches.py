@@ -96,6 +96,20 @@ def test_grow_from_core_and_smallest_patch() -> None:
     assert n == 2
 
 
+def test_small_holes_are_filled_and_large_ones_kept() -> None:
+    band = np.full((60, 60), 95, dtype=np.uint8)
+    band[[0, -1], :] = 5
+    band[:, [0, -1]] = 5
+    band[10, 10] = 0  # one cell that was not forest
+    band[11, 11] = 255  # one without a value, touching it at a corner only
+    band[30:40, 30:40] = 5  # 100 cells, 0.92 ha: stays a hole
+    labels, n = P.grow_patches(band, P.PatchSettings(), CELL * CELL / 1e4)
+    assert n == 1
+    assert labels[10, 10] == 1 and labels[11, 11] == 1
+    assert not labels[30:40, 30:40].any()
+    assert not labels[0].any()  # ground that reaches the map's edge is no hole
+
+
 def test_settings_reject_growth_above_threshold() -> None:
     with pytest.raises(ValueError):
         P.PatchSettings(threshold=50, grow=90)
