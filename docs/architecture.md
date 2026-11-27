@@ -185,7 +185,7 @@ csdv disturbance-figures          # rebuild a run's figures and report
 csdv disturbance-chips            # sample a run and draw NAIP RGB and CHM chips
 csdv grid {locate,submit,queue,queue-status,status,sync-unit,export,check,compare-units,webmap}
 csdv label {candidates,sample,allocate,units,render,compare-renders,verdict,build,sheets,webmap}
-csdv pair {merge-chips,train,score,predict,compare,crops}
+csdv pair {merge-chips,train,score,predict,compare,crops,patches}
 csdv audit {draw,build,app,bundle,model-only,score}
 csdv review {sample,extend,app,summary}
 csdv view                         # pair-model maps over NAIP in a browser

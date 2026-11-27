@@ -190,6 +190,47 @@ scripts/chpc/pull_pair_defoliation.sh
 
 The first three-date run is first run as a smoke job of about ten minutes (`<run>_smoke`), and every other job waits for it to end well. A `look` job waits for the job that trains its model. A run whose comparison is already in the export folder is skipped, so the command can be given again. `--only RUN,RUN` takes named rows, `--optional` adds the rows marked `optional`, and `--after JOBID` holds everything until another job has ended well. Every job passes `--skip-pairs` to the map through `CSDV_PAIR_PREDICT_ARGS`, and the number of dates and the seed to training through `CSDV_PAIR_TRAIN_ARGS`. The comparison of a run scores its map against the labels it was trained on, so the two label variants are set side by side on the laptop against one set of labels.
 
+## Patches
+
+`csdv pair patches` turns the maps of one unit or of a block of units into a vector layer: one polygon per patch of canopy loss and interval. It reads the exports only (`run_layers/<unit>/<tag>/model/` and `layers/`), so it runs on CHPC and on a laptop after `scripts/chpc/region_pull.sh`.
+
+```bash
+csdv pair patches --batch config/grid/indiana_block.csv --batch config/grid/indiana_ring.csv \
+    --export-dir results/chpc_exports --out results/regional_map/indiana/patches
+scripts/chpc/region.sh patches indiana_block indiana_ring --page indiana     # the same on CHPC, as a job
+```
+
+A patch is a set of connected map cells (8 neighbours) at or above `--grow` (50%) that holds at least one cell at or above `--threshold` (90%), the core. `--grow 90` gives a plain cut at the threshold. Patches under `--min-ha` (0.3) are dropped, and holes under that size are filled. On one Indiana quad the three settings 90/90, 90/50 and 90/20 gave 414, 593 and 727 ha in 202, 289 and 368 patches: growth joins the fragments of one harvest and adds its thinned margin.
+
+Adjoining quad maps overlap by a strip of a few hundred metres, because each mosaic reaches past its quad. A cell therefore belongs to the quad that holds its centre. A patch that a quad edge cuts is found in both maps and joined when the block is processed (same pair of years, parts within 3 m). A part with no counterpart that stays under the smallest size is dropped. Quads whose image years differ give intervals that do not match, and their patches stay cut at the edge (`on_edge`).
+
+Files in the output folder:
+
+| File | Content |
+|---|---|
+| `patches.gpkg` | The layer, in EPSG:5070 |
+| `patches.csv` | The same rows without geometry, with `lon` and `lat` of a point inside each patch |
+| `summary.json` | Settings, units, models, and count and area of patches by interval and cause |
+| `seams.csv` | Per pair of adjoining quads and interval, over the cells both maps cover: the image dates of each side, the percent of cells flagged in each map and in both, their agreement (flagged in both over flagged in either) and the mean absolute difference in percent points |
+
+Columns of a patch:
+
+| Column | Meaning |
+|---|---|
+| `patch_id`, `unit`, `units`, `parts` | ID and quad of the largest part, all quads of the patch, number of parts joined |
+| `interval`, `date_a`, `date_b` | Pair of years, and the image dates (earliest and latest over the parts) |
+| `area_ha`, `cells` | Area on the map's 9.6 m cells |
+| `mean_percent`, `max_percent`, `core_share` | The model's probability over the patch, and the share of its cells at or above the threshold |
+| `cause`, `cause_share` | The cause named in most core cells, and its share of them |
+| `share_harvest` ... `share_other` | Share of the core cells for each of the six causes |
+| `cover_before`, `cover_after`, `cover_loss` | Canopy cover (share of 0.6 m pixels above 5 m) at the two dates, from the 19.2 m layer of the run, and the relative loss `1 - after / before` |
+| `height_before`, `height_after`, `height_loss` | The same for mean canopy height in metres |
+| `bg_cover_loss`, `bg_height_loss` | The same two changes over the forest of the quad that the model does not flag in that interval |
+| `on_edge` | The patch touches the edge of its quad or of the map |
+| `model`, `threshold`, `grow` | The training run of the map, and the settings |
+
+Three points on reading the layer. The layer keeps the share of every cause and names no rule for the causes the model confuses (wind is read as harvest on new places, see "Reading the scores"), so such a rule is a filter on the table. The change in cover and height is a number without a severity class. And the height model shifts between image dates: on the Indiana quad the apparent loss of height over unflagged forest ran from -18% (a gain) to +14% from one interval to the next, and that of cover from -5% to +6%. `height_loss` should be read against `bg_height_loss`, and `cover_loss` is the steadier of the two.
+
 ## Comparison
 
 `csdv pair compare` sets a map beside the disturbance run and the label chips of the unit.
